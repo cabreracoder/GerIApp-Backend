@@ -16,7 +16,7 @@ from .views import AsignacionPacienteCuidadorViewSet, TurnosViewSet, AsignacionT
 
 from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena
 
-from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet
+from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet
 
 router = DefaultRouter()
 
@@ -93,6 +93,8 @@ router.register(r'disponibilidad_usuario', DisponibilidadUsuarioViewSet)
 router.register(r'recomendaciones', RecomendacionesViewSet)
 
 router.register(r'cuidados_enfermeria', CuidadosEnfermeriaViewSet)
+
+router.register(r'elementos_paciente', ElementosPacienteViewSet)
 
 urlpatterns = [
 

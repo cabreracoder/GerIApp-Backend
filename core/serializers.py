@@ -40,6 +40,7 @@ from .models import (
     DisponibilidadUsuario,
     Recomendaciones,
     CuidadosEnfermeria,
+    ElementosPaciente,
 )
 
 
@@ -257,6 +258,11 @@ class RecomendacionesSerializer(serializers.ModelSerializer):
 class CuidadosEnfermeriaSerializer(serializers.ModelSerializer):
     class Meta:
         model = CuidadosEnfermeria
+        fields = '__all__'
+
+class ElementosPacienteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ElementosPaciente
         fields = '__all__'
 
 

@@ -38,6 +38,8 @@ from .models import (
     FamiliarResponsable,
     PerfilProfesional,
     DisponibilidadUsuario,
+    Recomendaciones,
+    CuidadosEnfermeria,
 )
 
 
@@ -245,6 +247,16 @@ class PerfilProfesionalSerializer(serializers.ModelSerializer):
 class DisponibilidadUsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = DisponibilidadUsuario
+        fields = '__all__'
+
+class RecomendacionesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Recomendaciones
+        fields = '__all__'
+
+class CuidadosEnfermeriaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CuidadosEnfermeria
         fields = '__all__'
 
 

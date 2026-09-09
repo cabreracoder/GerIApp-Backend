@@ -615,4 +615,50 @@ class Turnos(models.Model):
         managed = False
         db_table = 'turnos'
 
+class Recomendaciones(models.Model):
+    id_recomendacion = models.AutoField(primary_key=True)
+    hidratar_piel = models.CharField(blank=True, null=True)
+    asistir_alimentacion = models.CharField(blank=True, null=True)
+    via_alimentacion = models.CharField(blank=True, null=True)
+    prevencion_caidas = models.CharField(blank=True, null=True)
+    terapias_fisicas = models.CharField(blank=True, null=True)
+    terapia_respiratoria = models.CharField(blank=True, null=True)
+    actividad_ocupacional = models.CharField(blank=True, null=True)
+    corte_unas = models.CharField(blank=True, null=True)
+    corte_cabello = models.CharField(blank=True, null=True)
+    higiene_oral = models.CharField(blank=True, null=True)
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        on_delete=models.CASCADE,
+        db_column='id_paciente',
+        blank=True,
+        null=True
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'recomendaciones'
+
+
+class CuidadosEnfermeria(models.Model):
+    id_cuidado = models.AutoField(primary_key=True)
+    bano_paciente = models.CharField(blank=True, null=True)
+    peso_talla = models.CharField(blank=True, null=True)
+    control_glucemia = models.CharField(blank=True, null=True)
+    curaciones = models.CharField(blank=True, null=True)
+    liquidos_administrados_eliminados = models.CharField(blank=True, null=True)
+    control_deposicion = models.CharField(blank=True, null=True)
+    administracion_medicamentos = models.CharField(blank=True, null=True)
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        on_delete=models.CASCADE,
+        db_column='id_paciente',
+        blank=True,
+        null=True
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'cuidados_enfermeria'
+
 

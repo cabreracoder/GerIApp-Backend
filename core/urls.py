@@ -14,15 +14,9 @@ from .views import ActividadesViewSet, SignosVitalesViewSet, TipoEventoViewSet, 
 
 from .views import AsignacionPacienteCuidadorViewSet, TurnosViewSet, AsignacionTurnoUsuarioViewSet, PermisosViewSet, PermisosRolViewSet
 
-from .views import (
-FamiliarResponsableViewSet,
-PerfilProfesionalViewSet,
-DisponibilidadUsuarioViewSet,
-registro_usuario,
-login_usuario,
-cambiar_contrasena,
-DocumentosViewSet
-)
+from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena
+
+from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet
 
 router = DefaultRouter()
 
@@ -95,6 +89,10 @@ router.register(r'familiar_responsable', FamiliarResponsableViewSet)
 router.register(r'perfil_profesional', PerfilProfesionalViewSet)
 
 router.register(r'disponibilidad_usuario', DisponibilidadUsuarioViewSet)
+
+router.register(r'recomendaciones', RecomendacionesViewSet)
+
+router.register(r'cuidados_enfermeria', CuidadosEnfermeriaViewSet)
 
 urlpatterns = [
 

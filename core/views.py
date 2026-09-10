@@ -4,6 +4,10 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.contrib.auth.hashers import (check_password,make_password)
 
+import random
+from datetime import timedelta
+from django.utils import timezone
+
 from .models import (
     HistoriaClinicas,
     Pacientes,
@@ -312,6 +316,69 @@ def cambiar_contrasena(request):
             'Contraseña actualizada correctamente.'
         },
         status=status.HTTP_200_OK
+    )
+@api_view(['POST'])
+def recuperar_password(request):
+
+    correo = request.data.get('correo')
+
+
+    if not correo:
+
+        return Response(
+            {
+                'error': 'El correo es obligatorio.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    try:
+
+        usuario = Usuarios.objects.get(
+            correo=correo
+        )
+
+
+    except Usuarios.DoesNotExist:
+
+        return Response(
+            {
+                'error': 'No existe un usuario con este correo.'
+            },
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+    codigo = str(
+        random.randint(100000, 999999)
+    )
+
+
+    RecuperacionPassword.objects.create(
+
+        id_usuario=usuario,
+
+        codigo=codigo,
+
+        fecha_creacion=timezone.now(),
+
+        fecha_expiracion=
+            timezone.now() + timedelta(minutes=10),
+
+        usado=False
+
+    )
+
+
+    return Response(
+
+        {
+            'mensaje': 'Código generado correctamente.'
+        },
+
+        status=status.HTTP_200_OK
+
     )
 
 

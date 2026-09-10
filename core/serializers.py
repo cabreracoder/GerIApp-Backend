@@ -41,6 +41,7 @@ from .models import (
     Recomendaciones,
     CuidadosEnfermeria,
     ElementosPaciente,
+    RecuperacionPassword,
 )
 
 
@@ -263,6 +264,11 @@ class CuidadosEnfermeriaSerializer(serializers.ModelSerializer):
 class ElementosPacienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = ElementosPaciente
+        fields = '__all__'
+
+class RecuperacionPasswordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RecuperacionPassword
         fields = '__all__'
 
 

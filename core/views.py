@@ -43,6 +43,7 @@ from .models import (
     Recomendaciones,
     CuidadosEnfermeria, 
     ElementosPaciente,
+    RecuperacionPassword,
 )
 
 from .serializers import (
@@ -86,6 +87,7 @@ from .serializers import (
     RecomendacionesSerializer,
     CuidadosEnfermeriaSerializer,
     ElementosPacienteSerializer,
+    RecuperacionPasswordSerializer,
 )
 #Esta parte hace que se pueda registrar un usuario, validando que no exista otro con el mismo correo o número de documento.
 #Si el registro es exitoso, devuelve un mensaje de éxito y los datos del usuario registrado. Si hay errores en la validación,
@@ -494,3 +496,7 @@ class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
 class ElementosPacienteViewSet(viewsets.ModelViewSet):
     queryset = ElementosPaciente.objects.all()
     serializer_class = ElementosPacienteSerializer
+
+class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
+    queryset = RecuperacionPassword.objects.all()
+    serializer_class = RecuperacionPasswordSerializer

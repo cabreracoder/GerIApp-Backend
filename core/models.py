@@ -639,6 +639,18 @@ class Recomendaciones(models.Model):
         managed = False
         db_table = 'recomendaciones'
 
+class RecuperacionPassword(models.Model):
+    id_recuperacion = models.AutoField(primary_key=True)
+    codigo = models.CharField()
+    fecha_creacion = models.DateTimeField()
+    fecha_expiracion = models.DateTimeField()
+    usado = models.BooleanField()
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'recuperacion_password'
+
 
 class CuidadosEnfermeria(models.Model):
     id_cuidado = models.AutoField(primary_key=True)

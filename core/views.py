@@ -4,6 +4,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.contrib.auth.hashers import (check_password,make_password)
 
+import sib_api_v3_sdk
+from django.conf import settings
+import random
+from datetime import timedelta
+from django.utils import timezone
+
 from .models import (
     HistoriaClinicas,
     Pacientes,
@@ -313,7 +319,259 @@ def cambiar_contrasena(request):
         },
         status=status.HTTP_200_OK
     )
+@api_view(['POST'])
+def recuperar_password(request):
 
+    correo = request.data.get('correo')
+
+
+    if not correo:
+
+        return Response(
+            {
+                'error': 'El correo es obligatorio.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    try:
+
+        usuario = Usuarios.objects.get(
+            correo=correo
+        )
+
+
+    except Usuarios.DoesNotExist:
+
+        return Response(
+            {
+                'error': 'No existe un usuario con este correo.'
+            },
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+    codigo = str(
+        random.randint(100000, 999999)
+    )
+
+
+    RecuperacionPassword.objects.create(
+
+        id_usuario=usuario,
+
+        codigo=codigo,
+
+        fecha_creacion=timezone.now(),
+
+        fecha_expiracion=
+            timezone.now() + timedelta(minutes=10),
+
+        usado=False
+
+    )
+    configuration = sib_api_v3_sdk.Configuration()
+
+    configuration.api_key['api-key'] = settings.BREVO_API_KEY
+
+
+    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
+        sib_api_v3_sdk.ApiClient(configuration)
+    )
+
+
+    email = sib_api_v3_sdk.SendSmtpEmail(
+
+        sender={
+            "name": "GerIApp",
+            "email": settings.EMAIL_FROM
+        },
+
+        to=[
+            {
+                "email": correo
+            }
+        ],
+
+        subject="Recuperación de contraseña GerIApp",
+
+        html_content=f"""
+        <h2>Recuperación de contraseña</h2>
+
+        <p>Tu código es:</p>
+
+        <h1>{codigo}</h1>
+
+        <p>Este código vence en 10 minutos.</p>
+        """
+
+    )
+
+
+    api_instance.send_transac_email(email)
+
+
+    return Response(
+
+    {
+        'mensaje': 'Código enviado correctamente al correo.'
+    },
+
+    status=status.HTTP_200_OK
+
+)
+@api_view(['POST'])
+def verificar_codigo(request):
+
+    correo = request.data.get('correo')
+    codigo = request.data.get('codigo')
+
+
+    if not correo or not codigo:
+
+        return Response(
+            {
+                'error': 'Correo y código son obligatorios.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    try:
+
+        usuario = Usuarios.objects.get(
+            correo=correo
+        )
+
+
+    except Usuarios.DoesNotExist:
+
+        return Response(
+            {
+                'error': 'Usuario no encontrado.'
+            },
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+    try:
+
+        recuperacion = RecuperacionPassword.objects.filter(
+            id_usuario=usuario,
+            codigo=codigo,
+            usado=False
+        ).latest('fecha_creacion')
+
+
+    except RecuperacionPassword.DoesNotExist:
+
+        return Response(
+            {
+                'error': 'Código inválido.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    if timezone.now().replace(tzinfo=None) > recuperacion.fecha_expiracion:
+
+        return Response(
+            {
+                'error': 'El código ya expiró.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    return Response(
+        {
+            'mensaje': 'Código válido.'
+        },
+        status=status.HTTP_200_OK
+    )
+@api_view(['POST'])
+def cambiar_password_recuperacion(request):
+
+    correo = request.data.get('correo')
+    codigo = request.data.get('codigo')
+    nueva_contrasena = request.data.get('nueva_contrasena')
+
+
+    if not correo or not codigo or not nueva_contrasena:
+
+        return Response(
+            {
+                'error': 'Todos los campos son obligatorios.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    try:
+
+        usuario = Usuarios.objects.get(
+            correo=correo
+        )
+
+
+    except Usuarios.DoesNotExist:
+
+        return Response(
+            {
+                'error': 'Usuario no encontrado.'
+            },
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+
+    try:
+
+        recuperacion = RecuperacionPassword.objects.filter(
+            id_usuario=usuario,
+            codigo=codigo,
+            usado=False
+        ).latest('fecha_creacion')
+
+
+    except RecuperacionPassword.DoesNotExist:
+
+        return Response(
+            {
+                'error': 'Código inválido.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    if timezone.now().replace(tzinfo=None) > recuperacion.fecha_expiracion:
+
+        return Response(
+            {
+                'error': 'El código expiró.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+    usuario.contrasena = make_password(
+        nueva_contrasena
+    )
+
+    usuario.save()
+
+
+    recuperacion.usado = True
+
+    recuperacion.save()
+
+
+    return Response(
+        {
+            'mensaje': 'Contraseña actualizada correctamente.'
+        },
+        status=status.HTTP_200_OK
+    )
 
 
 class PacientesViewSet(viewsets.ModelViewSet):

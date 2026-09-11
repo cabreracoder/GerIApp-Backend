@@ -14,7 +14,7 @@ from .views import ActividadesViewSet, SignosVitalesViewSet, TipoEventoViewSet, 
 
 from .views import AsignacionPacienteCuidadorViewSet, TurnosViewSet, AsignacionTurnoUsuarioViewSet, PermisosViewSet, PermisosRolViewSet
 
-from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena
+from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena,recuperar_password,verificar_codigo,cambiar_password_recuperacion
 
 from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet
 
@@ -117,6 +117,25 @@ path(
     'usuarios/cambiar-contrasena/',
     cambiar_contrasena,
     name='cambiar_contrasena'
+),
+path(
+
+    'usuarios/recuperar-password/',
+
+    recuperar_password,
+
+    name='recuperar_password'
+
+),
+path(
+    'usuarios/verificar-codigo/',
+    verificar_codigo,
+    name='verificar_codigo'
+),
+path(
+    'usuarios/cambiar-password-recuperacion/',
+    cambiar_password_recuperacion,
+    name='cambiar_password_recuperacion'
 ),
 
 path(

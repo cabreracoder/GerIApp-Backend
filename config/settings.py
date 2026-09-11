@@ -19,7 +19,7 @@ DEBUG = True
 ALLOWED_HOSTS = [
     '127.0.0.1',
     'localhost',
-    'geriapp-web-1.onrender.com',
+    'geriapp-backend.onrender.com',
 ]
 
 

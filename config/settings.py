@@ -22,6 +22,8 @@ ALLOWED_HOSTS = [
     'geriapp-web-1.onrender.com',
 ]
 
+
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -129,6 +131,10 @@ MAILERS = {
         'BACKEND': 'django.core.mail.backends.console.EmailBackend',
     },
 }
+# Configuración Brevo
+BREVO_API_KEY = os.getenv('BREVO_API_KEY')
+
+EMAIL_FROM = os.getenv('EMAIL_FROM')
 
 
 CORS_ALLOWED_ORIGINS = [

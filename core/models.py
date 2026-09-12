@@ -604,7 +604,6 @@ class Tratamientos(models.Model):
 
 class Turnos(models.Model):
     id_turno = models.AutoField(primary_key=True)
-    fecha = models.DateField()
     hora_inicio = models.TimeField()
     hora_fin = models.TimeField(blank=True, null=True)
     estado = models.BooleanField()

@@ -676,17 +676,16 @@ class ElementosPaciente(models.Model):
     id_elemento = models.AutoField(primary_key=True)
     cantidad = models.IntegerField()
     fecha_ingreso = models.DateTimeField()
-    fecha_vencimiento = models.DateField(blank=True, null=True)
+    fecha_vencimiento = models.DateField()
     observaciones = models.CharField(blank=True, null=True)
     estado = models.BooleanField(blank=True, null=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    id_insumo = models.ForeignKey('Insumos', models.DO_NOTHING, db_column='id_insumo', blank=True, null=True)
 
-    id_paciente = models.ForeignKey(
-        'Pacientes',
-        models.CASCADE,
-        db_column='id_paciente',
-        blank=True,
-        null=True
-    )
+    class Meta:
+        managed = False
+        db_table = 'elementos_paciente'
 
     id_medicamentos = models.ForeignKey(
         'Medicamentos',

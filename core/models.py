@@ -372,7 +372,6 @@ class Inventario(models.Model):
 class Medicamentos(models.Model):
     id_medicamentos = models.AutoField(primary_key=True)
     nombre = models.CharField()
-    vencimiento = models.DateField()
     descripcion = models.CharField()
     principio_activo = models.CharField()
     concentracion = models.CharField()

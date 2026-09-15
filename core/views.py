@@ -55,7 +55,7 @@ from .models import (
 from .serializers import (
     DiagnosticosSerializer,
     EnfermedadesSerializer,
-    MedicamentosSerializer,
+    MedicamentosSerializer, 
     PacientesSerializer,
     RolesSerializer,
     TratamientoSerializer,
@@ -711,10 +711,37 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
-
+#Agrego el metoodo que me permite validar si el turno esta asignado no lo elimina y manda una alerta
 class TurnosViewSet(viewsets.ModelViewSet):
     queryset = Turnos.objects.all()
     serializer_class = TurnosSerializer
+
+    def destroy(self, request, *args, **kwargs):
+        turno = self.get_object()
+
+        # Verificar si el turno tiene asignaciones
+        tiene_asignaciones = AsignacionTurnoUsuario.objects.filter(
+            id_turno=turno.id_turno
+        ).exists()
+
+        # Si tiene asignaciones, no permitir eliminar
+        if tiene_asignaciones:
+            return Response(
+                {
+                    'error': 'No se puede eliminar el turno porque está siendo utilizado en asignaciones.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Si no tiene asignaciones, permitir eliminar
+        turno.delete()
+
+        return Response(
+            {
+                'mensaje': 'Turno eliminado correctamente.'
+            },
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):

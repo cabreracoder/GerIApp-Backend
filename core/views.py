@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.contrib.auth.hashers import (check_password,make_password)
 
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 import sib_api_v3_sdk
 from django.conf import settings
@@ -597,8 +597,8 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
 
-    # Permite recibir datos normales y archivos como imágenes
-    parser_classes = [MultiPartParser, FormParser]
+    # Permite recibir datos JSON y archivos como imágenes
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
 class DocumentosViewSet(viewsets.ModelViewSet):
     queryset = Documentos.objects.all()

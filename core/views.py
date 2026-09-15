@@ -126,17 +126,19 @@ def registro_usuario(request):
 
         return Response(
             {
-                'mensaje': 'Usuario registrado correctamente.',
-                'usuario': {
-                    'id_usuario': usuario.id_usuario,
-                    'nombres': usuario.nombres,
-                    'apellidos': usuario.apellidos,
-                    'correo': usuario.correo,
-                    'id_rol': usuario.id_rol_id,
-                    'estado': usuario.estado
+            'mensaje': 'Inicio de sesión exitoso.',
+            'usuario': {
+            'id_usuario': usuario.id_usuario,
+            'nombres': usuario.nombres,
+            'apellidos': usuario.apellidos,
+            'correo': usuario.correo,
+            'id_rol': usuario.id_rol_id,
+            'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+            'estado': usuario.estado,
+            'foto': request.build_absolute_uri(usuario.foto.url) if usuario.foto else None
                 }
             },
-            status=status.HTTP_201_CREATED
+             status=status.HTTP_200_OK
         )
 
     return Response(

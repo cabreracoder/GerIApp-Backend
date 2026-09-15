@@ -495,6 +495,7 @@ class Usuarios(models.Model):
     fecha_ingreso = models.DateTimeField()
     estado = models.BooleanField()
     contrasena = models.CharField(max_length=255, blank=True, null=True)
+    foto = models.ImageField(upload_to='usuarios/', blank=True, null=True)
 
     class Meta:
         managed = False

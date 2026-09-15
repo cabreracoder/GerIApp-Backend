@@ -723,14 +723,5 @@ class ElementosPaciente(models.Model):
         managed = False
         db_table = 'elementos_paciente'
 
-class RegistroMedicamentos(models.Model):
-    id_registro_medicamento = models.AutoField(primary_key=True)
-    cantidad = models.IntegerField()
-    fecha_ingreso = models.DateTimeField()
-    fecha_vencimiento = models.DateTimeField()
-    observaciones = models.CharField(blank=True, null=True)
 
-    class Meta:
-        managed = False
-        db_table = 'registro_medicamentos'
 

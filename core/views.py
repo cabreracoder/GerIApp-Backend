@@ -1,794 +1,723 @@
-from django.core.serializers import python
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from django.contrib.auth.hashers import (check_password,make_password)
+from django.db import models
 
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-import sib_api_v3_sdk
-from django.conf import settings
-import random
-from datetime import timedelta
-from django.utils import timezone
+class Actividades(models.Model):
+    id_actividad = models.AutoField(primary_key=True)
+    id_bitacora = models.ForeignKey('Bitacora', models.DO_NOTHING, db_column='id_bitacora', blank=True, null=True)
+    nombre = models.CharField(max_length=255)
+    descripcion = models.CharField()
+    fecha_hora = models.DateTimeField()
+    estado = models.BooleanField()
 
-from .models import (
-    HistoriaClinicas,
-    Pacientes,
-    Medicamentos,
-    Roles,
-    Usuarios,
-    Documentos,
-    Enfermedades,
-    Diagnosticos,
-    Tratamientos,
-    TratamientoMedicamento,
-    Inventario,
-    EntregaMedica,
-    DetalleEntregaMedicamento,
-    MovimientoMedicamento,
-    AplicacionMedicamento,
-    TipoInsumo,
-    Insumos,
-    DetalleEntregaInsumos,
-    EntregaInsumo,
-    MovimientoInsumo,
-    Bitacora,
-    Actividades,
-    SignosVitales,
-    TipoEvento,
-    TipoEmergencia,
-    EventosAdversos,
-    ImagenesEventoAdverso,
-    AsignacionPacienteCuidador,
-    Turnos,
-    AsignacionTurnoUsuario,
-    Permisos,
-    PermisosRol,
-    FamiliarResponsable,
-    PerfilProfesional,
-    DisponibilidadUsuario,
-    Recomendaciones,
-    CuidadosEnfermeria, 
-    ElementosPaciente,
-    RecuperacionPassword,
-)
+    class Meta:
+        managed = False
+        db_table = 'actividades'
 
-from .serializers import (
-    DiagnosticosSerializer,
-    EnfermedadesSerializer,
-    MedicamentosSerializer, 
-    PacientesSerializer,
-    RolesSerializer,
-    TratamientoSerializer,
-    UsuariosSerializer,
-    DocumentosSerializer,
-    RegistroUsuarioSerializer,
-    HistoriaClinicasSerializer,
-    TratamientoMedicamentoSerializer,
-    InventarioSerializer,
-    EntregaMedicaSerializer,
-    DetalleEntregaMedicamentoSerializer,
-    MovimientoMedicamentoSerializer,
-    AplicacionMedicamentoSerializer,
-    TipoInsumoSerializer,
-    InsumosSerializer,
-    DetalleEntregaInsumoSerializer,
-    EntregaInsumoSerializer,
-    MovimientoInsumoSerializer,
-    BitacoraSerializer,
-    ActividadesSerializer,
-    SignosVitalesSerializer,
-    TipoEventoSerializer,
-    TipoEmergenciaSerializer,
-    EventosAdversosSerializer,
-    ImagenesEventoAdversoSerializer,
-    AsignacionPacienteCuidadorSerializer,
-    TurnosSerializer,
-    AsignacionTurnoUsuarioSerializer,
-    PermisosSerializer,
-    PermisosRolSerializer,
-    FamiliarResponsableSerializer,
-    PerfilProfesionalSerializer,
-    DisponibilidadUsuarioSerializer,
-    CambiarContrasenaSerializer,
-    RecomendacionesSerializer,
-    CuidadosEnfermeriaSerializer,
-    ElementosPacienteSerializer,
-    RecuperacionPasswordSerializer,
-)
-#Esta parte hace que se pueda registrar un usuario, validando que no exista otro con el mismo correo o número de documento.
-#Si el registro es exitoso, devuelve un mensaje de éxito y los datos del usuario registrado. Si hay errores en la validación,
-#devuelve los errores correspondientes.     
-@api_view(['POST'])
-def registro_usuario(request):
 
-    serializer = RegistroUsuarioSerializer(data=request.data)
+class AplicacionMedicamento(models.Model):
+    id_aplicacion = models.AutoField(primary_key=True)
+    id_medicamento_medicamento = models.IntegerField(blank=True, null=True)
+    id_inventario = models.ForeignKey('Inventario', models.DO_NOTHING, db_column='id_inventario', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+    fecha_hora = models.DateTimeField()
+    dosis_administrada = models.CharField()
+    via_administracion = models.CharField()
+    estado = models.BooleanField()
+    observacion = models.CharField()
 
-    if serializer.is_valid():
+    class Meta:
+        managed = False
+        db_table = 'aplicacion_medicamento'
 
-        correo = serializer.validated_data['correo']
-        numero_documento = serializer.validated_data['numero_documento']
 
-        if Usuarios.objects.filter(correo=correo).exists():
-            return Response(
-                {'error': 'Ya existe un usuario con este correo.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+class AplicacionMedicamentos(models.Model):
+    id_aplicacion = models.AutoField(primary_key=True)
+    fecha = models.CharField()
+    hora = models.CharField()
+    estado = models.CharField()
+    observaciones = models.CharField()
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
 
-        if Usuarios.objects.filter(numero_documento=numero_documento).exists():
-            return Response(
-                {'error': 'Ya existe un usuario con este número de documento.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+    class Meta:
+        managed = False
+        db_table = 'aplicacion_medicamentos'
 
-        usuario = serializer.save()
 
-        return Response(
-            {
-            'mensaje': 'Inicio de sesión exitoso.',
-            'usuario': {
-            'id_usuario': usuario.id_usuario,
-            'nombres': usuario.nombres,
-            'apellidos': usuario.apellidos,
-            'correo': usuario.correo,
-            'id_rol': usuario.id_rol_id,
-            'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-            'estado': usuario.estado,
-            'foto': request.build_absolute_uri(usuario.foto.url) if usuario.foto else None
-                }
-            },
-             status=status.HTTP_200_OK
-        )
+class AsignacionPacienteCuidador(models.Model):
+    id_asignacion = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+    fecha_inicio = models.DateTimeField()
+    fecha_fin = models.DateTimeField()
+    estado = models.CharField()
+    observaciones = models.CharField()
 
-    return Response(
-        serializer.errors,
-        status=status.HTTP_400_BAD_REQUEST
+    class Meta:
+        managed = False
+        db_table = 'asignacion_paciente_cuidador'
 
+
+class AsignacionTurnoUsuario(models.Model):
+    id_asignacion_turno_usuario = models.AutoField(primary_key=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+    id_turno = models.ForeignKey('Turnos', models.DO_NOTHING, db_column='id_turno', blank=True, null=True)
+    fecha = models.DateField()
+    estado = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'asignacion_turno_usuario'
+
+
+class AuthGroup(models.Model):
+    name = models.CharField(unique=True, max_length=150)
+
+    class Meta:
+        managed = False
+        db_table = 'auth_group'
+
+
+class AuthGroupPermissions(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
+    permission = models.ForeignKey('AuthPermission', models.DO_NOTHING)
+
+    class Meta:
+        managed = False
+        db_table = 'auth_group_permissions'
+        unique_together = (('group', 'permission'),)
+
+
+class AuthPermission(models.Model):
+    name = models.CharField(max_length=255)
+    content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING)
+    codename = models.CharField(max_length=100)
+
+    class Meta:
+        managed = False
+        db_table = 'auth_permission'
+        unique_together = (('content_type', 'codename'),)
+
+
+class AuthUser(models.Model):
+    password = models.CharField(max_length=128)
+    last_login = models.DateTimeField(blank=True, null=True)
+    is_superuser = models.BooleanField()
+    username = models.CharField(unique=True, max_length=150)
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150)
+    email = models.CharField(max_length=254)
+    is_staff = models.BooleanField()
+    is_active = models.BooleanField()
+    date_joined = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'auth_user'
+
+
+class AuthUserGroups(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+    group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
+
+    class Meta:
+        managed = False
+        db_table = 'auth_user_groups'
+        unique_together = (('user', 'group'),)
+
+
+class AuthUserUserPermissions(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+    permission = models.ForeignKey(AuthPermission, models.DO_NOTHING)
+
+    class Meta:
+        managed = False
+        db_table = 'auth_user_user_permissions'
+        unique_together = (('user', 'permission'),)
+
+
+class Bitacora(models.Model):
+    id_bitacora = models.AutoField(primary_key=True)
+    estado = models.BooleanField()
+    tipo_registro = models.CharField()
+    descripcion = models.CharField()
+    fecha_hora = models.DateTimeField()
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'bitacora'
+
+
+class DetalleEntregaInsumos(models.Model):
+    id_detalle_entrega_insumos = models.AutoField(primary_key=True)
+    id_insumo = models.ForeignKey('Insumos', models.DO_NOTHING, db_column='id_insumo', blank=True, null=True)
+    cantidad = models.IntegerField()
+    fecha_vencimiento = models.DateField()
+    id_entrega_insumo = models.ForeignKey('EntregaInsumo', models.DO_NOTHING, db_column='id_entrega_insumo', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'detalle_entrega_insumos'
+
+
+class DetalleEntregaMedicamento(models.Model):
+    id_detalle_entrega_medicamento = models.AutoField(primary_key=True)
+    id_entrega_medica = models.ForeignKey('EntregaMedica', models.DO_NOTHING, db_column='id_entrega_medica', blank=True, null=True)
+    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    cantidad = models.IntegerField()
+    fecha_vencimiento = models.DateField()
+
+    class Meta:
+        managed = False
+        db_table = 'detalle_entrega_medicamento'
+
+
+class Diagnosticos(models.Model):
+    id_diagnostico = models.AutoField(primary_key=True)
+    id_historia_clinica = models.ForeignKey('HistoriaClinicas', models.DO_NOTHING, db_column='id_historia_clinica', blank=True, null=True)
+    id_enfermedad = models.ForeignKey('Enfermedades', models.DO_NOTHING, db_column='id_enfermedad', blank=True, null=True)
+    descripcion = models.CharField()
+    estado = models.BooleanField()
+    fecha_diagnostico = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'diagnosticos'
+
+
+class DisponibilidadUsuario(models.Model):
+    id_disponibilidad = models.AutoField(primary_key=True)
+    id_usuario = models.ForeignKey('Usuarios', models.CASCADE, db_column='id_usuario')
+    dia_semana = models.CharField(max_length=15)
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'disponibilidad_usuario'
+
+
+class DjangoAdminLog(models.Model):
+    action_time = models.DateTimeField()
+    object_id = models.TextField(blank=True, null=True)
+    object_repr = models.CharField(max_length=200)
+    action_flag = models.SmallIntegerField()
+    change_message = models.TextField()
+    content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING, blank=True, null=True)
+    user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+
+    class Meta:
+        managed = False
+        db_table = 'django_admin_log'
+
+
+class DjangoContentType(models.Model):
+    app_label = models.CharField(max_length=100)
+    model = models.CharField(max_length=100)
+
+    class Meta:
+        managed = False
+        db_table = 'django_content_type'
+        unique_together = (('app_label', 'model'),)
+
+
+class DjangoMigrations(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    app = models.CharField(max_length=255)
+    name = models.CharField(max_length=255)
+    applied = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'django_migrations'
+
+
+class DjangoSession(models.Model):
+    session_key = models.CharField(primary_key=True, max_length=40)
+    session_data = models.TextField()
+    expire_date = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'django_session'
+
+
+class Enfermedades(models.Model):
+    id_enfermedad = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'enfermedades'
+
+
+class EntregaInsumo(models.Model):
+    id_entrega_insumo = models.AutoField(primary_key=True)
+    fehca_entrega = models.DateTimeField()
+    observaciones = models.CharField()
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'entrega_insumo'
+
+
+class EntregaMedica(models.Model):
+    id_entrega_medica = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+    fecha_entrega = models.DateTimeField()
+    observaciones = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'entrega_medica'
+
+
+class EventosAdversos(models.Model):
+    id_evento_adverso = models.AutoField(primary_key=True)
+    id_bitacora = models.ForeignKey(Bitacora, models.DO_NOTHING, db_column='id_bitacora', blank=True, null=True)
+    id_evento = models.CharField(blank=True, null=True)
+    id_tipo_emergencia = models.ForeignKey('TipoEmergencia', models.DO_NOTHING, db_column='id_tipo_emergencia', blank=True, null=True)
+    fecha_hora = models.DateTimeField()
+    descripcion = models.CharField()
+    acciones_realizadas = models.CharField()
+    estado = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'eventos_adversos'
+
+
+class FamiliarResponsable(models.Model):
+    id_familiar_responsable = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.CASCADE, db_column='id_paciente')
+    nombres = models.CharField(max_length=100)
+    apellidos = models.CharField(max_length=100)
+    parentesco = models.CharField(max_length=50)
+    telefono_uno = models.CharField(max_length=20)
+    telefono_dos = models.CharField(max_length=20, blank=True, null=True)
+    direccion = models.CharField(max_length=200, blank=True, null=True)
+    correo = models.CharField(max_length=150, blank=True, null=True)
+    municipio = models.CharField(max_length=100, blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'familiar_responsable'
+
+
+class HistoriaClinicas(models.Model):
+    id_historia_clinica = models.AutoField(primary_key=True)
+    fecha_apertura = models.DateTimeField()
+    antecedentes = models.CharField()
+    alergias = models.CharField()
+    observaciones = models.CharField()
+    estado = models.BooleanField()
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'historia_clinicas'
+
+
+class ImagenesEventoAdverso(models.Model):
+    id_imagen = models.AutoField(primary_key=True)
+    id_evento_adverso = models.ForeignKey(EventosAdversos, models.DO_NOTHING, db_column='id_evento_adverso', blank=True, null=True)
+    url_imagen = models.CharField()
+    descripcion = models.CharField()
+    fecha_subida = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'imagenes_evento_adverso'
+
+
+class Insumos(models.Model):
+    id_insumo = models.AutoField(primary_key=True)
+    id_tipo_insumo = models.ForeignKey('TipoInsumo', models.DO_NOTHING, db_column='id_tipo_insumo', blank=True, null=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    unidad_medida = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'insumos'
+
+
+class Inventario(models.Model):
+    id_inventario = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    cantidad_actual = models.IntegerField()
+    cantidad_minima = models.IntegerField()
+    fecha_ultimo_ingreso = models.DateTimeField()
+    fecha_vencimiento = models.DateField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'inventario'
+
+
+class Medicamentos(models.Model):
+    id_medicamentos = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    principio_activo = models.CharField()
+    concentracion = models.CharField()
+    presentacion = models.CharField()
+    estado = models.BooleanField()
+    unidad_medida = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'medicamentos'
+
+
+class MovimientoInsumo(models.Model):
+    id_movimiento_insumo = models.AutoField(primary_key=True)
+    id_insumo = models.ForeignKey(Insumos, models.DO_NOTHING, db_column='id_insumo', blank=True, null=True)
+    id_detalle_entrega_insumos = models.ForeignKey(DetalleEntregaInsumos, models.DO_NOTHING, db_column='id_detalle_entrega_insumos', blank=True, null=True)
+    tipo_insumo = models.CharField()
+    cantidad = models.IntegerField()
+    fecha_movimiento = models.DateTimeField()
+    observacion = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'movimiento_insumo'
+
+
+class MovimientoMedicamento(models.Model):
+    id_movimiento = models.AutoField(primary_key=True)
+    id_inventario = models.ForeignKey(Inventario, models.DO_NOTHING, db_column='id_inventario', blank=True, null=True)
+    id_detalle_entrega_medicamento = models.ForeignKey(DetalleEntregaMedicamento, models.DO_NOTHING, db_column='id_detalle_entrega_medicamento', blank=True, null=True)
+    cantidad = models.IntegerField()
+    fecha_movimiento = models.DateTimeField()
+    observaciones = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'movimiento_medicamento'
+
+
+class Pacientes(models.Model):
+    id_paciente = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    apellido = models.CharField()
+    eps = models.CharField()
+    sede = models.CharField()
+    fecha_ingreso = models.DateTimeField()
+    habitacion = models.IntegerField()
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+    tipo_documento = models.CharField()
+    numero_documento = models.CharField()
+    fecha_nacimiento = models.DateField()
+    genero = models.CharField()
+    grupo_sanguineo = models.CharField(max_length=5, blank=True, null=True)
+    rh = models.CharField(max_length=5, blank=True, null=True)
+    cama = models.IntegerField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'pacientes'
+
+
+class PerfilProfesional(models.Model):
+    id_perfil_profesional = models.AutoField(primary_key=True)
+    id_usuario = models.OneToOneField('Usuarios', models.CASCADE, db_column='id_usuario')
+    especialidad = models.CharField(max_length=100, blank=True, null=True)
+    licencia = models.CharField(max_length=100, blank=True, null=True)
+    experiencia = models.IntegerField(blank=True, null=True)
+    institucion = models.CharField(max_length=150, blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'perfil_profesional'
+
+
+class Permisos(models.Model):
+    id_permisos = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'permisos'
+
+
+class PermisosRol(models.Model):
+    id_permisos_rol = models.AutoField(primary_key=True)
+    id_permisos = models.ForeignKey(Permisos, models.DO_NOTHING, db_column='id_permisos', blank=True, null=True)
+    id_rol = models.ForeignKey('Roles', models.DO_NOTHING, db_column='id_rol', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'permisos_rol'
+
+
+class Roles(models.Model):
+    id_rol = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'roles'
+
+
+class Usuarios(models.Model):
+    id_usuario = models.AutoField(primary_key=True)
+    id_rol = models.ForeignKey(
+        'Roles',
+        models.DO_NOTHING,
+        db_column='id_rol',
+        blank=True,
+        null=True
     )
-#esta parte permite que un usuario pueda iniciar sesión en la aplicación, validando su correo y contraseña.
-@api_view(['POST'])
-def login_usuario(request):
+    tipo_documento = models.CharField()
+    numero_documento = models.CharField()
+    nombres = models.CharField()
+    apellidos = models.CharField()
+    correo = models.CharField()
+    telefono = models.CharField(blank=True, null=True)
+    fecha_ingreso = models.DateTimeField()
+    estado = models.BooleanField()
+    contrasena = models.CharField(max_length=255, blank=True, null=True)
 
-    correo = request.data.get('correo')
-    contrasena = request.data.get('contrasena')
+    class Meta:
+        managed = False
+        db_table = 'usuarios'
 
-    if not correo or not contrasena:
-        return Response(
-            {'error': 'El correo y la contraseña son obligatorios.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
 
-    try:
-        usuario = Usuarios.objects.get(correo=correo)
-    except Usuarios.DoesNotExist:
-        return Response(
-            {'error': 'Credenciales inválidas.'},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
+class Documentos(models.Model):
+    id_documento = models.AutoField(primary_key=True)
+    id_usuario = models.ForeignKey(
+        'Usuarios',
+        models.DO_NOTHING,
+        db_column='id_usuario'
+    )
+    cedula = models.CharField(max_length=500, blank=True, null=True)
+    tarjeta_profesional = models.CharField(max_length=500, blank=True, null=True)
+    antecedentes = models.CharField(max_length=500, blank=True, null=True)
+    hoja_de_vida = models.CharField(max_length=500, blank=True, null=True)
 
-    if not usuario.contrasena:
-        return Response(
-            {'error': 'Este usuario no tiene una contraseña registrada.'},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
+    class Meta:
+        managed = False
+        db_table = 'documentos'
 
-    if not check_password(contrasena, usuario.contrasena):
-        return Response(
-            {'error': 'Credenciales inválidas.'},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
 
-    if not usuario.estado:
-        return Response(
-            {'error': 'El usuario se encuentra inactivo.'},
-            status=status.HTTP_403_FORBIDDEN
-        )
+class SignosVitales(models.Model):
+    id_signos_vitales = models.AutoField(primary_key=True)
+    id_bitacora = models.ForeignKey(Bitacora, models.DO_NOTHING, db_column='id_bitacora', blank=True, null=True)
+    temperatura = models.CharField()
+    presion_sistolica = models.CharField()
+    presion_diastolica = models.CharField()
+    frecuencia_cardiaca = models.CharField()
+    frecuencia_respiratoria = models.CharField()
+    saturacion_oxigeno = models.CharField()
+    peso = models.CharField()
+    fecha_hora = models.DateTimeField()
+    observaciones = models.CharField()
 
-    return Response(
-        {
-            'mensaje': 'Inicio de sesión exitoso.',
-            'usuario': {
-            'id_usuario': usuario.id_usuario,
-            'nombres': usuario.nombres,
-            'apellidos': usuario.apellidos,
-            'correo': usuario.correo,
-            'id_rol': usuario.id_rol_id,
-            'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-            'estado': usuario.estado
-        }
-        },
-        status=status.HTTP_200_OK
+    class Meta:
+        managed = False
+        db_table = 'signos_vitales'
+
+
+class TipoEmergencia(models.Model):
+    id_tipo_emergencia = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    nivel = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'tipo_emergencia'
+
+
+class TipoEvento(models.Model):
+    id_tipo_evento = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    estado = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'tipo_evento'
+
+
+class TipoInsumo(models.Model):
+    id_tipo_insumo = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.CharField()
+    estado = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'tipo_insumo'
+
+
+class TratamientoMedicamento(models.Model):
+    id_tratamiento_medicamento = models.AutoField(primary_key=True)
+    id_tratamiento = models.ForeignKey('Tratamientos', models.DO_NOTHING, db_column='id_tratamiento', blank=True, null=True)
+    id_medicamentos = models.ForeignKey(Medicamentos, models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    dosis = models.IntegerField()
+    frecuencia = models.CharField()
+    via_administracion = models.CharField()
+    duracion = models.CharField()
+    cantidad_prescrita = models.CharField()
+    observaciones = models.CharField()
+    estado = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'tratamiento_medicamento'
+
+
+class Tratamientos(models.Model):
+    id_tratamiento = models.AutoField(primary_key=True)
+    id_diagnostico = models.ForeignKey(Diagnosticos, models.DO_NOTHING, db_column='id_diagnostico', blank=True, null=True)
+    fecha_inicio = models.TimeField()
+    fecha_fin = models.TimeField()
+    indicaciones = models.CharField()
+    estado = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'tratamientos'
+
+
+class Turnos(models.Model):
+    id_turno = models.AutoField(primary_key=True)
+    hora_inicio = models.TimeField()
+    hora_fin = models.TimeField(blank=True, null=True)
+    estado = models.BooleanField()
+    nombre = models.CharField()
+    descripcion = models.CharField()
+
+    class Meta:
+        managed = False
+        db_table = 'turnos'
+
+
+class Recomendaciones(models.Model):
+    id_recomendacion = models.AutoField(primary_key=True)
+    hidratar_piel = models.CharField(blank=True, null=True)
+    asistir_alimentacion = models.CharField(blank=True, null=True)
+    via_alimentacion = models.CharField(blank=True, null=True)
+    prevencion_caidas = models.CharField(blank=True, null=True)
+    terapias_fisicas = models.CharField(blank=True, null=True)
+    terapia_respiratoria = models.CharField(blank=True, null=True)
+    actividad_ocupacional = models.CharField(blank=True, null=True)
+    corte_unas = models.CharField(blank=True, null=True)
+    corte_cabello = models.CharField(blank=True, null=True)
+    higiene_oral = models.CharField(blank=True, null=True)
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        on_delete=models.CASCADE,
+        db_column='id_paciente',
+        blank=True,
+        null=True
     )
 
-#Aqui hacemos que un usuario pueda cambiar su contraseña, 
-#validando la contraseña actual y asegurando que la nueva contraseña sea diferente a la actual.    
+    class Meta:
+        managed = False
+        db_table = 'recomendaciones'
 
-@api_view(['POST'])
-def cambiar_contrasena(request):
 
-    id_usuario = request.data.get(
-        'id_usuario'
+class RecuperacionPassword(models.Model):
+    id_recuperacion = models.AutoField(primary_key=True)
+    codigo = models.CharField()
+    fecha_creacion = models.DateTimeField()
+    fecha_expiracion = models.DateTimeField()
+    usado = models.BooleanField()
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'recuperacion_password'
+
+
+class CuidadosEnfermeria(models.Model):
+    id_cuidado = models.AutoField(primary_key=True)
+    bano_paciente = models.CharField(blank=True, null=True)
+    peso_talla = models.CharField(blank=True, null=True)
+    control_glucemia = models.CharField(blank=True, null=True)
+    curaciones = models.CharField(blank=True, null=True)
+    liquidos_administrados_eliminados = models.CharField(blank=True, null=True)
+    control_deposicion = models.CharField(blank=True, null=True)
+    administracion_medicamentos = models.CharField(blank=True, null=True)
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        on_delete=models.CASCADE,
+        db_column='id_paciente',
+        blank=True,
+        null=True
     )
 
-    if not id_usuario:
+    class Meta:
+        managed = False
+        db_table = 'cuidados_enfermeria'
 
-        return Response(
-            {
-                'error':
-                'El ID del usuario es obligatorio.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
 
-    try:
+class ElementosPaciente(models.Model):
+    id_elemento = models.AutoField(primary_key=True)
+    cantidad = models.IntegerField()
+    fecha_ingreso = models.DateTimeField()
 
-        usuario = Usuarios.objects.get(
-            id_usuario=id_usuario
-        )
-
-    except Usuarios.DoesNotExist:
-
-        return Response(
-            {
-                'error':
-                'El usuario no existe.'
-            },
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-    serializer = CambiarContrasenaSerializer(
-        data=request.data
+    # La fecha de vencimiento solo aplica para medicamentos.
+    # Para insumos puede quedar en NULL.
+    fecha_vencimiento = models.DateField(
+        blank=True,
+        null=True
     )
 
-    if not serializer.is_valid():
-
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-    contrasena_actual = (
-        serializer.validated_data[
-            'contrasena_actual'
-        ]
+    observaciones = models.CharField(
+        blank=True,
+        null=True
     )
 
-    nueva_contrasena = (
-        serializer.validated_data[
-            'nueva_contrasena'
-        ]
+    estado = models.BooleanField(
+        blank=True,
+        null=True
     )
 
-    # =====================================================
-    # VERIFICAR CONTRASEÑA ACTUAL
-    # =====================================================
-
-    if not usuario.contrasena:
-
-        return Response(
-            {
-                'error':
-                'Este usuario no tiene una contraseña registrada.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-    if not check_password(
-        contrasena_actual,
-        usuario.contrasena
-    ):
-
-        return Response(
-            {
-                'error':
-                'La contraseña actual es incorrecta.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-    # =====================================================
-    # EVITAR USAR LA MISMA CONTRASEÑA
-    # =====================================================
-
-    if check_password(
-        nueva_contrasena,
-        usuario.contrasena
-    ):
-
-        return Response(
-            {
-                'error':
-                'La nueva contraseña debe ser diferente a la actual.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-    # =====================================================
-    # GUARDAR NUEVA CONTRASEÑA HASHEADA
-    # =====================================================
-
-    usuario.contrasena = make_password(
-        nueva_contrasena
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        blank=True,
+        null=True
     )
 
-    usuario.save(
-        update_fields=['contrasena']
+    id_medicamentos = models.ForeignKey(
+        'Medicamentos',
+        models.DO_NOTHING,
+        db_column='id_medicamentos',
+        blank=True,
+        null=True
     )
 
-    return Response(
-        {
-            'mensaje':
-            'Contraseña actualizada correctamente.'
-        },
-        status=status.HTTP_200_OK
-    )
-@api_view(['POST'])
-def recuperar_password(request):
-
-    correo = request.data.get('correo')
-
-
-    if not correo:
-
-        return Response(
-            {
-                'error': 'El correo es obligatorio.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    try:
-
-        usuario = Usuarios.objects.get(
-            correo=correo
-        )
-
-
-    except Usuarios.DoesNotExist:
-
-        return Response(
-            {
-                'error': 'No existe un usuario con este correo.'
-            },
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-    codigo = str(
-        random.randint(100000, 999999)
+    id_insumo = models.ForeignKey(
+        'Insumos',
+        models.DO_NOTHING,
+        db_column='id_insumo',
+        blank=True,
+        null=True
     )
 
-
-    RecuperacionPassword.objects.create(
-
-        id_usuario=usuario,
-
-        codigo=codigo,
-
-        fecha_creacion=timezone.now(),
-
-        fecha_expiracion=
-            timezone.now() + timedelta(minutes=10),
-
-        usado=False
-
-    )
-    configuration = sib_api_v3_sdk.Configuration()
-
-    configuration.api_key['api-key'] = settings.BREVO_API_KEY
-
-
-    api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
-        sib_api_v3_sdk.ApiClient(configuration)
-    )
-
-
-    email = sib_api_v3_sdk.SendSmtpEmail(
-
-        sender={
-            "name": "GerIApp",
-            "email": settings.EMAIL_FROM
-        },
-
-        to=[
-            {
-                "email": correo
-            }
-        ],
-
-        subject="Recuperación de contraseña GerIApp",
-
-        html_content=f"""
-        <h2>Recuperación de contraseña</h2>
-
-        <p>Tu código es:</p>
-
-        <h1>{codigo}</h1>
-
-        <p>Este código vence en 10 minutos.</p>
-        """
-
-    )
-
-
-    api_instance.send_transac_email(email)
-
-
-    return Response(
-
-    {
-        'mensaje': 'Código enviado correctamente al correo.'
-    },
-
-    status=status.HTTP_200_OK
-
-)
-@api_view(['POST'])
-def verificar_codigo(request):
-
-    correo = request.data.get('correo')
-    codigo = request.data.get('codigo')
-
-
-    if not correo or not codigo:
-
-        return Response(
-            {
-                'error': 'Correo y código son obligatorios.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    try:
-
-        usuario = Usuarios.objects.get(
-            correo=correo
-        )
-
-
-    except Usuarios.DoesNotExist:
-
-        return Response(
-            {
-                'error': 'Usuario no encontrado.'
-            },
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-    try:
-
-        recuperacion = RecuperacionPassword.objects.filter(
-            id_usuario=usuario,
-            codigo=codigo,
-            usado=False
-        ).latest('fecha_creacion')
-
-
-    except RecuperacionPassword.DoesNotExist:
-
-        return Response(
-            {
-                'error': 'Código inválido.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    if timezone.now().replace(tzinfo=None) > recuperacion.fecha_expiracion:
-
-        return Response(
-            {
-                'error': 'El código ya expiró.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    return Response(
-        {
-            'mensaje': 'Código válido.'
-        },
-        status=status.HTTP_200_OK
-    )
-@api_view(['POST'])
-def cambiar_password_recuperacion(request):
-
-    correo = request.data.get('correo')
-    codigo = request.data.get('codigo')
-    nueva_contrasena = request.data.get('nueva_contrasena')
-
-
-    if not correo or not codigo or not nueva_contrasena:
-
-        return Response(
-            {
-                'error': 'Todos los campos son obligatorios.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    try:
-
-        usuario = Usuarios.objects.get(
-            correo=correo
-        )
-
-
-    except Usuarios.DoesNotExist:
-
-        return Response(
-            {
-                'error': 'Usuario no encontrado.'
-            },
-            status=status.HTTP_404_NOT_FOUND
-        )
-
-
-    try:
-
-        recuperacion = RecuperacionPassword.objects.filter(
-            id_usuario=usuario,
-            codigo=codigo,
-            usado=False
-        ).latest('fecha_creacion')
-
-
-    except RecuperacionPassword.DoesNotExist:
-
-        return Response(
-            {
-                'error': 'Código inválido.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    if timezone.now().replace(tzinfo=None) > recuperacion.fecha_expiracion:
-
-        return Response(
-            {
-                'error': 'El código expiró.'
-            },
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-    usuario.contrasena = make_password(
-        nueva_contrasena
-    )
-
-    usuario.save()
-
-
-    recuperacion.usado = True
-
-    recuperacion.save()
-
-
-    return Response(
-        {
-            'mensaje': 'Contraseña actualizada correctamente.'
-        },
-        status=status.HTTP_200_OK
-    )
-
-
-class PacientesViewSet(viewsets.ModelViewSet):
-    queryset = Pacientes.objects.all()
-    serializer_class = PacientesSerializer
-
-
-class MedicamentosViewSet(viewsets.ModelViewSet):
-    queryset = Medicamentos.objects.all()
-    serializer_class = MedicamentosSerializer
-
-
-class RolesViewSet(viewsets.ModelViewSet):
-    queryset = Roles.objects.all()
-    serializer_class = RolesSerializer
-
-
-class UsuariosViewSet(viewsets.ModelViewSet):
-    queryset = Usuarios.objects.all()
-    serializer_class = UsuariosSerializer
-
-    # Permite recibir datos JSON y archivos como imágenes
-    parser_classes = [JSONParser, MultiPartParser, FormParser]
-
-class DocumentosViewSet(viewsets.ModelViewSet):
-    queryset = Documentos.objects.all()
-    serializer_class = DocumentosSerializer
-
-class HistoriaClinicasViewSet(viewsets.ModelViewSet):
-    queryset = HistoriaClinicas.objects.all()
-    serializer_class = HistoriaClinicasSerializer
-
-
-class EnfermedadesViewSet(viewsets.ModelViewSet):
-    queryset = Enfermedades.objects.all()
-    serializer_class = EnfermedadesSerializer
-
-
-class DiagnosticosViewSet(viewsets.ModelViewSet):
-    queryset = Diagnosticos.objects.all()
-    serializer_class = DiagnosticosSerializer
-
-
-class TratamientoViewSet(viewsets.ModelViewSet):
-    queryset = Tratamientos.objects.all()
-    serializer_class = TratamientoSerializer
-
-
-class TratamientoMedicamentoViewSet(viewsets.ModelViewSet):
-    queryset = TratamientoMedicamento.objects.all()
-    serializer_class = TratamientoMedicamentoSerializer
-
-
-class InventarioViewSet(viewsets.ModelViewSet):
-    queryset = Inventario.objects.all()
-    serializer_class = InventarioSerializer
-
-
-class EntregaMedicaViewSet(viewsets.ModelViewSet):
-    queryset = EntregaMedica.objects.all()
-    serializer_class = EntregaMedicaSerializer
-
-
-class DetalleEntregaMedicamentoViewSet(viewsets.ModelViewSet):
-    queryset = DetalleEntregaMedicamento.objects.all()
-    serializer_class = DetalleEntregaMedicamentoSerializer
-
-
-class MovimientoMedicamentoViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoMedicamento.objects.all()
-    serializer_class = MovimientoMedicamentoSerializer
-
-
-class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
-    queryset = AplicacionMedicamento.objects.all()
-    serializer_class = AplicacionMedicamentoSerializer
-
-
-class TipoInsumoViewSet(viewsets.ModelViewSet):
-    queryset = TipoInsumo.objects.all()
-    serializer_class = TipoInsumoSerializer
-
-
-class InsumosViewSet(viewsets.ModelViewSet):
-    queryset = Insumos.objects.all()
-    serializer_class = InsumosSerializer
-
-
-class DetalleEntregaInsumoViewSet(viewsets.ModelViewSet):
-    queryset = DetalleEntregaInsumos.objects.all()
-    serializer_class = DetalleEntregaInsumoSerializer
-
-
-class EntregaInsumoViewSet(viewsets.ModelViewSet):
-    queryset = EntregaInsumo.objects.all()
-    serializer_class = EntregaInsumoSerializer
-
-
-class MovimientoInsumoViewSet(viewsets.ModelViewSet):
-    queryset = MovimientoInsumo.objects.all()
-    serializer_class = MovimientoInsumoSerializer
-
-
-class BitacoraViewSet(viewsets.ModelViewSet):
-    queryset = Bitacora.objects.all()
-    serializer_class = BitacoraSerializer
-
-
-class ActividadesViewSet(viewsets.ModelViewSet):
-    queryset = Actividades.objects.all()
-    serializer_class = ActividadesSerializer
-
-
-class SignosVitalesViewSet(viewsets.ModelViewSet):
-    queryset = SignosVitales.objects.all()
-    serializer_class = SignosVitalesSerializer
-
-
-class TipoEventoViewSet(viewsets.ModelViewSet):
-    queryset = TipoEvento.objects.all()
-    serializer_class = TipoEventoSerializer
-
-
-class TipoEmergenciaViewSet(viewsets.ModelViewSet):
-    queryset = TipoEmergencia.objects.all()
-    serializer_class = TipoEmergenciaSerializer
-
-
-class EventosAdversosViewSet(viewsets.ModelViewSet):
-    queryset = EventosAdversos.objects.all()
-    serializer_class = EventosAdversosSerializer
-
-
-class ImagenesEventoAdversoViewSet(viewsets.ModelViewSet):
-    queryset = ImagenesEventoAdverso.objects.all()
-    serializer_class = ImagenesEventoAdversoSerializer
-
-
-class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
-    queryset = AsignacionPacienteCuidador.objects.all()
-    serializer_class = AsignacionPacienteCuidadorSerializer
-
-#Agrego el metoodo que me permite validar si el turno esta asignado no lo elimina y manda una alerta
-class TurnosViewSet(viewsets.ModelViewSet):
-    queryset = Turnos.objects.all()
-    serializer_class = TurnosSerializer
-
-    def destroy(self, request, *args, **kwargs):
-        turno = self.get_object()
-
-        # Verificar si el turno tiene asignaciones
-        tiene_asignaciones = AsignacionTurnoUsuario.objects.filter(
-            id_turno=turno.id_turno
-        ).exists()
-
-        # Si tiene asignaciones, no permitir eliminar
-        if tiene_asignaciones:
-            return Response(
-                {
-                    'error': 'No se puede eliminar el turno porque está siendo utilizado en asignaciones.'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Si no tiene asignaciones, permitir eliminar
-        turno.delete()
-
-        return Response(
-            {
-                'mensaje': 'Turno eliminado correctamente.'
-            },
-            status=status.HTTP_204_NO_CONTENT
-        )
-
-
-class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
-    queryset = AsignacionTurnoUsuario.objects.all()
-    serializer_class = AsignacionTurnoUsuarioSerializer
-
-class PermisosViewSet(viewsets.ModelViewSet):
-    queryset =Permisos.objects.all()
-    serializer_class =PermisosSerializer
-
-class PermisosRolViewSet(viewsets.ModelViewSet):
-    queryset=PermisosRol.objects.all()
-    serializer_class=PermisosRolSerializer
-
-class FamiliarResponsableViewSet(viewsets.ModelViewSet):
-    queryset = FamiliarResponsable.objects.all()
-    serializer_class = FamiliarResponsableSerializer
-
-
-class PerfilProfesionalViewSet(viewsets.ModelViewSet):
-    queryset = PerfilProfesional.objects.all()
-    serializer_class = PerfilProfesionalSerializer
-
-
-class DisponibilidadUsuarioViewSet(viewsets.ModelViewSet):
-    queryset = DisponibilidadUsuario.objects.all()
-    serializer_class = DisponibilidadUsuarioSerializer
-
-class RecomendacionesViewSet(viewsets.ModelViewSet):
-    queryset = Recomendaciones.objects.all()
-    serializer_class = RecomendacionesSerializer    
-
-class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
-    queryset = CuidadosEnfermeria.objects.all()
-    serializer_class = CuidadosEnfermeriaSerializer
-
-class ElementosPacienteViewSet(viewsets.ModelViewSet):
-    queryset = ElementosPaciente.objects.all()
-    serializer_class = ElementosPacienteSerializer
-
-class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
-    queryset = RecuperacionPassword.objects.all()
-    serializer_class = RecuperacionPasswordSerializer
+    class Meta:
+        managed = False
+        db_table = 'elementos_paciente'

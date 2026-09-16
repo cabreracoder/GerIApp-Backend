@@ -1,4 +1,5 @@
 from django.core.serializers import python
+from django.conf import settings
 from rest_framework import serializers
 from django.utils import timezone
 
@@ -47,7 +48,6 @@ from .models import (
 )
 
 
-
 class PacientesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pacientes
@@ -70,6 +70,23 @@ class UsuariosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuarios
         fields = '__all__'
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+
+        if instance.foto:
+            request = self.context.get('request')
+            ruta_foto = f'{settings.MEDIA_URL}{instance.foto.name}'
+
+            if request:
+                data['foto'] = request.build_absolute_uri(ruta_foto)
+            else:
+                data['foto'] = ruta_foto
+        else:
+            data['foto'] = None
+
+        return data
+
 
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -235,15 +252,18 @@ class AsignacionTurnoUsuarioSerializer(serializers.ModelSerializer):
         model = AsignacionTurnoUsuario
         fields = '__all__'
 
+
 class PermisosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permisos
         fields = '__all__'
 
+
 class PermisosRolSerializer(serializers.ModelSerializer):
     class Meta:
         model = PermisosRol
         fields = '__all__'
+
 
 class FamiliarResponsableSerializer(serializers.ModelSerializer):
     class Meta:
@@ -262,24 +282,38 @@ class DisponibilidadUsuarioSerializer(serializers.ModelSerializer):
         model = DisponibilidadUsuario
         fields = '__all__'
 
+
 class RecomendacionesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Recomendaciones
         fields = '__all__'
+
 
 class CuidadosEnfermeriaSerializer(serializers.ModelSerializer):
     class Meta:
         model = CuidadosEnfermeria
         fields = '__all__'
 
+
 class ElementosPacienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = ElementosPaciente
         fields = '__all__'
 
+
 class RecuperacionPasswordSerializer(serializers.ModelSerializer):
     class Meta:
         model = RecuperacionPassword
+        fields = '__all__'
+
+class NotificacionesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificaciones
+        fields = '__all__'
+
+class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificacionDestinatario
         fields = '__all__'
 
 
@@ -315,9 +349,10 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
 
         return usuario
 
-#Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
-#este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
-#nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación. 
+
+# Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
+# este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
+# nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación.
 
 class CambiarContrasenaSerializer(serializers.Serializer):
     contrasena_actual = serializers.CharField(
@@ -350,4 +385,3 @@ class CambiarContrasenaSerializer(serializers.Serializer):
             )
 
         return data
-

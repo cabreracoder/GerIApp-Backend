@@ -50,7 +50,7 @@ from .models import (
     ElementosPaciente,
     RecuperacionPassword,
     Notificaciones,
-    NotificacionDestinatario
+    NotificacionDestinatario,
 )
 
 from .serializers import (
@@ -696,7 +696,8 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
 
-class  NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
+
+class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
 
@@ -705,6 +706,7 @@ class  NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
 # TURNOS
 # No permite eliminar un turno que tenga asignaciones.
 # ============================================================
+
 
 class TurnosViewSet(viewsets.ModelViewSet):
     queryset = Turnos.objects.all()

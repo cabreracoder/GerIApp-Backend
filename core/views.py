@@ -49,6 +49,8 @@ from .models import (
     CuidadosEnfermeria,
     ElementosPaciente,
     RecuperacionPassword,
+    Notificaciones,
+    NotificacionDestinatario
 )
 
 from .serializers import (
@@ -93,6 +95,8 @@ from .serializers import (
     CuidadosEnfermeriaSerializer,
     ElementosPacienteSerializer,
     RecuperacionPasswordSerializer,
+    NotificacionesSerializer,
+    NotificacionDestinatarioSerializer,
 )
 
 
@@ -687,6 +691,14 @@ class ImagenesEventoAdversoViewSet(viewsets.ModelViewSet):
 class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
+
+class NotificacionesViewSet(viewsets.ModelViewSet):
+    queryset = Notificaciones.objects.all()
+    serializer_class = NotificacionesSerializer
+
+class  NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
+    queryset = NotificacionDestinatario.objects.all()
+    serializer_class = NotificacionDestinatarioSerializer
 
 
 # ============================================================

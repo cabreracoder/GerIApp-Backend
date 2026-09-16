@@ -147,6 +147,15 @@ class MovimientoMedicamentoSerializer(serializers.ModelSerializer):
         model = MovimientoMedicamento
         fields = '__all__'
 
+class NotificacionesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificaciones
+        fields = '__all__'
+
+class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificacionDestinatario
+        fields = '__all__'
 
 class AplicacionMedicamentoSerializer(serializers.ModelSerializer):
     class Meta:

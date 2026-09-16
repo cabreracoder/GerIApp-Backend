@@ -410,6 +410,33 @@ class MovimientoMedicamento(models.Model):
         managed = False
         db_table = 'movimiento_medicamento'
 
+class Notificaciones(models.Model):
+    id_notificacion = models.AutoField(primary_key=True)
+    titulo = models.CharField()
+    tipo = models.CharField()
+    mensaje = models.CharField()
+    enviar_correo = models.BooleanField()
+    fecha_hora = models.DateTimeField()
+    estado = models.BooleanField()
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'notificaciones'
+
+
+class NotificacionDestinatario(models.Model):
+    id_notificacion_destinatario = models.AutoField(primary_key=True)
+    leida = models.BooleanField()
+    fecha_lectura = models.DateTimeField(blank=True, null=True)
+    id_notificacion = models.ForeignKey(Notificaciones, models.DO_NOTHING, db_column='id_notificacion', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'notificacion_destinatario'
+
 
 class Pacientes(models.Model):
     id_paciente = models.AutoField(primary_key=True)
@@ -495,7 +522,6 @@ class Usuarios(models.Model):
     fecha_ingreso = models.DateTimeField()
     estado = models.BooleanField()
     contrasena = models.CharField(max_length=255, blank=True, null=True)
-    foto = models.ImageField(upload_to='usuarios/', blank=True, null=True)
 
     class Meta:
         managed = False

@@ -1,10 +1,7 @@
-from django.core.serializers import python
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
-from django.contrib.auth.hashers import (check_password,make_password)
-
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from django.contrib.auth.hashers import check_password, make_password
 
 import sib_api_v3_sdk
 from django.conf import settings
@@ -49,7 +46,7 @@ from .models import (
     PerfilProfesional,
     DisponibilidadUsuario,
     Recomendaciones,
-    CuidadosEnfermeria, 
+    CuidadosEnfermeria,
     ElementosPaciente,
     RecuperacionPassword,
     Notificaciones,
@@ -59,7 +56,7 @@ from .models import (
 from .serializers import (
     DiagnosticosSerializer,
     EnfermedadesSerializer,
-    MedicamentosSerializer, 
+    MedicamentosSerializer,
     PacientesSerializer,
     RolesSerializer,
     TratamientoSerializer,
@@ -101,28 +98,37 @@ from .serializers import (
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
 )
-#Esta parte hace que se pueda registrar un usuario, validando que no exista otro con el mismo correo o número de documento.
-#Si el registro es exitoso, devuelve un mensaje de éxito y los datos del usuario registrado. Si hay errores en la validación,
-#devuelve los errores correspondientes.     
+
+
+# ============================================================
+# REGISTRO DE USUARIO
+# ============================================================
+
 @api_view(['POST'])
 def registro_usuario(request):
-
     serializer = RegistroUsuarioSerializer(data=request.data)
 
     if serializer.is_valid():
-
         correo = serializer.validated_data['correo']
         numero_documento = serializer.validated_data['numero_documento']
 
+        # Verificar que no exista otro usuario con el mismo correo
         if Usuarios.objects.filter(correo=correo).exists():
             return Response(
-                {'error': 'Ya existe un usuario con este correo.'},
+                {
+                    'error': 'Ya existe un usuario con este correo.'
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if Usuarios.objects.filter(numero_documento=numero_documento).exists():
+        # Verificar que no exista otro usuario con el mismo documento
+        if Usuarios.objects.filter(
+            numero_documento=numero_documento
+        ).exists():
             return Response(
-                {'error': 'Ya existe un usuario con este número de documento.'},
+                {
+                    'error': 'Ya existe un usuario con este número de documento.'
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -130,62 +136,80 @@ def registro_usuario(request):
 
         return Response(
             {
-            'mensaje': 'Inicio de sesión exitoso.',
-            'usuario': {
-            'id_usuario': usuario.id_usuario,
-            'nombres': usuario.nombres,
-            'apellidos': usuario.apellidos,
-            'correo': usuario.correo,
-            'id_rol': usuario.id_rol_id,
-            'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-            'estado': usuario.estado,
-            'foto': request.build_absolute_uri(usuario.foto.url) if usuario.foto else None
+                'mensaje': 'Usuario registrado correctamente.',
+                'usuario': {
+                    'id_usuario': usuario.id_usuario,
+                    'nombres': usuario.nombres,
+                    'apellidos': usuario.apellidos,
+                    'correo': usuario.correo,
+                    'id_rol': usuario.id_rol_id,
+                    'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+                    'estado': usuario.estado
                 }
             },
-             status=status.HTTP_200_OK
+            status=status.HTTP_200_OK
         )
 
     return Response(
         serializer.errors,
         status=status.HTTP_400_BAD_REQUEST
-
     )
-#esta parte permite que un usuario pueda iniciar sesión en la aplicación, validando su correo y contraseña.
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
 @api_view(['POST'])
 def login_usuario(request):
-
     correo = request.data.get('correo')
     contrasena = request.data.get('contrasena')
 
     if not correo or not contrasena:
         return Response(
-            {'error': 'El correo y la contraseña son obligatorios.'},
+            {
+                'error': 'El correo y la contraseña son obligatorios.'
+            },
             status=status.HTTP_400_BAD_REQUEST
         )
 
     try:
         usuario = Usuarios.objects.get(correo=correo)
+
     except Usuarios.DoesNotExist:
         return Response(
-            {'error': 'Credenciales inválidas.'},
+            {
+                'error': 'Credenciales inválidas.'
+            },
             status=status.HTTP_401_UNAUTHORIZED
         )
 
     if not usuario.contrasena:
         return Response(
-            {'error': 'Este usuario no tiene una contraseña registrada.'},
+            {
+                'error': 'Este usuario no tiene una contraseña registrada.'
+            },
             status=status.HTTP_401_UNAUTHORIZED
         )
 
-    if not check_password(contrasena, usuario.contrasena):
+    # Verificar contraseña
+    if not check_password(
+        contrasena,
+        usuario.contrasena
+    ):
         return Response(
-            {'error': 'Credenciales inválidas.'},
+            {
+                'error': 'Credenciales inválidas.'
+            },
             status=status.HTTP_401_UNAUTHORIZED
         )
 
+    # Verificar estado del usuario
     if not usuario.estado:
         return Response(
-            {'error': 'El usuario se encuentra inactivo.'},
+            {
+                'error': 'El usuario se encuentra inactivo.'
+            },
             status=status.HTTP_403_FORBIDDEN
         )
 
@@ -193,50 +217,44 @@ def login_usuario(request):
         {
             'mensaje': 'Inicio de sesión exitoso.',
             'usuario': {
-            'id_usuario': usuario.id_usuario,
-            'nombres': usuario.nombres,
-            'apellidos': usuario.apellidos,
-            'correo': usuario.correo,
-            'id_rol': usuario.id_rol_id,
-            'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-            'estado': usuario.estado
-        }
+                'id_usuario': usuario.id_usuario,
+                'nombres': usuario.nombres,
+                'apellidos': usuario.apellidos,
+                'correo': usuario.correo,
+                'id_rol': usuario.id_rol_id,
+                'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+                'estado': usuario.estado
+            }
         },
         status=status.HTTP_200_OK
     )
 
-#Aqui hacemos que un usuario pueda cambiar su contraseña, 
-#validando la contraseña actual y asegurando que la nueva contraseña sea diferente a la actual.    
+
+# ============================================================
+# CAMBIAR CONTRASEÑA
+# ============================================================
 
 @api_view(['POST'])
 def cambiar_contrasena(request):
-
-    id_usuario = request.data.get(
-        'id_usuario'
-    )
+    id_usuario = request.data.get('id_usuario')
 
     if not id_usuario:
-
         return Response(
             {
-                'error':
-                'El ID del usuario es obligatorio.'
+                'error': 'El ID del usuario es obligatorio.'
             },
             status=status.HTTP_400_BAD_REQUEST
         )
 
     try:
-
         usuario = Usuarios.objects.get(
             id_usuario=id_usuario
         )
 
     except Usuarios.DoesNotExist:
-
         return Response(
             {
-                'error':
-                'El usuario no existe.'
+                'error': 'El usuario no existe.'
             },
             status=status.HTTP_404_NOT_FOUND
         )
@@ -246,72 +264,54 @@ def cambiar_contrasena(request):
     )
 
     if not serializer.is_valid():
-
         return Response(
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    contrasena_actual = (
-        serializer.validated_data[
-            'contrasena_actual'
-        ]
-    )
+    contrasena_actual = serializer.validated_data[
+        'contrasena_actual'
+    ]
 
-    nueva_contrasena = (
-        serializer.validated_data[
-            'nueva_contrasena'
-        ]
-    )
+    nueva_contrasena = serializer.validated_data[
+        'nueva_contrasena'
+    ]
 
-    # =====================================================
-    # VERIFICAR CONTRASEÑA ACTUAL
-    # =====================================================
-
+    # Verificar que el usuario tenga contraseña
     if not usuario.contrasena:
-
         return Response(
             {
-                'error':
-                'Este usuario no tiene una contraseña registrada.'
+                'error': 'Este usuario no tiene una contraseña registrada.'
             },
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    # Verificar contraseña actual
     if not check_password(
         contrasena_actual,
         usuario.contrasena
     ):
-
         return Response(
             {
-                'error':
-                'La contraseña actual es incorrecta.'
+                'error': 'La contraseña actual es incorrecta.'
             },
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # =====================================================
-    # EVITAR USAR LA MISMA CONTRASEÑA
-    # =====================================================
-
+    # Evitar que la nueva contraseña sea igual
+    # a la contraseña actual
     if check_password(
         nueva_contrasena,
         usuario.contrasena
     ):
-
         return Response(
             {
-                'error':
-                'La nueva contraseña debe ser diferente a la actual.'
+                'error': 'La nueva contraseña debe ser diferente a la actual.'
             },
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    # =====================================================
-    # GUARDAR NUEVA CONTRASEÑA HASHEADA
-    # =====================================================
-
+    # Guardar nueva contraseña encriptada
     usuario.contrasena = make_password(
         nueva_contrasena
     )
@@ -322,19 +322,21 @@ def cambiar_contrasena(request):
 
     return Response(
         {
-            'mensaje':
-            'Contraseña actualizada correctamente.'
+            'mensaje': 'Contraseña actualizada correctamente.'
         },
         status=status.HTTP_200_OK
     )
+
+
+# ============================================================
+# RECUPERAR CONTRASEÑA
+# ============================================================
+
 @api_view(['POST'])
 def recuperar_password(request):
-
     correo = request.data.get('correo')
 
-
     if not correo:
-
         return Response(
             {
                 'error': 'El correo es obligatorio.'
@@ -342,16 +344,12 @@ def recuperar_password(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
     try:
-
         usuario = Usuarios.objects.get(
             correo=correo
         )
 
-
     except Usuarios.DoesNotExist:
-
         return Response(
             {
                 'error': 'No existe un usuario con este correo.'
@@ -359,85 +357,70 @@ def recuperar_password(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
-
+    # Generar código de 6 dígitos
     codigo = str(
         random.randint(100000, 999999)
     )
 
-
+    # Guardar código de recuperación
     RecuperacionPassword.objects.create(
-
         id_usuario=usuario,
-
         codigo=codigo,
-
         fecha_creacion=timezone.now(),
-
-        fecha_expiracion=
-            timezone.now() + timedelta(minutes=10),
-
+        fecha_expiracion=timezone.now() + timedelta(minutes=10),
         usado=False
-
     )
+
+    # Configuración de Brevo
     configuration = sib_api_v3_sdk.Configuration()
 
     configuration.api_key['api-key'] = settings.BREVO_API_KEY
-
 
     api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
         sib_api_v3_sdk.ApiClient(configuration)
     )
 
-
+    # Crear correo
     email = sib_api_v3_sdk.SendSmtpEmail(
-
         sender={
             "name": "GerIApp",
             "email": settings.EMAIL_FROM
         },
-
         to=[
             {
                 "email": correo
             }
         ],
-
         subject="Recuperación de contraseña GerIApp",
-
         html_content=f"""
         <h2>Recuperación de contraseña</h2>
-
         <p>Tu código es:</p>
-
         <h1>{codigo}</h1>
-
         <p>Este código vence en 10 minutos.</p>
         """
+    )
 
+    # Enviar correo
+    api_instance.send_transac_email(email)
+
+    return Response(
+        {
+            'mensaje': 'Código enviado correctamente al correo.'
+        },
+        status=status.HTTP_200_OK
     )
 
 
-    api_instance.send_transac_email(email)
+# ============================================================
+# VERIFICAR CÓDIGO DE RECUPERACIÓN
+# ============================================================
 
-
-    return Response(
-
-    {
-        'mensaje': 'Código enviado correctamente al correo.'
-    },
-
-    status=status.HTTP_200_OK
-
-)
 @api_view(['POST'])
 def verificar_codigo(request):
-
     correo = request.data.get('correo')
     codigo = request.data.get('codigo')
 
-
     if not correo or not codigo:
-
         return Response(
             {
                 'error': 'Correo y código son obligatorios.'
@@ -445,16 +428,12 @@ def verificar_codigo(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
     try:
-
         usuario = Usuarios.objects.get(
             correo=correo
         )
 
-
     except Usuarios.DoesNotExist:
-
         return Response(
             {
                 'error': 'Usuario no encontrado.'
@@ -462,18 +441,14 @@ def verificar_codigo(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
-
     try:
-
         recuperacion = RecuperacionPassword.objects.filter(
             id_usuario=usuario,
             codigo=codigo,
             usado=False
         ).latest('fecha_creacion')
 
-
     except RecuperacionPassword.DoesNotExist:
-
         return Response(
             {
                 'error': 'Código inválido.'
@@ -481,9 +456,9 @@ def verificar_codigo(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
-    if timezone.now().replace(tzinfo=None) > recuperacion.fecha_expiracion:
-
+    if timezone.now().replace(
+        tzinfo=None
+    ) > recuperacion.fecha_expiracion:
         return Response(
             {
                 'error': 'El código ya expiró.'
@@ -491,23 +466,25 @@ def verificar_codigo(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
     return Response(
         {
             'mensaje': 'Código válido.'
         },
         status=status.HTTP_200_OK
     )
+
+
+# ============================================================
+# CAMBIAR CONTRASEÑA MEDIANTE RECUPERACIÓN
+# ============================================================
+
 @api_view(['POST'])
 def cambiar_password_recuperacion(request):
-
     correo = request.data.get('correo')
     codigo = request.data.get('codigo')
     nueva_contrasena = request.data.get('nueva_contrasena')
 
-
     if not correo or not codigo or not nueva_contrasena:
-
         return Response(
             {
                 'error': 'Todos los campos son obligatorios.'
@@ -515,16 +492,12 @@ def cambiar_password_recuperacion(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
     try:
-
         usuario = Usuarios.objects.get(
             correo=correo
         )
 
-
     except Usuarios.DoesNotExist:
-
         return Response(
             {
                 'error': 'Usuario no encontrado.'
@@ -532,18 +505,14 @@ def cambiar_password_recuperacion(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
-
     try:
-
         recuperacion = RecuperacionPassword.objects.filter(
             id_usuario=usuario,
             codigo=codigo,
             usado=False
         ).latest('fecha_creacion')
 
-
     except RecuperacionPassword.DoesNotExist:
-
         return Response(
             {
                 'error': 'Código inválido.'
@@ -551,9 +520,9 @@ def cambiar_password_recuperacion(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
-    if timezone.now().replace(tzinfo=None) > recuperacion.fecha_expiracion:
-
+    if timezone.now().replace(
+        tzinfo=None
+    ) > recuperacion.fecha_expiracion:
         return Response(
             {
                 'error': 'El código expiró.'
@@ -561,18 +530,16 @@ def cambiar_password_recuperacion(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-
+    # Guardar nueva contraseña
     usuario.contrasena = make_password(
         nueva_contrasena
     )
 
     usuario.save()
 
-
+    # Marcar código como utilizado
     recuperacion.usado = True
-
     recuperacion.save()
-
 
     return Response(
         {
@@ -581,6 +548,10 @@ def cambiar_password_recuperacion(request):
         status=status.HTTP_200_OK
     )
 
+
+# ============================================================
+# VIEWSETS
+# ============================================================
 
 class PacientesViewSet(viewsets.ModelViewSet):
     queryset = Pacientes.objects.all()
@@ -601,12 +572,11 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
 
-    # Permite recibir datos JSON y archivos como imágenes
-    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
 class DocumentosViewSet(viewsets.ModelViewSet):
     queryset = Documentos.objects.all()
     serializer_class = DocumentosSerializer
+
 
 class HistoriaClinicasViewSet(viewsets.ModelViewSet):
     queryset = HistoriaClinicas.objects.all()
@@ -726,11 +696,18 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
 
+
 class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
 
-#Agrego el metoodo que me permite validar si el turno esta asignado no lo elimina y manda una alerta
+
+# ============================================================
+# TURNOS
+# No permite eliminar un turno que tenga asignaciones.
+# ============================================================
+
+
 class TurnosViewSet(viewsets.ModelViewSet):
     queryset = Turnos.objects.all()
     serializer_class = TurnosSerializer
@@ -767,13 +744,16 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
     queryset = AsignacionTurnoUsuario.objects.all()
     serializer_class = AsignacionTurnoUsuarioSerializer
 
+
 class PermisosViewSet(viewsets.ModelViewSet):
-    queryset =Permisos.objects.all()
-    serializer_class =PermisosSerializer
+    queryset = Permisos.objects.all()
+    serializer_class = PermisosSerializer
+
 
 class PermisosRolViewSet(viewsets.ModelViewSet):
-    queryset=PermisosRol.objects.all()
-    serializer_class=PermisosRolSerializer
+    queryset = PermisosRol.objects.all()
+    serializer_class = PermisosRolSerializer
+
 
 class FamiliarResponsableViewSet(viewsets.ModelViewSet):
     queryset = FamiliarResponsable.objects.all()
@@ -789,17 +769,21 @@ class DisponibilidadUsuarioViewSet(viewsets.ModelViewSet):
     queryset = DisponibilidadUsuario.objects.all()
     serializer_class = DisponibilidadUsuarioSerializer
 
+
 class RecomendacionesViewSet(viewsets.ModelViewSet):
     queryset = Recomendaciones.objects.all()
-    serializer_class = RecomendacionesSerializer    
+    serializer_class = RecomendacionesSerializer
+
 
 class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
     queryset = CuidadosEnfermeria.objects.all()
     serializer_class = CuidadosEnfermeriaSerializer
 
+
 class ElementosPacienteViewSet(viewsets.ModelViewSet):
     queryset = ElementosPaciente.objects.all()
     serializer_class = ElementosPacienteSerializer
+
 
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
     queryset = RecuperacionPassword.objects.all()

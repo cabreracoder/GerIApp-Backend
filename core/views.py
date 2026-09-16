@@ -52,6 +52,8 @@ from .models import (
     CuidadosEnfermeria, 
     ElementosPaciente,
     RecuperacionPassword,
+    Notificaciones,
+    NotificacionDestinatario,
 )
 
 from .serializers import (
@@ -96,6 +98,8 @@ from .serializers import (
     CuidadosEnfermeriaSerializer,
     ElementosPacienteSerializer,
     RecuperacionPasswordSerializer,
+    NotificacionesSerializer,
+    NotificacionDestinatarioSerializer,
 )
 #Esta parte hace que se pueda registrar un usuario, validando que no exista otro con el mismo correo o número de documento.
 #Si el registro es exitoso, devuelve un mensaje de éxito y los datos del usuario registrado. Si hay errores en la validación,
@@ -717,6 +721,14 @@ class ImagenesEventoAdversoViewSet(viewsets.ModelViewSet):
 class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
+
+class NotificacionesViewSet(viewsets.ModelViewSet):
+    queryset = Notificaciones.objects.all()
+    serializer_class = NotificacionesSerializer
+
+class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
+    queryset = NotificacionDestinatario.objects.all()
+    serializer_class = NotificacionDestinatarioSerializer
 
 #Agrego el metoodo que me permite validar si el turno esta asignado no lo elimina y manda una alerta
 class TurnosViewSet(viewsets.ModelViewSet):

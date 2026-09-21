@@ -50,7 +50,8 @@ from .models import (
     ElementosPaciente,
     RecuperacionPassword,
     Notificaciones,
-    NotificacionDestinatario
+    NotificacionDestinatario,
+    Citas,
 )
 
 from .serializers import (
@@ -97,6 +98,7 @@ from .serializers import (
     RecuperacionPasswordSerializer,
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
+    CitasSerializer,
 )
 
 
@@ -699,6 +701,10 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
 class  NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
+
+class  CitasViewSet(viewsets.ModelViewSet):
+    queryset = Citas.objects.all()
+    serializer_class = CitasSerializer
 
 
 # ============================================================

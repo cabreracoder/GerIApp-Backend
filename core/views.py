@@ -605,10 +605,45 @@ class TratamientoMedicamentoViewSet(viewsets.ModelViewSet):
     serializer_class = TratamientoMedicamentoSerializer
 
 
+
+# ============================================================
+# VIEWSET DE INVENTARIO
+# ============================================================
+
 class InventarioViewSet(viewsets.ModelViewSet):
+
+    # ========================================================
+    # QUERYSET BASE
+    # ========================================================
+
     queryset = Inventario.objects.all()
+
     serializer_class = InventarioSerializer
 
+    # ========================================================
+    # OBTENER INVENTARIO
+    # ========================================================
+
+    def get_queryset(self):
+
+        queryset = Inventario.objects.all()
+
+        # ====================================================
+        # OBTENER ID DEL PACIENTE DESDE LA URL
+        # ====================================================
+
+        id_paciente = self.request.query_params.get('id_paciente')
+
+        # ====================================================
+        # FILTRAR INVENTARIO DEL PACIENTE
+        # ====================================================
+
+        if id_paciente:
+            queryset = queryset.filter(
+                id_paciente=id_paciente
+            )
+
+        return queryset
 
 class EntregaMedicaViewSet(viewsets.ModelViewSet):
     queryset = EntregaMedica.objects.all()

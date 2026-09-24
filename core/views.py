@@ -872,8 +872,50 @@ class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
 
 
 class ElementosPacienteViewSet(viewsets.ModelViewSet):
+
     queryset = ElementosPaciente.objects.all()
+
     serializer_class = ElementosPacienteSerializer
+
+    # ========================================================
+    # CREAR ELEMENTO DEL PACIENTE
+    # ========================================================
+
+    def perform_create(self, serializer):
+
+        # ====================================================
+        # GUARDAR PRIMERO EL ELEMENTO DEL PACIENTE
+        # ====================================================
+
+        elemento = serializer.save()
+
+        # ====================================================
+        # VALIDAR SI EL REGISTRO ES UN MEDICAMENTO
+        # ====================================================
+
+        if elemento.id_medicamentos:
+
+            # =================================================
+            # CREAR REGISTRO EN INVENTARIO
+            # =================================================
+
+            Inventario.objects.create(
+
+                id_paciente=elemento.id_paciente,
+
+                id_medicamentos=elemento.id_medicamentos,
+
+                cantidad_actual=elemento.cantidad,
+
+                cantidad_minima=5,
+
+                fecha_ultimo_ingreso=elemento.fecha_ingreso,
+
+                fecha_vencimiento=elemento.fecha_vencimiento,
+
+                estado=True
+
+            )
 
 
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):

@@ -16,7 +16,7 @@ from .views import ActividadesViewSet, SignosVitalesViewSet, TipoEventoViewSet, 
 
 from .views import AsignacionPacienteCuidadorViewSet, TurnosViewSet, AsignacionTurnoUsuarioViewSet, PermisosViewSet, PermisosRolViewSet
 
-from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena,recuperar_password,verificar_codigo,cambiar_password_recuperacion
+from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena,recuperar_password,verificar_codigo,cambiar_password_recuperacion,login_google
 
 
 from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet,NotificacionesViewSet,NotificacionDestinatarioViewSet
@@ -148,6 +148,11 @@ path(
     'usuarios/cambiar-password-recuperacion/',
     cambiar_password_recuperacion,
     name='cambiar_password_recuperacion'
+),
+path(
+    'usuarios/login-google/',
+    login_google,
+    name='login_google'
 ),
 
 path(

@@ -1,10 +1,13 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
 
 import sib_api_v3_sdk
 from django.conf import settings
+from google.oauth2 import id_token
+from google.auth.transport import requests
 import random
 from datetime import timedelta
 from django.utils import timezone
@@ -231,7 +234,89 @@ def login_usuario(request):
         status=status.HTTP_200_OK
     )
 
+# ============================================================
+# LOGIN CON GOOGLE
+# ============================================================
+@csrf_exempt
+@api_view(['POST'])
+def login_google(request):
 
+    token = request.data.get('token')
+
+    if not token:
+        return Response(
+            {
+                'error': 'Token de Google requerido.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    try:
+
+        datos_google = id_token.verify_oauth2_token(
+            token,
+            requests.Request(),
+            settings.GOOGLE_CLIENT_ID
+        )
+
+        correo = datos_google.get('email')
+
+
+        usuario = Usuarios.objects.filter(
+            correo=correo
+        ).first()
+
+
+        if not usuario:
+
+            return Response(
+                {
+                    'error':
+                    'Usuario no registrado. Por favor cree una cuenta.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+        return Response(
+            {
+                'mensaje':
+                'Inicio de sesión exitoso.',
+
+                'usuario': {
+
+                    'id_usuario':
+                    usuario.id_usuario,
+
+                    'nombres':
+                    usuario.nombres,
+
+                    'apellidos':
+                    usuario.apellidos,
+
+                    'correo':
+                    usuario.correo,
+
+                    'id_rol':
+                    usuario.id_rol_id
+
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+    except Exception as error:
+
+        return Response(
+            {
+                'error':
+                'Token de Google inválido.',
+                'detalle':
+                str(error)
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
 # ============================================================
 # CAMBIAR CONTRASEÑA
 # ============================================================

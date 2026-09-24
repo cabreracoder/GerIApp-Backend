@@ -5,6 +5,13 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
+GOOGLE_CLIENT_ID = os.getenv(
+    'GOOGLE_CLIENT_ID'
+)
+
+GOOGLE_CLIENT_SECRET = os.getenv(
+    'GOOGLE_CLIENT_SECRET'
+)
 
 
 # Quick-start development settings - unsuitable for production

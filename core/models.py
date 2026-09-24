@@ -356,18 +356,32 @@ class Insumos(models.Model):
 
 class Inventario(models.Model):
     id_inventario = models.AutoField(primary_key=True)
-    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
-    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        blank=True,
+        null=True
+    )
+    id_medicamentos = models.ForeignKey(
+        'Medicamentos',
+        models.DO_NOTHING,
+        db_column='id_medicamentos',
+        blank=True,
+        null=True
+    )
     cantidad_actual = models.IntegerField()
     cantidad_minima = models.IntegerField()
     fecha_ultimo_ingreso = models.DateTimeField()
-    fecha_vencimiento = models.DateField()
+    fecha_vencimiento = models.DateField(
+        blank=True,
+        null=True
+    )
     estado = models.BooleanField()
 
     class Meta:
         managed = False
         db_table = 'inventario'
-
 
 class Medicamentos(models.Model):
     id_medicamentos = models.AutoField(primary_key=True)
@@ -697,6 +711,22 @@ class CuidadosEnfermeria(models.Model):
     class Meta:
         managed = False
         db_table = 'cuidados_enfermeria'
+
+class Citas(models.Model):
+    id_cita = models.CharField(primary_key=True)
+    fecha = models.CharField()
+    hora = models.CharField()
+    lugar = models.CharField()
+    motivo = models.CharField()
+    estado = models.CharField()
+    observaciones = models.CharField()
+    fecha_registro = models.CharField()
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'citas'
 
 
 class ElementosPaciente(models.Model):

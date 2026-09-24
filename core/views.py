@@ -50,7 +50,8 @@ from .models import (
     ElementosPaciente,
     RecuperacionPassword,
     Notificaciones,
-    NotificacionDestinatario
+    NotificacionDestinatario,
+    Citas,
 )
 
 from .serializers import (
@@ -97,6 +98,7 @@ from .serializers import (
     RecuperacionPasswordSerializer,
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
+    CitasSerializer,
 )
 
 
@@ -603,10 +605,45 @@ class TratamientoMedicamentoViewSet(viewsets.ModelViewSet):
     serializer_class = TratamientoMedicamentoSerializer
 
 
+
+# ============================================================
+# VIEWSET DE INVENTARIO
+# ============================================================
+
 class InventarioViewSet(viewsets.ModelViewSet):
+
+    # ========================================================
+    # QUERYSET BASE
+    # ========================================================
+
     queryset = Inventario.objects.all()
+
     serializer_class = InventarioSerializer
 
+    # ========================================================
+    # OBTENER INVENTARIO
+    # ========================================================
+
+    def get_queryset(self):
+
+        queryset = Inventario.objects.all()
+
+        # ====================================================
+        # OBTENER ID DEL PACIENTE DESDE LA URL
+        # ====================================================
+
+        id_paciente = self.request.query_params.get('id_paciente')
+
+        # ====================================================
+        # FILTRAR INVENTARIO DEL PACIENTE
+        # ====================================================
+
+        if id_paciente:
+            queryset = queryset.filter(
+                id_paciente=id_paciente
+            )
+
+        return queryset
 
 class EntregaMedicaViewSet(viewsets.ModelViewSet):
     queryset = EntregaMedica.objects.all()
@@ -699,6 +736,62 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
 class  NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
+    
+    def create(self, request, *args, **kwargs):
+
+        response = super().create(request, *args, **kwargs)
+
+        destinatario = NotificacionDestinatario.objects.get(
+            id_notificacion_destinatario=response.data['id_notificacion_destinatario']
+        )
+
+        notificacion = destinatario.id_notificacion
+
+        usuario = destinatario.id_usuario
+
+        if (
+            notificacion
+            and notificacion.enviar_correo
+            and usuario
+            and usuario.correo
+        ):
+
+            try:
+
+                configuration = sib_api_v3_sdk.Configuration()
+
+                configuration.api_key['api-key'] = settings.BREVO_API_KEY
+
+                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
+                    sib_api_v3_sdk.ApiClient(configuration)
+                )
+
+                email = sib_api_v3_sdk.SendSmtpEmail(
+                    sender={
+                        "name": "GerIApp",
+                        "email": settings.EMAIL_FROM
+                    },
+                    to=[
+                        {"email": usuario.correo}
+                    ],
+                    subject=notificacion.titulo,
+                    html_content=f"""
+                    <h2>{notificacion.titulo}</h2>
+                    <p>{notificacion.mensaje}</p>
+                    """
+                )
+
+                api_instance.send_transac_email(email)
+
+            except Exception as e:
+
+                print(f"Error al enviar correo de notificación: {e}")
+
+        return response
+
+class  CitasViewSet(viewsets.ModelViewSet):
+    queryset = Citas.objects.all()
+    serializer_class = CitasSerializer
 
 
 # ============================================================
@@ -779,8 +872,50 @@ class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
 
 
 class ElementosPacienteViewSet(viewsets.ModelViewSet):
+
     queryset = ElementosPaciente.objects.all()
+
     serializer_class = ElementosPacienteSerializer
+
+    # ========================================================
+    # CREAR ELEMENTO DEL PACIENTE
+    # ========================================================
+
+    def perform_create(self, serializer):
+
+        # ====================================================
+        # GUARDAR PRIMERO EL ELEMENTO DEL PACIENTE
+        # ====================================================
+
+        elemento = serializer.save()
+
+        # ====================================================
+        # VALIDAR SI EL REGISTRO ES UN MEDICAMENTO
+        # ====================================================
+
+        if elemento.id_medicamentos:
+
+            # =================================================
+            # CREAR REGISTRO EN INVENTARIO
+            # =================================================
+
+            Inventario.objects.create(
+
+                id_paciente=elemento.id_paciente,
+
+                id_medicamentos=elemento.id_medicamentos,
+
+                cantidad_actual=elemento.cantidad,
+
+                cantidad_minima=5,
+
+                fecha_ultimo_ingreso=elemento.fecha_ingreso,
+
+                fecha_vencimiento=elemento.fecha_vencimiento,
+
+                estado=True
+
+            )
 
 
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):

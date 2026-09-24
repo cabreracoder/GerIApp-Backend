@@ -45,6 +45,7 @@ from .models import (
     RecuperacionPassword,
     Notificaciones,
     NotificacionDestinatario,
+    Citas,
 )
 
 
@@ -314,6 +315,9 @@ class NotificacionesSerializer(serializers.ModelSerializer):
 class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificacionDestinatario
+class CitasSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Citas
         fields = '__all__'
 
 

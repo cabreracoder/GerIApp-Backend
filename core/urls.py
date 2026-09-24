@@ -22,6 +22,7 @@ from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,Disponibi
 from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet,NotificacionesViewSet,NotificacionDestinatarioViewSet
 
 
+from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet, NotificacionesViewSet, NotificacionDestinatarioViewSet, CitasViewSet
 
 router = DefaultRouter()
 
@@ -106,6 +107,8 @@ router.register(r'recuperacion_password', RecuperacionPasswordViewSet)
 router.register(r'notificaciones', NotificacionesViewSet)
 
 router.register(r'notificacion_destinatario', NotificacionDestinatarioViewSet)
+
+router.register(r'citas', CitasViewSet)
 
 urlpatterns = [
 

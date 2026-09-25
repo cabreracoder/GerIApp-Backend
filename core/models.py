@@ -356,18 +356,45 @@ class Insumos(models.Model):
 
 class Inventario(models.Model):
     id_inventario = models.AutoField(primary_key=True)
-    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
-    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        blank=True,
+        null=True
+    )
+
+    id_medicamentos = models.ForeignKey(
+        'Medicamentos',
+        models.DO_NOTHING,
+        db_column='id_medicamentos',
+        blank=True,
+        null=True
+    )
+
+    id_elemento = models.ForeignKey(
+        'ElementosPaciente',
+        models.DO_NOTHING,
+        db_column='id_elemento',
+        blank=True,
+        null=True
+    )
+
     cantidad_actual = models.IntegerField()
     cantidad_minima = models.IntegerField()
     fecha_ultimo_ingreso = models.DateTimeField()
-    fecha_vencimiento = models.DateField()
+
+    fecha_vencimiento = models.DateField(
+        blank=True,
+        null=True
+    )
+
     estado = models.BooleanField()
 
     class Meta:
         managed = False
         db_table = 'inventario'
-
 
 class Medicamentos(models.Model):
     id_medicamentos = models.AutoField(primary_key=True)
@@ -766,4 +793,29 @@ class ElementosPaciente(models.Model):
         db_table = 'elementos_paciente'
 
 
+class Notificaciones(models.Model):
+    id_notificacion = models.AutoField(primary_key=True)
+    titulo = models.CharField()
+    tipo = models.CharField()
+    mensaje = models.CharField()
+    enviar_correo = models.BooleanField()
+    fecha_hora = models.DateTimeField()
+    estado = models.BooleanField()
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
 
+    class Meta:
+        managed = False
+        db_table = 'notificaciones'
+
+
+class NotificacionDestinatario(models.Model):
+    id_notificacion_destinatario = models.AutoField(primary_key=True)
+    leida = models.BooleanField()
+    fecha_lectura = models.DateTimeField(blank=True, null=True)
+    id_notificacion = models.ForeignKey(Notificaciones, models.DO_NOTHING, db_column='id_notificacion', blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'notificacion_destinatario'

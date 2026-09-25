@@ -1,10 +1,16 @@
-
 from pathlib import Path
 from dotenv import load_dotenv
 import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
+GOOGLE_CLIENT_ID = os.getenv(
+    'GOOGLE_CLIENT_ID'
+)
+
+GOOGLE_CLIENT_SECRET = os.getenv(
+    'GOOGLE_CLIENT_SECRET'
+)
 
 
 # Quick-start development settings - unsuitable for production
@@ -117,12 +123,10 @@ USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
+# https://docs.djangoproject.com/en/6.1/howto/static-files/
+
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-
-# Media files (fotos de perfil y otros archivos subidos)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
 
 
 # Email

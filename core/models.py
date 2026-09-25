@@ -356,18 +356,45 @@ class Insumos(models.Model):
 
 class Inventario(models.Model):
     id_inventario = models.AutoField(primary_key=True)
-    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
-    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        blank=True,
+        null=True
+    )
+
+    id_medicamentos = models.ForeignKey(
+        'Medicamentos',
+        models.DO_NOTHING,
+        db_column='id_medicamentos',
+        blank=True,
+        null=True
+    )
+
+    id_elemento = models.ForeignKey(
+        'ElementosPaciente',
+        models.DO_NOTHING,
+        db_column='id_elemento',
+        blank=True,
+        null=True
+    )
+
     cantidad_actual = models.IntegerField()
     cantidad_minima = models.IntegerField()
     fecha_ultimo_ingreso = models.DateTimeField()
-    fecha_vencimiento = models.DateField()
+
+    fecha_vencimiento = models.DateField(
+        blank=True,
+        null=True
+    )
+
     estado = models.BooleanField()
 
     class Meta:
         managed = False
         db_table = 'inventario'
-
 
 class Medicamentos(models.Model):
     id_medicamentos = models.AutoField(primary_key=True)

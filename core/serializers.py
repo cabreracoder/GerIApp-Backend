@@ -307,10 +307,78 @@ class RecuperacionPasswordSerializer(serializers.ModelSerializer):
         model = RecuperacionPassword
         fields = '__all__'
 
+
 class CitasSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = Citas
         fields = '__all__'
+
+    def create(self, validated_data):
+
+
+        cita = Citas.objects.create(**validated_data)
+
+        # VERIFICAR QUE LA CITA TENGA PACIENTE
+
+        if not cita.id_paciente:
+            return cita
+
+        # BUSCAR EL CUIDADOR ACTUAL DEL PACIENTE
+
+        asignacion = (
+            AsignacionPacienteCuidador.objects
+            .filter(
+                id_paciente=cita.id_paciente,
+                estado__iexact="Activo"
+            )
+            .order_by("-fecha_inicio")
+            .first()
+        )
+
+
+        if not asignacion or not asignacion.id_usuario:
+            return cita
+
+        # CREAR LA NOTIFICACIÓN
+
+        nombre_paciente = (
+            f"{cita.id_paciente.nombre} "
+            f"{cita.id_paciente.apellido}"
+        ).strip()
+
+        mensaje = (
+            f"El paciente {nombre_paciente} tiene una nueva cita "
+            f"el {cita.fecha} a las {cita.hora}."
+        )
+
+        if cita.lugar:
+            mensaje += f" Lugar: {cita.lugar}."
+
+        if cita.motivo:
+            mensaje += f" Motivo: {cita.motivo}."
+
+        notificacion = Notificaciones.objects.create(
+            titulo="Nueva cita",
+            tipo="CITA",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=cita.id_paciente,
+            id_usuario=asignacion.id_usuario
+        )
+
+        # CREAR EL DESTINATARIO
+
+        NotificacionDestinatario.objects.create(
+            leida=False,
+            fecha_lectura=None,
+            id_notificacion=notificacion,
+            id_usuario=asignacion.id_usuario
+        )
+
+        return cita
 
 
 # Esta parte permite registrar un usuario desde la aplicación,

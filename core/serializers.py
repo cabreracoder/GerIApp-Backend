@@ -1,5 +1,4 @@
 from django.core.serializers import python
-from django.conf import settings
 from rest_framework import serializers
 from django.utils import timezone
 
@@ -49,6 +48,7 @@ from .models import (
 )
 
 
+
 class PacientesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pacientes
@@ -71,23 +71,6 @@ class UsuariosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Usuarios
         fields = '__all__'
-
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-
-        if instance.foto:
-            request = self.context.get('request')
-            ruta_foto = f'{settings.MEDIA_URL}{instance.foto.name}'
-
-            if request:
-                data['foto'] = request.build_absolute_uri(ruta_foto)
-            else:
-                data['foto'] = ruta_foto
-        else:
-            data['foto'] = None
-
-        return data
-
 
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -253,18 +236,15 @@ class AsignacionTurnoUsuarioSerializer(serializers.ModelSerializer):
         model = AsignacionTurnoUsuario
         fields = '__all__'
 
-
 class PermisosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permisos
         fields = '__all__'
 
-
 class PermisosRolSerializer(serializers.ModelSerializer):
     class Meta:
         model = PermisosRol
         fields = '__all__'
-
 
 class FamiliarResponsableSerializer(serializers.ModelSerializer):
     class Meta:
@@ -283,42 +263,98 @@ class DisponibilidadUsuarioSerializer(serializers.ModelSerializer):
         model = DisponibilidadUsuario
         fields = '__all__'
 
-
 class RecomendacionesSerializer(serializers.ModelSerializer):
     class Meta:
         model = Recomendaciones
         fields = '__all__'
-
 
 class CuidadosEnfermeriaSerializer(serializers.ModelSerializer):
     class Meta:
         model = CuidadosEnfermeria
         fields = '__all__'
 
-
 class ElementosPacienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = ElementosPaciente
         fields = '__all__'
-
 
 class RecuperacionPasswordSerializer(serializers.ModelSerializer):
     class Meta:
         model = RecuperacionPassword
         fields = '__all__'
 
-class NotificacionesSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Notificaciones
-        fields = '__all__'
 
-class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = NotificacionDestinatario
 class CitasSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = Citas
         fields = '__all__'
+
+    def create(self, validated_data):
+
+
+        cita = Citas.objects.create(**validated_data)
+
+        # VERIFICAR QUE LA CITA TENGA PACIENTE
+
+        if not cita.id_paciente:
+            return cita
+
+        # BUSCAR EL CUIDADOR ACTUAL DEL PACIENTE
+
+        asignacion = (
+            AsignacionPacienteCuidador.objects
+            .filter(
+                id_paciente=cita.id_paciente,
+                estado__iexact="Activo"
+            )
+            .order_by("-fecha_inicio")
+            .first()
+        )
+
+
+        if not asignacion or not asignacion.id_usuario:
+            return cita
+
+        # CREAR LA NOTIFICACIÓN
+
+        nombre_paciente = (
+            f"{cita.id_paciente.nombre} "
+            f"{cita.id_paciente.apellido}"
+        ).strip()
+
+        mensaje = (
+            f"El paciente {nombre_paciente} tiene una nueva cita "
+            f"el {cita.fecha} a las {cita.hora}."
+        )
+
+        if cita.lugar:
+            mensaje += f" Lugar: {cita.lugar}."
+
+        if cita.motivo:
+            mensaje += f" Motivo: {cita.motivo}."
+
+        notificacion = Notificaciones.objects.create(
+            titulo="Nueva cita",
+            tipo="CITA",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=cita.id_paciente,
+            id_usuario=asignacion.id_usuario
+        )
+
+        # CREAR EL DESTINATARIO
+
+        NotificacionDestinatario.objects.create(
+            leida=False,
+            fecha_lectura=None,
+            id_notificacion=notificacion,
+            id_usuario=asignacion.id_usuario
+        )
+
+        return cita
 
 
 # Esta parte permite registrar un usuario desde la aplicación,
@@ -353,10 +389,9 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
 
         return usuario
 
-
-# Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
-# este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
-# nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación.
+#Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
+#este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
+#nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación. 
 
 class CambiarContrasenaSerializer(serializers.Serializer):
     contrasena_actual = serializers.CharField(
@@ -389,3 +424,4 @@ class CambiarContrasenaSerializer(serializers.Serializer):
             )
 
         return data
+

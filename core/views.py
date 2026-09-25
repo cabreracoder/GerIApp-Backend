@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
 
 import sib_api_v3_sdk
+from django.db import transaction
 from django.conf import settings
 from google.oauth2 import id_token
 from google.auth.transport import requests
@@ -690,10 +691,45 @@ class TratamientoMedicamentoViewSet(viewsets.ModelViewSet):
     serializer_class = TratamientoMedicamentoSerializer
 
 
+
+# ============================================================
+# VIEWSET DE INVENTARIO
+# ============================================================
+
 class InventarioViewSet(viewsets.ModelViewSet):
+
+    # ========================================================
+    # QUERYSET BASE
+    # ========================================================
+
     queryset = Inventario.objects.all()
+
     serializer_class = InventarioSerializer
 
+    # ========================================================
+    # OBTENER INVENTARIO
+    # ========================================================
+
+    def get_queryset(self):
+
+        queryset = Inventario.objects.all()
+
+        # ====================================================
+        # OBTENER ID DEL PACIENTE DESDE LA URL
+        # ====================================================
+
+        id_paciente = self.request.query_params.get('id_paciente')
+
+        # ====================================================
+        # FILTRAR INVENTARIO DEL PACIENTE
+        # ====================================================
+
+        if id_paciente:
+            queryset = queryset.filter(
+                id_paciente=id_paciente
+            )
+
+        return queryset
 
 class EntregaMedicaViewSet(viewsets.ModelViewSet):
     queryset = EntregaMedica.objects.all()
@@ -713,6 +749,54 @@ class MovimientoMedicamentoViewSet(viewsets.ModelViewSet):
 class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
     queryset = AplicacionMedicamento.objects.all()
     serializer_class = AplicacionMedicamentoSerializer
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Obtener la información enviada desde la app móvil
+        inventario_id = request.data.get('id_inventario') or serializer.validated_data.get('id_inventario')
+        
+        # Convertir a entero si el objeto viene completo como Foreign Key
+        if hasattr(inventario_id, 'id_inventario'):
+            inventario_id = inventario_id.id_inventario
+
+        if not inventario_id:
+            return Response(
+                {"error": "Debe proporcionar el id_inventario."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Buscar el registro de inventario y bloquear la fila durante la transacción
+            item_inventario = Inventario.objects.select_for_update().get(pk=inventario_id)
+
+            # Validar si hay stock disponible en cantidad_actual
+            if item_inventario.cantidad_actual < 1:
+                return Response(
+                    {"error": f"Stock insuficiente en inventario. Disponible: {item_inventario.cantidad_actual}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Descontar 1 unidad de cantidad_actual y guardar
+            item_inventario.cantidad_actual -= 1
+            item_inventario.save()
+
+            # Guardar el registro de la aplicación de medicamento
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+        except Inventario.DoesNotExist:
+            return Response(
+                {"error": "El registro de inventario especificado no existe."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+       
+
+    
 
 
 class TipoInsumoViewSet(viewsets.ModelViewSet):
@@ -923,10 +1007,154 @@ class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
     serializer_class = CuidadosEnfermeriaSerializer
 
 
+# ============================================================
+# VIEWSET DE ELEMENTOS DEL PACIENTE
+# ============================================================
+
 class ElementosPacienteViewSet(viewsets.ModelViewSet):
+
     queryset = ElementosPaciente.objects.all()
+
     serializer_class = ElementosPacienteSerializer
 
+    # ========================================================
+    # CREAR ELEMENTO DEL PACIENTE
+    # ========================================================
+
+    def perform_create(self, serializer):
+
+        # ====================================================
+        # GUARDAR EL ELEMENTO DEL PACIENTE
+        # ====================================================
+
+        elemento = serializer.save()
+
+        # ====================================================
+        # VALIDAR SI ES UN MEDICAMENTO
+        # ====================================================
+
+        if elemento.id_medicamentos:
+
+            # =================================================
+            # CREAR SU REGISTRO CORRESPONDIENTE EN INVENTARIO
+            # =================================================
+
+            Inventario.objects.create(
+                id_paciente=elemento.id_paciente,
+                id_medicamentos=elemento.id_medicamentos,
+                id_elemento=elemento,
+                cantidad_actual=elemento.cantidad,
+                cantidad_minima=5,
+                fecha_ultimo_ingreso=elemento.fecha_ingreso,
+                fecha_vencimiento=elemento.fecha_vencimiento,
+                estado=True
+            )
+
+    # ========================================================
+    # EDITAR ELEMENTO DEL PACIENTE
+    # ========================================================
+
+    def perform_update(self, serializer):
+
+        # ====================================================
+        # OBTENER EL ELEMENTO QUE SE ESTÁ EDITANDO
+        # ====================================================
+
+        elemento = self.get_object()
+
+        # ====================================================
+        # GUARDAR LOS CAMBIOS
+        # ====================================================
+
+        elemento = serializer.save()
+
+        # ====================================================
+        # BUSCAR EL INVENTARIO RELACIONADO
+        # ====================================================
+
+        inventario = Inventario.objects.filter(
+            id_elemento=elemento.id_elemento
+        ).first()
+
+        # ====================================================
+        # SI SIGUE SIENDO UN MEDICAMENTO
+        # ====================================================
+
+        if elemento.id_medicamentos:
+
+            # =================================================
+            # SI YA TIENE INVENTARIO, ACTUALIZARLO
+            # =================================================
+
+            if inventario:
+
+                inventario.id_paciente = elemento.id_paciente
+                inventario.id_medicamentos = elemento.id_medicamentos
+                inventario.cantidad_actual = elemento.cantidad
+                inventario.fecha_ultimo_ingreso = elemento.fecha_ingreso
+                inventario.fecha_vencimiento = elemento.fecha_vencimiento
+                inventario.estado = True
+
+                inventario.save()
+
+            # =================================================
+            # SI NO TIENE INVENTARIO, CREARLO
+            # =================================================
+
+            else:
+
+                Inventario.objects.create(
+                    id_paciente=elemento.id_paciente,
+                    id_medicamentos=elemento.id_medicamentos,
+                    id_elemento=elemento,
+                    cantidad_actual=elemento.cantidad,
+                    cantidad_minima=5,
+                    fecha_ultimo_ingreso=elemento.fecha_ingreso,
+                    fecha_vencimiento=elemento.fecha_vencimiento,
+                    estado=True
+                )
+
+        # ====================================================
+        # SI EL ELEMENTO DEJÓ DE SER UN MEDICAMENTO
+        # ====================================================
+
+        else:
+
+            # =================================================
+            # ELIMINAR SU INVENTARIO
+            # =================================================
+
+            if inventario:
+
+                inventario.delete()
+
+    # ========================================================
+    # ELIMINAR ELEMENTO DEL PACIENTE
+    # ========================================================
+
+    def perform_destroy(self, instance):
+
+        # ====================================================
+        # BUSCAR EL INVENTARIO RELACIONADO
+        # ====================================================
+
+        inventario = Inventario.objects.filter(
+            id_elemento=instance.id_elemento
+        ).first()
+
+        # ====================================================
+        # ELIMINAR PRIMERO EL INVENTARIO
+        # ====================================================
+
+        if inventario:
+
+            inventario.delete()
+
+        # ====================================================
+        # ELIMINAR EL ELEMENTO DEL PACIENTE
+        # ====================================================
+
+        instance.delete()
 
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
     queryset = RecuperacionPassword.objects.all()

@@ -111,8 +111,12 @@ router.register(r'notificacion_destinatario', NotificacionDestinatarioViewSet)
 router.register(r'citas', CitasViewSet)
 
 urlpatterns = [
-
-
+    
+path(
+    'usuarios/login-google/',
+    login_google,
+    name='login_google'
+),    
 path(
     'usuarios/registro/',
     registro_usuario,
@@ -149,12 +153,6 @@ path(
     cambiar_password_recuperacion,
     name='cambiar_password_recuperacion'
 ),
-path(
-    'usuarios/login-google/',
-    login_google,
-    name='login_google'
-),
-
 path(
     '',
     include(router.urls)

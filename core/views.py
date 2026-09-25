@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
 
 import sib_api_v3_sdk
+from django.db import transaction
 from django.conf import settings
 import random
 from datetime import timedelta
@@ -663,6 +664,54 @@ class MovimientoMedicamentoViewSet(viewsets.ModelViewSet):
 class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
     queryset = AplicacionMedicamento.objects.all()
     serializer_class = AplicacionMedicamentoSerializer
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Obtener la información enviada desde la app móvil
+        inventario_id = request.data.get('id_inventario') or serializer.validated_data.get('id_inventario')
+        
+        # Convertir a entero si el objeto viene completo como Foreign Key
+        if hasattr(inventario_id, 'id_inventario'):
+            inventario_id = inventario_id.id_inventario
+
+        if not inventario_id:
+            return Response(
+                {"error": "Debe proporcionar el id_inventario."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Buscar el registro de inventario y bloquear la fila durante la transacción
+            item_inventario = Inventario.objects.select_for_update().get(pk=inventario_id)
+
+            # Validar si hay stock disponible en cantidad_actual
+            if item_inventario.cantidad_actual < 1:
+                return Response(
+                    {"error": f"Stock insuficiente en inventario. Disponible: {item_inventario.cantidad_actual}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Descontar 1 unidad de cantidad_actual y guardar
+            item_inventario.cantidad_actual -= 1
+            item_inventario.save()
+
+            # Guardar el registro de la aplicación de medicamento
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+
+            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+        except Inventario.DoesNotExist:
+            return Response(
+                {"error": "El registro de inventario especificado no existe."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+       
+
+    
 
 
 class TipoInsumoViewSet(viewsets.ModelViewSet):

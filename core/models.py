@@ -21,6 +21,7 @@ class AplicacionMedicamento(models.Model):
     id_inventario = models.ForeignKey('Inventario', models.DO_NOTHING, db_column='id_inventario', blank=True, null=True)
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
     fecha_hora = models.DateTimeField()
+    cantidad_aplicada = models.IntegerField(default=1)
     dosis_administrada = models.CharField()
     via_administracion = models.CharField()
     estado = models.BooleanField()

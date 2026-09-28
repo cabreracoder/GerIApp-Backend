@@ -755,9 +755,9 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Obtener la información enviada desde la app móvil
+        # Obtener el ID del inventario enviado desde la aplicación
         inventario_id = request.data.get('id_inventario') or serializer.validated_data.get('id_inventario')
-        
+
         # Convertir a entero si el objeto viene completo como Foreign Key
         if hasattr(inventario_id, 'id_inventario'):
             inventario_id = inventario_id.id_inventario
@@ -769,35 +769,57 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Buscar el registro de inventario y bloquear la fila durante la transacción
-            item_inventario = Inventario.objects.select_for_update().get(pk=inventario_id)
+            # Buscar el inventario y bloquear la fila durante la transacción
+            item_inventario = Inventario.objects.select_for_update().get(
+                pk=inventario_id
+            )
 
-            # Validar si hay stock disponible en cantidad_actual
-            if item_inventario.cantidad_actual < 1:
+            # Obtener la cantidad de unidades que se van a aplicar
+            cantidad_aplicada = serializer.validated_data.get(
+                'cantidad_aplicada',
+                1
+            )
+
+            # Validar que la cantidad sea mayor que cero
+            if cantidad_aplicada <= 0:
                 return Response(
-                    {"error": f"Stock insuficiente en inventario. Disponible: {item_inventario.cantidad_actual}"},
+                    {"error": "La cantidad aplicada debe ser mayor que cero."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Descontar 1 unidad de cantidad_actual y guardar
-            item_inventario.cantidad_actual -= 1
-            item_inventario.save()
+            # Validar que exista suficiente stock
+            if item_inventario.cantidad_actual < cantidad_aplicada:
+                return Response(
+                    {
+                        "error": (
+                            f"Stock insuficiente en inventario. "
+                            f"Disponible: {item_inventario.cantidad_actual}. "
+                            f"Solicitado: {cantidad_aplicada}."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            # Guardar el registro de la aplicación de medicamento
+            # Descontar del inventario la cantidad realmente aplicada
+            item_inventario.cantidad_actual -= cantidad_aplicada
+            item_inventario.save(update_fields=['cantidad_actual'])
+
+            # Guardar el registro de la aplicación
             self.perform_create(serializer)
+
             headers = self.get_success_headers(serializer.data)
 
-            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED,
+                headers=headers
+            )
 
         except Inventario.DoesNotExist:
             return Response(
                 {"error": "El registro de inventario especificado no existe."},
                 status=status.HTTP_404_NOT_FOUND
             )
-       
-
-    
-
 
 class TipoInsumoViewSet(viewsets.ModelViewSet):
     queryset = TipoInsumo.objects.all()

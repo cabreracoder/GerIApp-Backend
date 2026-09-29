@@ -65,6 +65,7 @@ class AsignacionTurnoUsuario(models.Model):
     id_turno = models.ForeignKey('Turnos', models.DO_NOTHING, db_column='id_turno', blank=True, null=True)
     fecha = models.DateField()
     estado = models.CharField()
+    id_grupo_asignacion = models.CharField(blank=True, null=True)
 
     class Meta:
         managed = False

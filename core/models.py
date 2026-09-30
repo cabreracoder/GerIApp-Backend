@@ -551,11 +551,11 @@ class Usuarios(models.Model):
     fecha_ingreso = models.DateTimeField()
     estado = models.BooleanField()
     contrasena = models.CharField(max_length=255, blank=True, null=True)
+    foto = models.TextField(blank=True, null=True)
 
     class Meta:
         managed = False
         db_table = 'usuarios'
-
 
 class Documentos(models.Model):
     id_documento = models.AutoField(primary_key=True)

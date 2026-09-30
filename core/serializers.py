@@ -211,6 +211,57 @@ class EventosAdversosSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventosAdversos
         fields = '__all__'
+        
+    def create(self, validated_data):
+
+        evento = EventosAdversos.objects.create(**validated_data)
+
+        if not evento.id_bitacora:
+            return evento
+
+        bitacora = evento.id_bitacora
+
+        paciente = bitacora.id_paciente
+        cuidador = bitacora.id_usuario
+
+        if not cuidador:
+            return evento
+
+        destinatarios = Usuarios.objects.filter(
+            id_rol_id__in=[6, 7],
+            estado=True
+        )
+
+        if not destinatarios.exists():
+            return evento
+
+        mensaje = "Se registró un evento adverso."
+
+        if paciente:
+            nombre_paciente = f"{paciente.nombre} {paciente.apellido}".strip()
+            mensaje = f"Se registró un evento adverso para el paciente {nombre_paciente}."
+
+        notificacion = Notificaciones.objects.create(
+            titulo="Evento adverso registrado",
+            tipo="EVENTO_ADVERSO",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=paciente,
+            id_usuario=cuidador
+        )
+
+        for usuario in destinatarios:
+            NotificacionDestinatario.objects.create(
+                leida=False,
+                fecha_lectura=None,
+                id_notificacion=notificacion,
+                id_usuario=usuario
+            )
+
+        return evento   
+        
 
 
 class ImagenesEventoAdversoSerializer(serializers.ModelSerializer):

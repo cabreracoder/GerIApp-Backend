@@ -12,6 +12,23 @@ GOOGLE_CLIENT_SECRET = os.getenv(
     'GOOGLE_CLIENT_SECRET'
 )
 
+# CONFIGURACION DE CLOUDINARY
+
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+
+# CONFIGURACION DEL SDK DE CLOUDINARY 
+
+import cloudinary
+
+cloudinary.config(
+    cloud_name=CLOUDINARY_CLOUD_NAME,
+    api_key=CLOUDINARY_API_KEY,
+    api_secret=CLOUDINARY_API_SECRET,
+    secure=True
+)
+
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/

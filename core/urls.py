@@ -22,7 +22,7 @@ from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,Disponibi
 from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet,NotificacionesViewSet,NotificacionDestinatarioViewSet
 
 
-from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet, NotificacionesViewSet, NotificacionDestinatarioViewSet, CitasViewSet
+from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet, NotificacionesViewSet, NotificacionDestinatarioViewSet, CitasViewSet,SubirImagenCloudinaryView
 
 router = DefaultRouter()
 
@@ -156,6 +156,11 @@ path(
 path(
     '',
     include(router.urls)
+),
+path(
+    'subir-imagen/',
+    SubirImagenCloudinaryView.as_view(),
+    name='subir_imagen_cloudinary'
 ),
 
 

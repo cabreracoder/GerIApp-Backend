@@ -1,8 +1,11 @@
 from rest_framework import viewsets, status
+from rest_framework.views import APIView
 from rest_framework.decorators import api_view
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
+#IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
+from servicios.cloudinary_service import subir_imagen
 
 import sib_api_v3_sdk
 from django.db import transaction
@@ -1181,3 +1184,51 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
     queryset = RecuperacionPassword.objects.all()
     serializer_class = RecuperacionPasswordSerializer
+
+# ============================================================
+# SUBIR IMAGEN A CLOUDINARY
+# ============================================================
+
+class SubirImagenCloudinaryView(APIView):
+
+    def post(self, request):
+
+        # Obtener la imagen enviada desde Insomnia
+        imagen = request.FILES.get('imagen')
+
+        # Verificar que se haya enviado una imagen
+        if not imagen:
+            return Response(
+                {
+                    'error': 'Debe seleccionar una imagen.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            # Subir la imagen a Cloudinary
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/imagenes'
+            )
+
+            # Devolver la URL generada por Cloudinary
+            return Response(
+                {
+                    'mensaje': 'Imagen subida correctamente.',
+                    'url': resultado['secure_url'],
+                    'public_id': resultado['public_id']
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception as error:
+
+            return Response(
+                {
+                    'error': 'No se pudo subir la imagen.',
+                    'detalle': str(error)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

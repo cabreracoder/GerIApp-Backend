@@ -66,12 +66,59 @@ class RolesSerializer(serializers.ModelSerializer):
         model = Roles
         fields = '__all__'
 
-
 class UsuariosSerializer(serializers.ModelSerializer):
+    # Permite recibir una imagen desde FormData
+    foto = serializers.CharField(
+        required=False,
+        allow_null=True
+    )
+
     class Meta:
         model = Usuarios
         fields = '__all__'
 
+    def to_internal_value(self, data):
+        # Copiamos los datos recibidos para poder modificar la foto
+        data = data.copy()
+
+        imagen = data.get('foto')
+
+        # Si Angular envía un archivo, lo dejamos pasar directamente
+        if imagen and hasattr(imagen, 'read'):
+            data.pop('foto')
+
+            datos_validados = super().to_internal_value(data)
+
+            # Agregamos el archivo manualmente para procesarlo en update()
+            datos_validados['foto'] = imagen
+
+            return datos_validados
+
+        return super().to_internal_value(data)
+
+    def update(self, instance, validated_data):
+        from servicios.cloudinary_service import subir_imagen
+
+        # Obtener la foto enviada
+        imagen = validated_data.pop('foto', None)
+
+        # Si se envió una nueva foto, subirla a Cloudinary
+        if imagen and hasattr(imagen, 'read'):
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+
+            # Guardar la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        # Actualizar los demás campos
+        for atributo, valor in validated_data.items():
+            setattr(instance, atributo, valor)
+
+        instance.save()
+
+        return instance
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Documentos
@@ -411,6 +458,13 @@ class CitasSerializer(serializers.ModelSerializer):
 # Esta parte permite registrar un usuario desde la aplicación,
 # encripta la contraseña y establece el usuario como activo.
 class RegistroUsuarioSerializer(serializers.ModelSerializer):
+    # Recibe el archivo de imagen enviado desde Insomnia o Angular
+    foto = serializers.FileField(
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
+
     class Meta:
         model = Usuarios
         fields = [
@@ -421,6 +475,7 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
             'numero_documento',
             'telefono',
             'contrasena',
+            'foto',
         ]
         extra_kwargs = {
             'contrasena': {'write_only': True}
@@ -428,18 +483,36 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from django.contrib.auth.hashers import make_password
+        from servicios.cloudinary_service import subir_imagen
 
+        # Sacar la imagen de los datos antes de crear el usuario
+        imagen = validated_data.pop('foto', None)
+
+        # Encriptar la contraseña
         validated_data['contrasena'] = make_password(
             validated_data['contrasena']
         )
 
+        # Datos automáticos del usuario
         validated_data['estado'] = True
         validated_data['fecha_ingreso'] = timezone.now()
 
-        usuario = Usuarios.objects.create(**validated_data)
+        # Si se envió una imagen, subirla a Cloudinary
+        if imagen:
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+
+            # Guardar solamente la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        # Crear el usuario
+        usuario = Usuarios.objects.create(
+            **validated_data
+        )
 
         return usuario
-
 #Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
 #este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
 #nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación. 

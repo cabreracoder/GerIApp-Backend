@@ -1,12 +1,14 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, parsers
 from rest_framework.views import APIView
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
-#IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
+
+# IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
 from servicios.cloudinary_service import subir_imagen
 
+from rest_framework.parsers import MultiPartParser, FormParser
 import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
@@ -114,6 +116,7 @@ from .serializers import (
 # ============================================================
 
 @api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
 def registro_usuario(request):
     serializer = RegistroUsuarioSerializer(data=request.data)
 
@@ -153,7 +156,9 @@ def registro_usuario(request):
                     'correo': usuario.correo,
                     'id_rol': usuario.id_rol_id,
                     'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-                    'estado': usuario.estado
+                    'estado': usuario.estado,
+                    'foto': usuario.foto
+                    
                 }
             },
             status=status.HTTP_200_OK
@@ -232,12 +237,14 @@ def login_usuario(request):
                 'correo': usuario.correo,
                 'id_rol': usuario.id_rol_id,
                 'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-                'estado': usuario.estado
+                'estado': usuario.estado,
+
+                # URL de la foto almacenada en Cloudinary
+                'foto': usuario.foto
             }
         },
         status=status.HTTP_200_OK
     )
-
 # ============================================================
 # LOGIN CON GOOGLE
 # ============================================================
@@ -662,6 +669,13 @@ class RolesViewSet(viewsets.ModelViewSet):
 class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
+
+    # Permite recibir datos normales y archivos mediante FormData
+    parser_classes = [
+        parsers.MultiPartParser,
+        parsers.FormParser,
+        parsers.JSONParser
+    ]
 
 
 class DocumentosViewSet(viewsets.ModelViewSet):

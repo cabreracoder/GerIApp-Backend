@@ -66,11 +66,41 @@ class RolesSerializer(serializers.ModelSerializer):
         model = Roles
         fields = '__all__'
 
-
 class UsuariosSerializer(serializers.ModelSerializer):
+    # Permite recibir un archivo de imagen desde FormData
+    foto = serializers.FileField(
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
+
     class Meta:
         model = Usuarios
         fields = '__all__'
+
+    def update(self, instance, validated_data):
+        from servicios.cloudinary_service import subir_imagen
+
+        # Obtener la foto enviada
+        imagen = validated_data.pop('foto', None)
+
+        # Si se envió una nueva foto, subirla a Cloudinary
+        if imagen:
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+
+            # Guardar la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        # Actualizar los demás campos normalmente
+        for atributo, valor in validated_data.items():
+            setattr(instance, atributo, valor)
+
+        instance.save()
+
+        return instance
 
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:

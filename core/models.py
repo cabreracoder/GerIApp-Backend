@@ -743,6 +743,22 @@ class Citas(models.Model):
         managed = False
         db_table = 'citas'
 
+class FcmTokens(models.Model):
+    id_fcm_token = models.AutoField(primary_key=True)
+    id_usuario = models.ForeignKey(
+        'Usuarios',
+        models.CASCADE,
+        db_column='id_usuario'
+    )
+    token = models.TextField(unique=True)
+    activo = models.BooleanField(default=True)
+    fecha_registro = models.DateTimeField(blank=True, null=True)
+    fecha_actualizacion = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'fcm_tokens'
+
 
 class ElementosPaciente(models.Model):
     id_elemento = models.AutoField(primary_key=True)

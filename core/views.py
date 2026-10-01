@@ -61,6 +61,7 @@ from .models import (
     Notificaciones,
     NotificacionDestinatario,
     Citas,
+    FcmTokens,
 )
 
 from .serializers import (
@@ -108,6 +109,7 @@ from .serializers import (
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
     CitasSerializer,
+    FcmTokensSerializer,
 )
 
 
@@ -905,6 +907,10 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
 class NotificacionesViewSet(viewsets.ModelViewSet):
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
+
+class FcmTokensViewSet(viewsets.ModelViewSet):
+    queryset = FcmTokens.objects.all()
+    serializer_class = FcmTokensSerializer
 
 
 class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):

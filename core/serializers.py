@@ -67,16 +67,34 @@ class RolesSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class UsuariosSerializer(serializers.ModelSerializer):
-    # Permite recibir un archivo de imagen desde FormData
-    foto = serializers.FileField(
+    # Permite recibir una imagen desde FormData
+    foto = serializers.CharField(
         required=False,
-        allow_null=True,
-        write_only=True
+        allow_null=True
     )
 
     class Meta:
         model = Usuarios
         fields = '__all__'
+
+    def to_internal_value(self, data):
+        # Copiamos los datos recibidos para poder modificar la foto
+        data = data.copy()
+
+        imagen = data.get('foto')
+
+        # Si Angular envía un archivo, lo dejamos pasar directamente
+        if imagen and hasattr(imagen, 'read'):
+            data.pop('foto')
+
+            datos_validados = super().to_internal_value(data)
+
+            # Agregamos el archivo manualmente para procesarlo en update()
+            datos_validados['foto'] = imagen
+
+            return datos_validados
+
+        return super().to_internal_value(data)
 
     def update(self, instance, validated_data):
         from servicios.cloudinary_service import subir_imagen
@@ -85,7 +103,7 @@ class UsuariosSerializer(serializers.ModelSerializer):
         imagen = validated_data.pop('foto', None)
 
         # Si se envió una nueva foto, subirla a Cloudinary
-        if imagen:
+        if imagen and hasattr(imagen, 'read'):
             resultado = subir_imagen(
                 imagen,
                 'geriapp/usuarios'
@@ -94,14 +112,13 @@ class UsuariosSerializer(serializers.ModelSerializer):
             # Guardar la URL de Cloudinary
             validated_data['foto'] = resultado['secure_url']
 
-        # Actualizar los demás campos normalmente
+        # Actualizar los demás campos
         for atributo, valor in validated_data.items():
             setattr(instance, atributo, valor)
 
         instance.save()
 
         return instance
-
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Documentos

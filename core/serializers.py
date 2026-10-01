@@ -283,6 +283,14 @@ class RecuperacionPasswordSerializer(serializers.ModelSerializer):
         model = RecuperacionPassword
         fields = '__all__'
 
+class NotificacionesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notificaciones
+        fields = '__all__'
+
+class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NotificacionDestinatario
 
 class CitasSerializer(serializers.ModelSerializer):
 

@@ -22,7 +22,7 @@ from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,Disponibi
 from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet,NotificacionesViewSet,NotificacionDestinatarioViewSet
 
 
-from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet, NotificacionesViewSet, NotificacionDestinatarioViewSet, CitasViewSet,SubirImagenCloudinaryView, FcmTokensViewSet
+from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet, NotificacionesViewSet, NotificacionDestinatarioViewSet, CitasViewSet,SubirImagenCloudinaryView, FcmTokensViewSet, CamasViewSet, HabitacionesViewSet
 
 router = DefaultRouter()
 
@@ -111,6 +111,10 @@ router.register(r'notificacion_destinatario', NotificacionDestinatarioViewSet)
 router.register(r'citas', CitasViewSet)
 
 router.register(r'fcm_tokens', FcmTokensViewSet)
+
+router.register(r'camas', CamasViewSet)
+
+router.register(r'habitaciones', HabitacionesViewSet)
 
 urlpatterns = [
 

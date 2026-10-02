@@ -743,6 +743,29 @@ class Citas(models.Model):
         managed = False
         db_table = 'citas'
 
+class Habitaciones(models.Model):
+    id_habitacion = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    numero = models.CharField()
+    descripcion = models.CharField(blank=True, null=True)
+    estado = models.BooleanField()
+    id_sede = models.ForeignKey('Sedes', models.DO_NOTHING, db_column='id_sede', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'habitaciones'
+
+class Camas(models.Model):
+    id_cama = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    numero = models.CharField()
+    estado = models.BooleanField()
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion')
+
+    class Meta:
+        managed = False
+        db_table = 'camas'
+
 class FcmTokens(models.Model):
     id_fcm_token = models.AutoField(primary_key=True)
     id_usuario = models.ForeignKey(

@@ -62,6 +62,8 @@ from .models import (
     NotificacionDestinatario,
     Citas,
     FcmTokens,
+    Camas,
+    Habitaciones,   
 )
 
 from .serializers import (
@@ -110,6 +112,8 @@ from .serializers import (
     NotificacionDestinatarioSerializer,
     CitasSerializer,
     FcmTokensSerializer,
+    CamasSerializer,
+    HabitacionesSerializer,
 )
 
 
@@ -939,7 +943,6 @@ class FcmTokensViewSet(viewsets.ModelViewSet):
             serializer.data,
             status=201 if creado else 200
         )
-
 
 class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
     queryset = NotificacionDestinatario.objects.all()

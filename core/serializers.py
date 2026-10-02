@@ -46,6 +46,8 @@ from .models import (
     NotificacionDestinatario,
     Citas,
     FcmTokens,
+    Camas,
+    Habitaciones,
 )
 
 
@@ -336,6 +338,18 @@ class FcmTokensSerializer(serializers.ModelSerializer):
     class Meta:
         model = FcmTokens
         fields = '__all__'
+
+class CamasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Camas
+        fields = '__all__'
+
+class HabitacionesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Habitaciones
+        fields = '__all__'  
 
 class CitasSerializer(serializers.ModelSerializer):
 

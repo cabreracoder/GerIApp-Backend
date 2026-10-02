@@ -836,13 +836,40 @@ class TiposEventoIa(models.Model):
 
 class EventosIa(models.Model):
     id_evento = models.AutoField(primary_key=True)
-    confianza = models.DecimalField(blank=True, null=True)
+
+    confianza = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        blank=True,
+        null=True
+    )
+
     fecha_hora = models.DateTimeField()
-    estado = models.CharField()
-    id_camara = models.ForeignKey('Camaras', models.DO_NOTHING, db_column='id_camara', blank=True, null=True)
-    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
-    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
-    id_tipo_evento = models.ForeignKey('TiposEventoIa', models.DO_NOTHING, db_column='id_tipo_evento', blank=True, null=True)
+    estado = models.CharField(max_length=50)
+
+    id_camara = models.ForeignKey(
+        'Camaras',
+        models.DO_NOTHING,
+        db_column='id_camara'
+    )
+
+    id_habitacion = models.ForeignKey(
+        'Habitaciones',
+        models.DO_NOTHING,
+        db_column='id_habitacion'
+    )
+
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente'
+    )
+
+    id_tipo_evento = models.ForeignKey(
+        'TiposEventoIa',
+        models.DO_NOTHING,
+        db_column='id_tipo_evento'
+    )
 
     class Meta:
         managed = False

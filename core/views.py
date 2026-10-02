@@ -916,6 +916,44 @@ class FcmTokensViewSet(viewsets.ModelViewSet):
     queryset = FcmTokens.objects.all()
     serializer_class = FcmTokensSerializer
 
+    def create(self, request, *args, **kwargs):
+        id_usuario = request.data.get("id_usuario")
+        token = request.data.get("token")
+
+        if not id_usuario or not token:
+            return Response(
+                {
+                    "error": "id_usuario y token son obligatorios"
+                },
+                status=400
+            )
+
+        fcm_token, creado = FcmTokens.objects.update_or_create(
+            token=token,
+            defaults={
+                "id_usuario_id": id_usuario,
+                "activo": True,
+                "fecha_actualizacion": timezone.now()
+            }
+        )
+
+        serializer = self.get_serializer(fcm_token)
+
+        return Response(
+            serializer.data,
+            status=201 if creado else 200
+        )
+
+
+class CamasViewSet(viewsets.ModelViewSet):
+    queryset = Camas.objects.all()
+    serializer_class = CamasSerializer
+
+
+class HabitacionesViewSet(viewsets.ModelViewSet):
+    queryset = Habitaciones.objects.all()
+    serializer_class = HabitacionesSerializer
+
 class CamasViewSet(viewsets.ModelViewSet):
     queryset = Camas.objects.all()
     serializer_class = CamasSerializer

@@ -48,6 +48,13 @@ from .models import (
     FcmTokens,
     Camas,
     Habitaciones,
+    Fundaciones,
+    Sedes,
+    Camaras,
+    TiposEventoIa,
+    EventosIa,
+    EvidenciasIa,
+    AsignacionHabitacion
 )
 
 
@@ -400,7 +407,50 @@ class HabitacionesSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Habitaciones
-        fields = '__all__'  
+        fields = '__all__'
+
+class FundacionesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Fundaciones
+        fields = '__all__'
+
+class SedesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Sedes
+        fields = '__all__'
+
+class CamarasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Camaras
+        fields = '__all__'
+
+class TiposEventoIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = TiposEventoIa
+        fields = '__all__'
+
+class EventosIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = EventosIa
+        fields = '__all__'
+
+class EvidenciasIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = EvidenciasIa
+        fields = '__all__'
+
+class AsignacionHabitacionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = AsignacionHabitacion
+        fields = '__all__'
+        
 
 class CitasSerializer(serializers.ModelSerializer):
 

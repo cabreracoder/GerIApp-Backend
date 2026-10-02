@@ -782,6 +782,98 @@ class FcmTokens(models.Model):
         managed = False
         db_table = 'fcm_tokens'
 
+class Fundaciones(models.Model):
+    id_fundacion = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    nit = models.CharField(blank=True, null=True)
+    direccion = models.CharField(blank=True, null=True)
+    telefono = models.CharField(blank=True, null=True)
+    correo = models.CharField(blank=True, null=True)
+    estado = models.BooleanField()
+    fecha_registro = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'fundaciones'
+
+class Sedes(models.Model):
+    id_sede = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    direccion = models.CharField(blank=True, null=True)
+    telefono = models.CharField(blank=True, null=True)
+    estado = models.BooleanField()
+    fecha_registro = models.DateTimeField()
+    id_fundacion = models.ForeignKey('Fundaciones', models.DO_NOTHING, db_column='id_fundacion', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'sedes'
+
+class Camaras(models.Model):
+    id_camara = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    ubicacion = models.CharField()
+    direccion_stream = models.TextField()
+    tipo = models.CharField(blank=True, null=True)
+    estado = models.BooleanField(blank=True, null=True)
+    fecha_registro = models.DateTimeField(blank=True, null=True)
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'camaras'
+
+class TiposEventoIa(models.Model):
+    id_tipo_evento = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.TextField()
+    nivel_riesgo = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'tipos_evento_ia'
+
+class EventosIa(models.Model):
+    id_evento = models.AutoField(primary_key=True)
+    confianza = models.DecimalField(blank=True, null=True)
+    fecha_hora = models.DateTimeField()
+    estado = models.CharField()
+    id_camara = models.ForeignKey('Camaras', models.DO_NOTHING, db_column='id_camara', blank=True, null=True)
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_tipo_evento = models.ForeignKey('TiposEventoIa', models.DO_NOTHING, db_column='id_tipo_evento', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'eventos_ia'
+
+class EvidenciasIa(models.Model):
+    id_evidencia = models.AutoField(primary_key=True)
+    tipo = models.CharField()
+    url = models.TextField()
+    public_id = models.CharField()
+    fecha_hora = models.DateTimeField(blank=True, null=True)
+    duracion = models.IntegerField(blank=True, null=True)
+    id_evento = models.ForeignKey('EventosIa', models.DO_NOTHING, db_column='id_evento', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'evidencias_ia'
+
+class AsignacionHabitacion(models.Model):
+    id_asignacion = models.AutoField(primary_key=True)
+    fecha_inicio = models.DateTimeField(blank=True, null=True)
+    fecha_fin = models.DateTimeField(blank=True, null=True)
+    estado = models.BooleanField()
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+    id_cama = models.ForeignKey('Camas', models.DO_NOTHING, db_column='id_cama', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'asignacion_habitacion'
+
 
 class ElementosPaciente(models.Model):
     id_elemento = models.AutoField(primary_key=True)

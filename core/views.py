@@ -61,6 +61,7 @@ from .models import (
     Notificaciones,
     NotificacionDestinatario,
     Citas,
+    FcmTokens,
 )
 
 from .serializers import (
@@ -108,6 +109,7 @@ from .serializers import (
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
     CitasSerializer,
+    FcmTokensSerializer,
 )
 
 
@@ -905,6 +907,38 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
 class NotificacionesViewSet(viewsets.ModelViewSet):
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
+
+class FcmTokensViewSet(viewsets.ModelViewSet):
+    queryset = FcmTokens.objects.all()
+    serializer_class = FcmTokensSerializer
+
+    def create(self, request, *args, **kwargs):
+        id_usuario = request.data.get("id_usuario")
+        token = request.data.get("token")
+
+        if not id_usuario or not token:
+            return Response(
+                {
+                    "error": "id_usuario y token son obligatorios"
+                },
+                status=400
+            )
+
+        fcm_token, creado = FcmTokens.objects.update_or_create(
+            token=token,
+            defaults={
+                "id_usuario_id": id_usuario,
+                "activo": True,
+                "fecha_actualizacion": timezone.now()
+            }
+        )
+
+        serializer = self.get_serializer(fcm_token)
+
+        return Response(
+            serializer.data,
+            status=201 if creado else 200
+        )
 
 
 class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):

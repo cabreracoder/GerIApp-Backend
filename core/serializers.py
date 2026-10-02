@@ -45,6 +45,7 @@ from .models import (
     Notificaciones,
     NotificacionDestinatario,
     Citas,
+    FcmTokens,
 )
 
 
@@ -379,6 +380,12 @@ class ElementosPacienteSerializer(serializers.ModelSerializer):
 class RecuperacionPasswordSerializer(serializers.ModelSerializer):
     class Meta:
         model = RecuperacionPassword
+        fields = '__all__'
+
+class FcmTokensSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FcmTokens
         fields = '__all__'
 
 

@@ -1,9 +1,14 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view
+from rest_framework import viewsets, status, parsers
+from rest_framework.views import APIView
+from rest_framework.decorators import api_view, parser_classes
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
 
+# IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
+from servicios.cloudinary_service import subir_imagen
+
+from rest_framework.parsers import MultiPartParser, FormParser
 import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
@@ -56,6 +61,7 @@ from .models import (
     Notificaciones,
     NotificacionDestinatario,
     Citas,
+    FcmTokens,
 )
 
 from .serializers import (
@@ -103,6 +109,7 @@ from .serializers import (
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
     CitasSerializer,
+    FcmTokensSerializer,
 )
 
 
@@ -111,6 +118,7 @@ from .serializers import (
 # ============================================================
 
 @api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
 def registro_usuario(request):
     serializer = RegistroUsuarioSerializer(data=request.data)
 
@@ -150,7 +158,9 @@ def registro_usuario(request):
                     'correo': usuario.correo,
                     'id_rol': usuario.id_rol_id,
                     'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-                    'estado': usuario.estado
+                    'estado': usuario.estado,
+                    'foto': usuario.foto
+                    
                 }
             },
             status=status.HTTP_200_OK
@@ -229,12 +239,14 @@ def login_usuario(request):
                 'correo': usuario.correo,
                 'id_rol': usuario.id_rol_id,
                 'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-                'estado': usuario.estado
+                'estado': usuario.estado,
+
+                # URL de la foto almacenada en Cloudinary
+                'foto': usuario.foto
             }
         },
         status=status.HTTP_200_OK
     )
-
 # ============================================================
 # LOGIN CON GOOGLE
 # ============================================================
@@ -660,6 +672,13 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
 
+    # Permite recibir datos normales y archivos mediante FormData
+    parser_classes = [
+        parsers.MultiPartParser,
+        parsers.FormParser,
+        parsers.JSONParser
+    ]
+
 
 class DocumentosViewSet(viewsets.ModelViewSet):
     queryset = Documentos.objects.all()
@@ -755,9 +774,9 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Obtener la información enviada desde la app móvil
+        # Obtener el ID del inventario enviado desde la aplicación
         inventario_id = request.data.get('id_inventario') or serializer.validated_data.get('id_inventario')
-        
+
         # Convertir a entero si el objeto viene completo como Foreign Key
         if hasattr(inventario_id, 'id_inventario'):
             inventario_id = inventario_id.id_inventario
@@ -769,35 +788,57 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Buscar el registro de inventario y bloquear la fila durante la transacción
-            item_inventario = Inventario.objects.select_for_update().get(pk=inventario_id)
+            # Buscar el inventario y bloquear la fila durante la transacción
+            item_inventario = Inventario.objects.select_for_update().get(
+                pk=inventario_id
+            )
 
-            # Validar si hay stock disponible en cantidad_actual
-            if item_inventario.cantidad_actual < 1:
+            # Obtener la cantidad de unidades que se van a aplicar
+            cantidad_aplicada = serializer.validated_data.get(
+                'cantidad_aplicada',
+                1
+            )
+
+            # Validar que la cantidad sea mayor que cero
+            if cantidad_aplicada <= 0:
                 return Response(
-                    {"error": f"Stock insuficiente en inventario. Disponible: {item_inventario.cantidad_actual}"},
+                    {"error": "La cantidad aplicada debe ser mayor que cero."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Descontar 1 unidad de cantidad_actual y guardar
-            item_inventario.cantidad_actual -= 1
-            item_inventario.save()
+            # Validar que exista suficiente stock
+            if item_inventario.cantidad_actual < cantidad_aplicada:
+                return Response(
+                    {
+                        "error": (
+                            f"Stock insuficiente en inventario. "
+                            f"Disponible: {item_inventario.cantidad_actual}. "
+                            f"Solicitado: {cantidad_aplicada}."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            # Guardar el registro de la aplicación de medicamento
+            # Descontar del inventario la cantidad realmente aplicada
+            item_inventario.cantidad_actual -= cantidad_aplicada
+            item_inventario.save(update_fields=['cantidad_actual'])
+
+            # Guardar el registro de la aplicación
             self.perform_create(serializer)
+
             headers = self.get_success_headers(serializer.data)
 
-            return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED,
+                headers=headers
+            )
 
         except Inventario.DoesNotExist:
             return Response(
                 {"error": "El registro de inventario especificado no existe."},
                 status=status.HTTP_404_NOT_FOUND
             )
-       
-
-    
-
 
 class TipoInsumoViewSet(viewsets.ModelViewSet):
     queryset = TipoInsumo.objects.all()
@@ -866,6 +907,38 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
 class NotificacionesViewSet(viewsets.ModelViewSet):
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
+
+class FcmTokensViewSet(viewsets.ModelViewSet):
+    queryset = FcmTokens.objects.all()
+    serializer_class = FcmTokensSerializer
+
+    def create(self, request, *args, **kwargs):
+        id_usuario = request.data.get("id_usuario")
+        token = request.data.get("token")
+
+        if not id_usuario or not token:
+            return Response(
+                {
+                    "error": "id_usuario y token son obligatorios"
+                },
+                status=400
+            )
+
+        fcm_token, creado = FcmTokens.objects.update_or_create(
+            token=token,
+            defaults={
+                "id_usuario_id": id_usuario,
+                "activo": True,
+                "fecha_actualizacion": timezone.now()
+            }
+        )
+
+        serializer = self.get_serializer(fcm_token)
+
+        return Response(
+            serializer.data,
+            status=201 if creado else 200
+        )
 
 
 class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
@@ -1159,3 +1232,51 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
     queryset = RecuperacionPassword.objects.all()
     serializer_class = RecuperacionPasswordSerializer
+
+# ============================================================
+# SUBIR IMAGEN A CLOUDINARY
+# ============================================================
+
+class SubirImagenCloudinaryView(APIView):
+
+    def post(self, request):
+
+        # Obtener la imagen enviada desde Insomnia
+        imagen = request.FILES.get('imagen')
+
+        # Verificar que se haya enviado una imagen
+        if not imagen:
+            return Response(
+                {
+                    'error': 'Debe seleccionar una imagen.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            # Subir la imagen a Cloudinary
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/imagenes'
+            )
+
+            # Devolver la URL generada por Cloudinary
+            return Response(
+                {
+                    'mensaje': 'Imagen subida correctamente.',
+                    'url': resultado['secure_url'],
+                    'public_id': resultado['public_id']
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception as error:
+
+            return Response(
+                {
+                    'error': 'No se pudo subir la imagen.',
+                    'detalle': str(error)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

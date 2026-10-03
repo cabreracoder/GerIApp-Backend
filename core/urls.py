@@ -23,6 +23,7 @@ from .views import (
     DetalleEntregaMedicamentoViewSet,
     MovimientoMedicamentoViewSet,
     AplicacionMedicamentoViewSet,
+    GrupoMedicacionViewSet,
 )
 
 # ==============================
@@ -263,6 +264,8 @@ router.register(r'eventos_ia', EventosIaViewSet)
 router.register(r'evidencias_ia', EvidenciasIaViewSet)
 
 router.register(r'asignacion_habitacion', AsignacionHabitacionViewSet)
+
+router.register(r'grupo_medicacion', GrupoMedicacionViewSet)
 
 urlpatterns = [
 

@@ -54,7 +54,8 @@ from .models import (
     TiposEventoIa,
     EventosIa,
     EvidenciasIa,
-    AsignacionHabitacion
+    AsignacionHabitacion,
+    GrupoMedicacion,
 )
 
 
@@ -263,6 +264,10 @@ class TipoEmergenciaSerializer(serializers.ModelSerializer):
         model = TipoEmergencia
         fields = '__all__'
 
+class GrupoMedicacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GrupoMedicacion
+        fields = '__all__'
 
 class EventosAdversosSerializer(serializers.ModelSerializer):
     class Meta:

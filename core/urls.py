@@ -1,28 +1,162 @@
+from django.core.serializers import python
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 
 from rest_framework.routers import DefaultRouter
 
-from .views import DiagnosticosViewSet, PacientesViewSet, MedicamentosViewSet, RolesViewSet, TratamientoViewSet
+# ==============================
+# ViewSets principales
+# ==============================
+from .views import (
+    DiagnosticosViewSet,
+    PacientesViewSet,
+    MedicamentosViewSet,
+    RolesViewSet,
+    TratamientoViewSet,
+    UsuariosViewSet,
+    HistoriaClinicasViewSet,
+    EnfermedadesViewSet,
+    TratamientoMedicamentoViewSet,
+    InventarioViewSet,
+    EntregaMedicaViewSet,
+    DetalleEntregaMedicamentoViewSet,
+    MovimientoMedicamentoViewSet,
+    AplicacionMedicamentoViewSet,
+)
 
-from .views import UsuariosViewSet, HistoriaClinicasViewSet, EnfermedadesViewSet, TratamientoMedicamentoViewSet, InventarioViewSet, EntregaMedicaViewSet
+# ==============================
+# Insumos
+# ==============================
+from .views import (
+    TipoInsumoViewSet,
+    InsumosViewSet,
+    DetalleEntregaInsumoViewSet,
+    EntregaInsumoViewSet,
+    MovimientoInsumoViewSet,
+)
 
-from .views import DetalleEntregaMedicamentoViewSet, MovimientoMedicamentoViewSet, AplicacionMedicamentoViewSet, TipoInsumoViewSet
+# ==============================
+# Bitácora y actividades
+# ==============================
+from .views import (
+    BitacoraViewSet,
+    ActividadesViewSet,
+    SignosVitalesViewSet,
+)
 
-from .views import InsumosViewSet, DetalleEntregaInsumoViewSet, EntregaInsumoViewSet, MovimientoInsumoViewSet, BitacoraViewSet
+# ==============================
+# Eventos y emergencias
+# ==============================
+from .views import (
+    TipoEventoViewSet,
+    TipoEmergenciaViewSet,
+    EventosAdversosViewSet,
+    ImagenesEventoAdversoViewSet,
+)
 
-from .views import ActividadesViewSet, SignosVitalesViewSet, TipoEventoViewSet, TipoEmergenciaViewSet, EventosAdversosViewSet, ImagenesEventoAdversoViewSet
+# ==============================
+# Asignaciones, turnos y permisos
+# ==============================
+from .views import (
+    AsignacionPacienteCuidadorViewSet,
+    TurnosViewSet,
+    AsignacionTurnoUsuarioViewSet,
+    PermisosViewSet,
+    PermisosRolViewSet,
+    AsignacionHabitacionViewSet,
+)
 
-from .views import AsignacionPacienteCuidadorViewSet, TurnosViewSet, AsignacionTurnoUsuarioViewSet, PermisosViewSet, PermisosRolViewSet
+# ==============================
+# Información de usuarios
+# ==============================
+from .views import (
+    FamiliarResponsableViewSet,
+    PerfilProfesionalViewSet,
+    DisponibilidadUsuarioViewSet,
+    DocumentosViewSet,
+)
 
-from .views import FamiliarResponsableViewSet,PerfilProfesionalViewSet,DisponibilidadUsuarioViewSet,registro_usuario,login_usuario,cambiar_contrasena,recuperar_password,verificar_codigo,cambiar_password_recuperacion,login_google
+# ==============================
+# Cuidados y pacientes
+# ==============================
+from .views import (
+    RecomendacionesViewSet,
+    CuidadosEnfermeriaViewSet,
+    ElementosPacienteViewSet,
+    CitasViewSet,
+)
 
+# ==============================
+# Notificaciones y recuperación
+# ==============================
+from .views import (
+    RecuperacionPasswordViewSet,
+    NotificacionesViewSet,
+    NotificacionDestinatarioViewSet,
+    FcmTokensViewSet,
+)
 
-from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet,NotificacionesViewSet,NotificacionDestinatarioViewSet
+# ==============================
+# Autenticación
+# ==============================
+from .views import (
+    registro_usuario,
+    login_usuario,
+    cambiar_contrasena,
+    recuperar_password,
+    verificar_codigo,
+    cambiar_password_recuperacion,
+    login_google,
+)
 
+# ==============================
+# Cloudinary
+# ==============================
+from .views import (
+    SubirImagenCloudinaryView,
+)
 
-from .views import DocumentosViewSet,RecomendacionesViewSet,CuidadosEnfermeriaViewSet,ElementosPacienteViewSet,RecuperacionPasswordViewSet, NotificacionesViewSet, NotificacionDestinatarioViewSet, CitasViewSet,SubirImagenCloudinaryView, FcmTokensViewSet, CamasViewSet, HabitacionesViewSet
+# ==============================
+# IA - Habitaciones y cámaras
+# ==============================
+from .views import (
+    FundacionesViewSet,
+    SedesViewSet,
+    HabitacionesViewSet,
+    CamasViewSet,
+    AsignacionHabitacionViewSet,
+    CamarasViewSet,
+    TiposEventoIaViewSet,
+    EventosIaViewSet,
+    EvidenciasIaViewSet,
+)
+
+# ==============================
+# Asignaciones, turnos y permisos
+# ==============================
+from .views import (
+    AsignacionPacienteCuidadorViewSet,
+    TurnosViewSet,
+    AsignacionTurnoUsuarioViewSet,
+    PermisosViewSet,
+    PermisosRolViewSet,
+)
+
+# ==============================
+# IA - Habitaciones y cámaras
+# ==============================
+from .views import (
+    FundacionesViewSet,
+    SedesViewSet,
+    HabitacionesViewSet,
+    CamasViewSet,
+    AsignacionHabitacionViewSet,
+    CamarasViewSet,
+    TiposEventoIaViewSet,
+    EventosIaViewSet,
+    EvidenciasIaViewSet,
+)
 
 router = DefaultRouter()
 
@@ -115,6 +249,20 @@ router.register(r'fcm_tokens', FcmTokensViewSet)
 router.register(r'camas', CamasViewSet)
 
 router.register(r'habitaciones', HabitacionesViewSet)
+
+router.register(r'fundaciones', FundacionesViewSet)
+
+router.register(r'sedes', SedesViewSet)
+
+router.register(r'camaras', CamarasViewSet)
+
+router.register(r'tipos_evento_ia', TiposEventoIaViewSet)
+
+router.register(r'eventos_ia', EventosIaViewSet)
+
+router.register(r'evidencias_ia', EvidenciasIaViewSet)
+
+router.register(r'asignacion_habitacion', AsignacionHabitacionViewSet)
 
 urlpatterns = [
 

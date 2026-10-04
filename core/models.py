@@ -448,6 +448,7 @@ class FormulacionMedicamentos(models.Model):
     suspendido_fecha = models.DateField(blank=True, null=True)
     id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
     id_grupo = models.ForeignKey('GrupoMedicacion', models.DO_NOTHING, db_column='id_grupo', blank=True, null=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
 
     class Meta:
         managed = False

@@ -167,3 +167,8 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
 ]
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:4200',
+    'https://geriapp-backend.onrender.com',
+]

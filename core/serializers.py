@@ -56,6 +56,7 @@ from .models import (
     EvidenciasIa,
     AsignacionHabitacion,
     GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 
@@ -454,6 +455,12 @@ class AsignacionHabitacionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AsignacionHabitacion
+        fields = '__all__'
+
+class FormulacionMedicamentosSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FormulacionMedicamentos
         fields = '__all__'
         
 

@@ -71,7 +71,8 @@ from .models import (
     EventosIa,
     EvidenciasIa,
     AsignacionHabitacion,
-    GrupoMedicacion
+    GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 from .serializers import (
@@ -129,7 +130,8 @@ from .serializers import (
     EventosIaSerializer,
     EvidenciasIaSerializer,
     AsignacionHabitacionSerializer,
-    GrupoMedicacionSerializer
+    GrupoMedicacionSerializer,
+    FormulacionMedicamentosSerializer,
 )
 
 
@@ -931,6 +933,10 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
 class GrupoMedicacionViewSet(viewsets.ModelViewSet):
     queryset = GrupoMedicacion.objects.all()
     serializer_class = GrupoMedicacionSerializer
+
+class FormulacionMedicamentosViewSet(viewsets.ModelViewSet):
+    queryset = FormulacionMedicamentos.objects.all()
+    serializer_class = FormulacionMedicamentosSerializer
 
 class FcmTokensViewSet(viewsets.ModelViewSet):
     queryset = FcmTokens.objects.all()

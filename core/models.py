@@ -437,6 +437,22 @@ class MovimientoInsumo(models.Model):
         managed = False
         db_table = 'movimiento_insumo'
 
+class FormulacionMedicamentos(models.Model):
+    id_formulacion = models.AutoField(primary_key=True)
+    fecha = models.DateField()
+    dosis = models.CharField()
+    via = models.CharField()
+    hora_administrada = models.TimeField()
+    presentacion = models.CharField()
+    actual_administrado = models.BooleanField()
+    suspendido_fecha = models.DateField(blank=True, null=True)
+    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    id_grupo = models.ForeignKey('GrupoMedicacion', models.DO_NOTHING, db_column='id_grupo', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'formulacion_medicamentos'
+
 
 class MovimientoMedicamento(models.Model):
     id_movimiento = models.AutoField(primary_key=True)

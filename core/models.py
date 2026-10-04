@@ -320,8 +320,7 @@ class GrupoMedicacion(models.Model):
     id_grupo = models.AutoField(primary_key=True)
     nombre = models.CharField(max_length=100)
     descripcion = models.CharField(max_length=255, blank=True, null=True)
-    hora_rango_inicial = models.TimeField()
-    hora_rango_final = models.TimeField(blank=True, null=True)
+    hora_administracion = models.TimeField()
     estado = models.BooleanField()
 
     class Meta:

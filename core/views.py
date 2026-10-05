@@ -12,11 +12,18 @@ from rest_framework.parsers import MultiPartParser, FormParser
 import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
+
+# Notificaciones push firebase-admin
+from firebase_admin import messaging
+from .firebase_config import inicializar_firebase
+
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import random
 from datetime import timedelta
 from django.utils import timezone
+
+
 
 from .models import (
     HistoriaClinicas,
@@ -930,6 +937,100 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
 
+    def create(self, request, *args, **kwargs):
+        # ============================================
+        # Validar y guardar la notificación
+        # ============================================
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        self.perform_create(serializer)
+
+        notificacion = serializer.instance
+
+        # ============================================
+        # Obtener usuario destinatario
+        # ============================================
+
+        usuario = notificacion.id_usuario
+
+        if not usuario:
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        # ============================================
+        # Buscar tokens FCM activos del usuario
+        # ============================================
+
+        tokens = FcmTokens.objects.filter(
+            id_usuario=usuario,
+            activo=True
+        )
+
+        # ============================================
+        # Enviar la notificacion Push
+        # ============================================
+
+        try:
+            inicializar_firebase()
+
+            for fcm_token in tokens:
+
+                mensaje = messaging.Message(
+                    notification=messaging.Notification(
+                        title=notificacion.titulo,
+                        body=notificacion.mensaje
+                    ),
+                    data={
+                        "id_notificacion": str(
+                            notificacion.id_notificacion
+                        ),
+                        "tipo": str(
+                            notificacion.tipo or ""
+                        )
+                    },
+                    token=fcm_token.token
+                )
+
+                try:
+                    respuesta = messaging.send(mensaje)
+
+                    print(
+                        f"FCM enviado correctamente. "
+                        f"Usuario: {usuario.id_usuario}, "
+                        f"Token: {fcm_token.id_fcm_token}, "
+                        f"Respuesta: {respuesta}"
+                    )
+
+                except Exception as error_token:
+
+                    print(
+                        f"Error enviando FCM al token "
+                        f"{fcm_token.id_fcm_token}: "
+                        f"{error_token}"
+                    )
+
+        except Exception as error_firebase:
+
+            print(
+                f"Error inicializando/enviando Firebase: "
+                f"{error_firebase}"
+            )
+
+        # ============================================
+        # Devolver la notificacion creada
+        # ============================================
+
+        headers = self.get_success_headers(serializer.data)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
 class GrupoMedicacionViewSet(viewsets.ModelViewSet):
     queryset = GrupoMedicacion.objects.all()
     serializer_class = GrupoMedicacionSerializer

@@ -252,8 +252,8 @@ class DjangoSession(models.Model):
 
 class Enfermedades(models.Model):
     id_enfermedad = models.AutoField(primary_key=True)
-    nombre = models.CharField()
-    descripcion = models.CharField()
+    nombre = models.CharField(max_length=100)
+    descripcion = models.CharField(max_length=200)
     estado = models.BooleanField()
 
     class Meta:
@@ -264,7 +264,7 @@ class Enfermedades(models.Model):
 class EntregaInsumo(models.Model):
     id_entrega_insumo = models.AutoField(primary_key=True)
     fehca_entrega = models.DateTimeField()
-    observaciones = models.CharField()
+    observaciones = models.CharField(max_length=200)
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
 
     class Meta:
@@ -277,7 +277,7 @@ class EntregaMedica(models.Model):
     id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
     fecha_entrega = models.DateTimeField()
-    observaciones = models.CharField()
+    observaciones = models.CharField(max_length=200)
     estado = models.BooleanField()
 
     class Meta:
@@ -291,9 +291,9 @@ class EventosAdversos(models.Model):
     id_evento = models.CharField(blank=True, null=True)
     id_tipo_emergencia = models.ForeignKey('TipoEmergencia', models.DO_NOTHING, db_column='id_tipo_emergencia', blank=True, null=True)
     fecha_hora = models.DateTimeField()
-    descripcion = models.CharField()
-    acciones_realizadas = models.CharField()
-    estado = models.CharField()
+    descripcion = models.CharField(max_length=200)
+    acciones_realizadas = models.CharField(max_length=200)
+    estado = models.CharField(max_length=50 )
 
     class Meta:
         managed = False
@@ -316,11 +316,22 @@ class FamiliarResponsable(models.Model):
         managed = False
         db_table = 'familiar_responsable'
 
+class GrupoMedicacion(models.Model):
+    id_grupo = models.AutoField(primary_key=True)
+    nombre = models.CharField(max_length=100)
+    descripcion = models.CharField(max_length=255, blank=True, null=True)
+    hora_administracion = models.TimeField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'grupo_medicacion'
+
 
 class HistoriaClinicas(models.Model):
     id_historia_clinica = models.AutoField(primary_key=True)
     fecha_apertura = models.DateTimeField()
-    antecedentes = models.CharField()
+    antecedentes = models.CharField(max_length=200)
     alergias = models.CharField()
     observaciones = models.CharField()
     estado = models.BooleanField()
@@ -334,8 +345,8 @@ class HistoriaClinicas(models.Model):
 class ImagenesEventoAdverso(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     id_evento_adverso = models.ForeignKey(EventosAdversos, models.DO_NOTHING, db_column='id_evento_adverso', blank=True, null=True)
-    url_imagen = models.CharField()
-    descripcion = models.CharField()
+    url_imagen = models.CharField(max_length=200)
+    descripcion = models.CharField(max_length=200)
     fecha_subida = models.DateTimeField()
 
     class Meta:
@@ -346,9 +357,9 @@ class ImagenesEventoAdverso(models.Model):
 class Insumos(models.Model):
     id_insumo = models.AutoField(primary_key=True)
     id_tipo_insumo = models.ForeignKey('TipoInsumo', models.DO_NOTHING, db_column='id_tipo_insumo', blank=True, null=True)
-    nombre = models.CharField()
-    descripcion = models.CharField()
-    unidad_medida = models.CharField()
+    nombre = models.CharField(max_length=100)
+    descripcion = models.CharField(max_length=200)
+    unidad_medida = models.CharField(max_length=50)
     estado = models.BooleanField()
 
     class Meta:
@@ -425,6 +436,23 @@ class MovimientoInsumo(models.Model):
     class Meta:
         managed = False
         db_table = 'movimiento_insumo'
+
+class FormulacionMedicamentos(models.Model):
+    id_formulacion = models.AutoField(primary_key=True)
+    fecha = models.DateField()
+    dosis = models.CharField()
+    via = models.CharField()
+    hora_administrada = models.TimeField()
+    presentacion = models.CharField()
+    actual_administrado = models.BooleanField()
+    suspendido_fecha = models.DateField(blank=True, null=True)
+    id_medicamentos = models.ForeignKey('Medicamentos', models.DO_NOTHING, db_column='id_medicamentos', blank=True, null=True)
+    id_grupo = models.ForeignKey('GrupoMedicacion', models.DO_NOTHING, db_column='id_grupo', blank=True, null=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'formulacion_medicamentos'
 
 
 class MovimientoMedicamento(models.Model):
@@ -743,6 +771,29 @@ class Citas(models.Model):
         managed = False
         db_table = 'citas'
 
+class Habitaciones(models.Model):
+    id_habitacion = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    numero = models.CharField()
+    descripcion = models.CharField(blank=True, null=True)
+    estado = models.BooleanField()
+    id_sede = models.ForeignKey('Sedes', models.DO_NOTHING, db_column='id_sede', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'habitaciones'
+
+class Camas(models.Model):
+    id_cama = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    numero = models.CharField()
+    estado = models.BooleanField()
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion')
+
+    class Meta:
+        managed = False
+        db_table = 'camas'
+
 class FcmTokens(models.Model):
     id_fcm_token = models.AutoField(primary_key=True)
     id_usuario = models.ForeignKey(
@@ -758,6 +809,125 @@ class FcmTokens(models.Model):
     class Meta:
         managed = False
         db_table = 'fcm_tokens'
+
+class Fundaciones(models.Model):
+    id_fundacion = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    nit = models.CharField(blank=True, null=True)
+    direccion = models.CharField(blank=True, null=True)
+    telefono = models.CharField(blank=True, null=True)
+    correo = models.CharField(blank=True, null=True)
+    estado = models.BooleanField()
+    fecha_registro = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'fundaciones'
+
+class Sedes(models.Model):
+    id_sede = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    direccion = models.CharField(blank=True, null=True)
+    telefono = models.CharField(blank=True, null=True)
+    estado = models.BooleanField()
+    fecha_registro = models.DateTimeField()
+    id_fundacion = models.ForeignKey('Fundaciones', models.DO_NOTHING, db_column='id_fundacion', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'sedes'
+
+class Camaras(models.Model):
+    id_camara = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    ubicacion = models.CharField()
+    direccion_stream = models.TextField()
+    tipo = models.CharField(blank=True, null=True)
+    estado = models.BooleanField(blank=True, null=True)
+    fecha_registro = models.DateTimeField(blank=True, null=True)
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'camaras'
+
+class TiposEventoIa(models.Model):
+    id_tipo_evento = models.AutoField(primary_key=True)
+    nombre = models.CharField()
+    descripcion = models.TextField()
+    nivel_riesgo = models.CharField()
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'tipos_evento_ia'
+
+class EventosIa(models.Model):
+    id_evento = models.AutoField(primary_key=True)
+
+    confianza = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        blank=True,
+        null=True
+    )
+
+    fecha_hora = models.DateTimeField()
+    estado = models.CharField(max_length=50)
+
+    id_camara = models.ForeignKey(
+        'Camaras',
+        models.DO_NOTHING,
+        db_column='id_camara'
+    )
+
+    id_habitacion = models.ForeignKey(
+        'Habitaciones',
+        models.DO_NOTHING,
+        db_column='id_habitacion'
+    )
+
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente'
+    )
+
+    id_tipo_evento = models.ForeignKey(
+        'TiposEventoIa',
+        models.DO_NOTHING,
+        db_column='id_tipo_evento'
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'eventos_ia'
+
+class EvidenciasIa(models.Model):
+    id_evidencia = models.AutoField(primary_key=True)
+    tipo = models.CharField()
+    url = models.TextField()
+    public_id = models.CharField()
+    fecha_hora = models.DateTimeField(blank=True, null=True)
+    duracion = models.IntegerField(blank=True, null=True)
+    id_evento = models.ForeignKey('EventosIa', models.DO_NOTHING, db_column='id_evento', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'evidencias_ia'
+
+class AsignacionHabitacion(models.Model):
+    id_asignacion = models.AutoField(primary_key=True)
+    fecha_inicio = models.DateTimeField(blank=True, null=True)
+    fecha_fin = models.DateTimeField(blank=True, null=True)
+    estado = models.BooleanField()
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+    id_cama = models.ForeignKey('Camas', models.DO_NOTHING, db_column='id_cama', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'asignacion_habitacion'
 
 
 class ElementosPaciente(models.Model):

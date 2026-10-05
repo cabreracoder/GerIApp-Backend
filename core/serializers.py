@@ -46,6 +46,17 @@ from .models import (
     NotificacionDestinatario,
     Citas,
     FcmTokens,
+    Camas,
+    Habitaciones,
+    Fundaciones,
+    Sedes,
+    Camaras,
+    TiposEventoIa,
+    EventosIa,
+    EvidenciasIa,
+    AsignacionHabitacion,
+    GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 
@@ -254,11 +265,66 @@ class TipoEmergenciaSerializer(serializers.ModelSerializer):
         model = TipoEmergencia
         fields = '__all__'
 
+class GrupoMedicacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GrupoMedicacion
+        fields = '__all__'
 
 class EventosAdversosSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventosAdversos
         fields = '__all__'
+        
+    def create(self, validated_data):
+
+        evento = EventosAdversos.objects.create(**validated_data)
+
+        if not evento.id_bitacora:
+            return evento
+
+        bitacora = evento.id_bitacora
+
+        paciente = bitacora.id_paciente
+        cuidador = bitacora.id_usuario
+
+        if not cuidador:
+            return evento
+
+        destinatarios = Usuarios.objects.filter(
+            id_rol_id__in=[6, 7],
+            estado=True
+        )
+
+        if not destinatarios.exists():
+            return evento
+
+        mensaje = "Se registró un evento adverso."
+
+        if paciente:
+            nombre_paciente = f"{paciente.nombre} {paciente.apellido}".strip()
+            mensaje = f"Se registró un evento adverso para el paciente {nombre_paciente}."
+
+        notificacion = Notificaciones.objects.create(
+            titulo="Evento adverso registrado",
+            tipo="EVENTO_ADVERSO",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=paciente,
+            id_usuario=cuidador
+        )
+
+        for usuario in destinatarios:
+            NotificacionDestinatario.objects.create(
+                leida=False,
+                fecha_lectura=None,
+                id_notificacion=notificacion,
+                id_usuario=usuario
+            )
+
+        return evento   
+        
 
 
 class ImagenesEventoAdversoSerializer(serializers.ModelSerializer):
@@ -337,6 +403,66 @@ class FcmTokensSerializer(serializers.ModelSerializer):
         model = FcmTokens
         fields = '__all__'
 
+class CamasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Camas
+        fields = '__all__'
+
+class HabitacionesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Habitaciones
+        fields = '__all__'
+
+class FundacionesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Fundaciones
+        fields = '__all__'
+
+class SedesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Sedes
+        fields = '__all__'
+
+class CamarasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Camaras
+        fields = '__all__'
+
+class TiposEventoIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = TiposEventoIa
+        fields = '__all__'
+
+class EventosIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = EventosIa
+        fields = '__all__'
+
+class EvidenciasIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = EvidenciasIa
+        fields = '__all__'
+
+class AsignacionHabitacionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = AsignacionHabitacion
+        fields = '__all__'
+
+class FormulacionMedicamentosSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FormulacionMedicamentos
+        fields = '__all__'
+        
 
 class CitasSerializer(serializers.ModelSerializer):
 

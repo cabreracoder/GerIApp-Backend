@@ -69,6 +69,17 @@ from .models import (
     NotificacionDestinatario,
     Citas,
     FcmTokens,
+    Camas,
+    Habitaciones,
+    Fundaciones,
+    Sedes,
+    Camaras,
+    TiposEventoIa,
+    EventosIa,
+    EvidenciasIa,
+    AsignacionHabitacion,
+    GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 from .serializers import (
@@ -117,6 +128,17 @@ from .serializers import (
     NotificacionDestinatarioSerializer,
     CitasSerializer,
     FcmTokensSerializer,
+    CamasSerializer,
+    HabitacionesSerializer,
+    FundacionesSerializer,
+    SedesSerializer,
+    CamarasSerializer,
+    TiposEventoIaSerializer,
+    EventosIaSerializer,
+    EvidenciasIaSerializer,
+    AsignacionHabitacionSerializer,
+    GrupoMedicacionSerializer,
+    FormulacionMedicamentosSerializer,
 )
 
 
@@ -1009,6 +1031,13 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
             headers=headers
         )
+class GrupoMedicacionViewSet(viewsets.ModelViewSet):
+    queryset = GrupoMedicacion.objects.all()
+    serializer_class = GrupoMedicacionSerializer
+
+class FormulacionMedicamentosViewSet(viewsets.ModelViewSet):
+    queryset = FormulacionMedicamentos.objects.all()
+    serializer_class = FormulacionMedicamentosSerializer
 
 class FcmTokensViewSet(viewsets.ModelViewSet):
     queryset = FcmTokens.objects.all()
@@ -1042,6 +1071,14 @@ class FcmTokensViewSet(viewsets.ModelViewSet):
             status=201 if creado else 200
         )
 
+
+class CamasViewSet(viewsets.ModelViewSet):
+    queryset = Camas.objects.all()
+    serializer_class = CamasSerializer
+
+class HabitacionesViewSet(viewsets.ModelViewSet):
+    queryset = Habitaciones.objects.all()
+    serializer_class = HabitacionesSerializer
 
 class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
     queryset = NotificacionDestinatario.objects.all()
@@ -1180,6 +1217,34 @@ class RecomendacionesViewSet(viewsets.ModelViewSet):
 class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
     queryset = CuidadosEnfermeria.objects.all()
     serializer_class = CuidadosEnfermeriaSerializer
+
+class AsignacionHabitacionViewSet(viewsets.ModelViewSet):
+    queryset = AsignacionHabitacion.objects.all()
+    serializer_class = AsignacionHabitacionSerializer
+
+class FundacionesViewSet(viewsets.ModelViewSet):
+    queryset = Fundaciones.objects.all()
+    serializer_class = FundacionesSerializer
+
+class SedesViewSet(viewsets.ModelViewSet):
+    queryset = Sedes.objects.all()
+    serializer_class = SedesSerializer
+
+class CamarasViewSet(viewsets.ModelViewSet):
+    queryset = Camaras.objects.all()
+    serializer_class = CamarasSerializer
+
+class TiposEventoIaViewSet(viewsets.ModelViewSet):
+    queryset = TiposEventoIa.objects.all()
+    serializer_class = TiposEventoIaSerializer
+
+class EventosIaViewSet(viewsets.ModelViewSet):
+    queryset = EventosIa.objects.all()
+    serializer_class = EventosIaSerializer
+
+class EvidenciasIaViewSet(viewsets.ModelViewSet):
+    queryset = EvidenciasIa.objects.all()
+    serializer_class = EvidenciasIaSerializer
 
 
 # ============================================================

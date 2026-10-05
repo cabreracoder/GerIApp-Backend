@@ -1154,79 +1154,60 @@ class HabitacionesViewSet(viewsets.ModelViewSet):
     queryset = Habitaciones.objects.all()
     serializer_class = HabitacionesSerializer
 
-# ============================================================
-# DESTINATARIOS DE NOTIFICACIONES
-# ============================================================
 
 class NotificacionDestinatarioViewSet(
     viewsets.ModelViewSet
 ):
-
     queryset = NotificacionDestinatario.objects.all()
-
     serializer_class = NotificacionDestinatarioSerializer
 
-    def create(
-        self,
-        request,
-        *args,
-        **kwargs
-    ):
+    def list(self, request, *args, **kwargs):
 
-        # =====================================================
-        # CREAR DESTINATARIO
-        # =====================================================
+        # ============================================================
+        # REPARAR NOTIFICACIONES QUE NO TENGAN DESTINATARIO
+        # ============================================================
 
-        response = super().create(
-            request,
-            *args,
-            **kwargs
+        notificaciones = Notificaciones.objects.filter(
+            id_usuario__isnull=False
         )
 
-        # =====================================================
-        # OBTENER ID CREADO
-        # =====================================================
+        for notificacion in notificaciones:
+
+            NotificacionDestinatario.objects.get_or_create(
+                id_notificacion=notificacion,
+                id_usuario=notificacion.id_usuario,
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+
+        # ============================================================
+        # DEVOLVER LOS DESTINATARIOS
+        # ============================================================
+
+        return super().list(request, *args, **kwargs)
+
+    def create(self, request, *args, **kwargs):
+
+        response = super().create(request, *args, **kwargs)
 
         id_destinatario = response.data.get(
             'id_notificacion_destinatario'
         )
 
         if not id_destinatario:
-
             return response
-
-        # =====================================================
-        # BUSCAR DESTINATARIO
-        # =====================================================
 
         try:
-
-            destinatario = (
-                NotificacionDestinatario.objects.get(
-                    id_notificacion_destinatario=
-                        id_destinatario
-                )
+            destinatario = NotificacionDestinatario.objects.get(
+                id_notificacion_destinatario=id_destinatario
             )
-
         except NotificacionDestinatario.DoesNotExist:
-
             return response
 
-        # =====================================================
-        # OBTENER NOTIFICACIÓN Y USUARIO
-        # =====================================================
-
-        notificacion = (
-            destinatario.id_notificacion
-        )
-
-        usuario = (
-            destinatario.id_usuario
-        )
-
-        # =====================================================
-        # ENVIAR CORREO SI CORRESPONDE
-        # =====================================================
+        notificacion = destinatario.id_notificacion
+        usuario = destinatario.id_usuario
 
         if (
             notificacion
@@ -1234,79 +1215,37 @@ class NotificacionDestinatarioViewSet(
             and usuario
             and usuario.correo
         ):
-
             try:
+                configuration = sib_api_v3_sdk.Configuration()
+                configuration.api_key['api-key'] = settings.BREVO_API_KEY
 
-                # =============================================
-                # CONFIGURACIÓN DE BREVO
-                # =============================================
-
-                configuration = (
-                    sib_api_v3_sdk.Configuration()
+                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
+                    sib_api_v3_sdk.ApiClient(configuration)
                 )
 
-                configuration.api_key[
-                    'api-key'
-                ] = settings.BREVO_API_KEY
-
-                # =============================================
-                # CLIENTE DE BREVO
-                # =============================================
-
-                api_instance = (
-                    sib_api_v3_sdk.TransactionalEmailsApi(
-                        sib_api_v3_sdk.ApiClient(
-                            configuration
-                        )
-                    )
-                )
-
-                # =============================================
-                # CREAR CORREO
-                # =============================================
-
-                email = (
-                    sib_api_v3_sdk.SendSmtpEmail(
-
-                        sender={
-                            "name": "GerIApp",
-                            "email": settings.EMAIL_FROM
-                        },
-
-                        to=[
-                            {
-                                "email": usuario.correo
-                            }
-                        ],
-
-                        subject=notificacion.titulo,
-
-                        html_content=f"""
+                email = sib_api_v3_sdk.SendSmtpEmail(
+                    sender={
+                        "name": "GerIApp",
+                        "email": settings.EMAIL_FROM
+                    },
+                    to=[
+                        {
+                            "email": usuario.correo
+                        }
+                    ],
+                    subject=notificacion.titulo,
+                    html_content=f"""
                         <h2>{notificacion.titulo}</h2>
-
                         <p>{notificacion.mensaje}</p>
-                        """
-                    )
+                    """
                 )
 
-                # =============================================
-                # ENVIAR CORREO
-                # =============================================
-
-                api_instance.send_transac_email(
-                    email
-                )
+                api_instance.send_transac_email(email)
 
             except Exception as error:
-
                 print(
-                    f"Error al enviar correo "
-                    f"de notificación: {error}"
+                    f"Error al enviar correo de notificación: {error}"
                 )
-
-        # =====================================================
-        # DEVOLVER RESPUESTA
-        # =====================================================
 
         return response
 

@@ -977,6 +977,11 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
         try:
             inicializar_firebase()
 
+            print(
+    f"FCM - Usuario: {usuario.id_usuario} - "
+    f"Cantidad de tokens: {tokens.count()}"
+)
+
             for fcm_token in tokens:
 
                 mensaje = messaging.Message(

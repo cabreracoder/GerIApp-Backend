@@ -22,6 +22,7 @@ from google.auth.transport import requests
 import random
 from datetime import timedelta
 from django.utils import timezone
+from rest_framework.decorators import action
 
 
 
@@ -1161,11 +1162,16 @@ class NotificacionDestinatarioViewSet(
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
 
+    # ============================================================
+    # LISTAR DESTINATARIOS
+    # ============================================================
+
     def list(self, request, *args, **kwargs):
 
-        # ============================================================
-        # REPARAR NOTIFICACIONES QUE NO TENGAN DESTINATARIO
-        # ============================================================
+        # --------------------------------------------------------
+        # Reparar notificaciones antiguas que no tengan
+        # destinatario para el usuario indicado en id_usuario
+        # --------------------------------------------------------
 
         notificaciones = Notificaciones.objects.filter(
             id_usuario__isnull=False
@@ -1182,32 +1188,191 @@ class NotificacionDestinatarioViewSet(
                 }
             )
 
-        # ============================================================
-        # DEVOLVER LOS DESTINATARIOS
-        # ============================================================
+        return super().list(
+            request,
+            *args,
+            **kwargs
+        )
 
-        return super().list(request, *args, **kwargs)
+    # ============================================================
+    # MARCAR CUALQUIER NOTIFICACIÓN COMO LEÍDA
+    # ============================================================
 
-    def create(self, request, *args, **kwargs):
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="marcar-leida"
+    )
+    def marcar_leida(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
 
-        response = super().create(request, *args, **kwargs)
+        id_notificacion = request.data.get(
+            "id_notificacion"
+        )
+
+        id_usuario = request.data.get(
+            "id_usuario"
+        )
+
+        # --------------------------------------------------------
+        # VALIDAR DATOS
+        # --------------------------------------------------------
+
+        if not id_notificacion:
+            return Response(
+                {
+                    "error": "Se requiere id_notificacion."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not id_usuario:
+            return Response(
+                {
+                    "error": "Se requiere id_usuario."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            id_notificacion = int(
+                id_notificacion
+            )
+
+            id_usuario = int(
+                id_usuario
+            )
+
+        except (TypeError, ValueError):
+
+            return Response(
+                {
+                    "error": "Los IDs deben ser números."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # --------------------------------------------------------
+        # BUSCAR NOTIFICACIÓN
+        # --------------------------------------------------------
+
+        try:
+
+            notificacion = Notificaciones.objects.get(
+                id_notificacion=id_notificacion
+            )
+
+        except Notificaciones.DoesNotExist:
+
+            return Response(
+                {
+                    "error": "La notificación no existe."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # --------------------------------------------------------
+        # BUSCAR O CREAR DESTINATARIO
+        # --------------------------------------------------------
+
+        destinatario, creado = (
+            NotificacionDestinatario.objects.get_or_create(
+
+                id_notificacion=notificacion,
+
+                id_usuario_id=id_usuario,
+
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+        )
+
+        # --------------------------------------------------------
+        # MARCAR COMO LEÍDA
+        # --------------------------------------------------------
+
+        destinatario.leida = True
+        destinatario.fecha_lectura = timezone.now()
+
+        destinatario.save(
+            update_fields=[
+                "leida",
+                "fecha_lectura"
+            ]
+        )
+
+        # --------------------------------------------------------
+        # RESPUESTA
+        # --------------------------------------------------------
+
+        return Response(
+            {
+                "mensaje": "Notificación marcada como leída.",
+                "id_notificacion": notificacion.id_notificacion,
+                "id_notificacion_destinatario":
+                    destinatario.id_notificacion_destinatario,
+                "id_usuario": id_usuario,
+                "leida": True,
+                "creado": creado
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # ============================================================
+    # CREAR DESTINATARIO
+    # ============================================================
+
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
+
+        response = super().create(
+            request,
+            *args,
+            **kwargs
+        )
 
         id_destinatario = response.data.get(
-            'id_notificacion_destinatario'
+            "id_notificacion_destinatario"
         )
 
         if not id_destinatario:
             return response
 
         try:
-            destinatario = NotificacionDestinatario.objects.get(
-                id_notificacion_destinatario=id_destinatario
+
+            destinatario = (
+                NotificacionDestinatario.objects.get(
+                    id_notificacion_destinatario=
+                        id_destinatario
+                )
             )
+
         except NotificacionDestinatario.DoesNotExist:
+
             return response
 
-        notificacion = destinatario.id_notificacion
-        usuario = destinatario.id_usuario
+        notificacion = (
+            destinatario.id_notificacion
+        )
+
+        usuario = (
+            destinatario.id_usuario
+        )
+
+        # ========================================================
+        # ENVÍO DE CORREO
+        # ========================================================
 
         if (
             notificacion
@@ -1215,36 +1380,60 @@ class NotificacionDestinatarioViewSet(
             and usuario
             and usuario.correo
         ):
+
             try:
-                configuration = sib_api_v3_sdk.Configuration()
-                configuration.api_key['api-key'] = settings.BREVO_API_KEY
 
-                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
-                    sib_api_v3_sdk.ApiClient(configuration)
+                configuration = (
+                    sib_api_v3_sdk.Configuration()
                 )
 
-                email = sib_api_v3_sdk.SendSmtpEmail(
-                    sender={
-                        "name": "GerIApp",
-                        "email": settings.EMAIL_FROM
-                    },
-                    to=[
-                        {
-                            "email": usuario.correo
-                        }
-                    ],
-                    subject=notificacion.titulo,
-                    html_content=f"""
-                        <h2>{notificacion.titulo}</h2>
-                        <p>{notificacion.mensaje}</p>
-                    """
+                configuration.api_key[
+                    "api-key"
+                ] = settings.BREVO_API_KEY
+
+                api_instance = (
+                    sib_api_v3_sdk.TransactionalEmailsApi(
+                        sib_api_v3_sdk.ApiClient(
+                            configuration
+                        )
+                    )
                 )
 
-                api_instance.send_transac_email(email)
+                email = (
+                    sib_api_v3_sdk.SendSmtpEmail(
+                        sender={
+                            "name": "GerIApp",
+                            "email": settings.EMAIL_FROM
+                        },
+                        to=[
+                            {
+                                "email":
+                                    usuario.correo
+                            }
+                        ],
+                        subject=
+                            notificacion.titulo,
+                        html_content=f"""
+                            <h2>
+                                {notificacion.titulo}
+                            </h2>
+
+                            <p>
+                                {notificacion.mensaje}
+                            </p>
+                        """
+                    )
+                )
+
+                api_instance.send_transac_email(
+                    email
+                )
 
             except Exception as error:
+
                 print(
-                    f"Error al enviar correo de notificación: {error}"
+                    "Error al enviar correo de "
+                    f"notificación: {error}"
                 )
 
         return response

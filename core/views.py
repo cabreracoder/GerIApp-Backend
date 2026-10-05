@@ -992,6 +992,12 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
                             notificacion.tipo or ""
                         )
                     },
+                    android=messaging.AndroidConfig(
+                        priority="high",
+                        notification=messaging.AndroidNotification(
+                            channel_id="geriapp_notificaciones"
+                        )
+                    ),
                     token=fcm_token.token
                 )
 

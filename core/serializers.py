@@ -196,9 +196,67 @@ class NotificacionesSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = NotificacionDestinatario
         fields = '__all__'
+
+    def update(self, instance, validated_data):
+
+        # =====================================================
+        # OBTENER NUEVO ESTADO
+        # =====================================================
+
+        nueva_leida = validated_data.get(
+            'leida',
+            instance.leida
+        )
+
+        # =====================================================
+        # ACTUALIZAR ESTADO
+        # =====================================================
+
+        instance.leida = nueva_leida
+
+        # =====================================================
+        # ACTUALIZAR FECHA DE LECTURA
+        # =====================================================
+
+        if nueva_leida:
+
+            # Solo colocar fecha si todavía no tenía
+            if not instance.fecha_lectura:
+                instance.fecha_lectura = timezone.now()
+
+        else:
+
+            # Si vuelve a no leída, quitar fecha
+            instance.fecha_lectura = None
+
+        # =====================================================
+        # ACTUALIZAR OTROS CAMPOS
+        # =====================================================
+
+        for atributo, valor in validated_data.items():
+
+            if atributo not in [
+                'leida',
+                'fecha_lectura'
+            ]:
+
+                setattr(
+                    instance,
+                    atributo,
+                    valor
+                )
+
+        # =====================================================
+        # GUARDAR
+        # =====================================================
+
+        instance.save()
+
+        return instance
 
 class AplicacionMedicamentoSerializer(serializers.ModelSerializer):
     class Meta:

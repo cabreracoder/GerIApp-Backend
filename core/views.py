@@ -933,81 +933,141 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
+
+
 class NotificacionesViewSet(viewsets.ModelViewSet):
+
     queryset = Notificaciones.objects.all()
+
     serializer_class = NotificacionesSerializer
 
     def create(self, request, *args, **kwargs):
-        # ============================================
-        # Validar y guardar la notificación
-        # ============================================
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        # =====================================================
+        # VALIDAR DATOS
+        # =====================================================
+
+        serializer = self.get_serializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        # =====================================================
+        # CREAR NOTIFICACIÓN
+        # =====================================================
 
         self.perform_create(serializer)
 
         notificacion = serializer.instance
 
-        # ============================================
-        # Obtener usuario destinatario
-        # ============================================
+        # =====================================================
+        # OBTENER USUARIO DESTINATARIO
+        # =====================================================
 
         usuario = notificacion.id_usuario
 
+        if usuario:
+
+            NotificacionDestinatario.objects.get_or_create(
+
+                id_notificacion=notificacion,
+
+                id_usuario=usuario,
+
+                defaults={
+                    'leida': False,
+                    'fecha_lectura': None
+                }
+            )
+
+        # =====================================================
+        # SI NO HAY USUARIO
+        # =====================================================
+
         if not usuario:
+
             return Response(
                 serializer.data,
                 status=status.HTTP_201_CREATED
             )
 
-        # ============================================
-        # Buscar tokens FCM activos del usuario
-        # ============================================
+        # =====================================================
+        # BUSCAR TOKENS FCM ACTIVOS
+        # =====================================================
 
         tokens = FcmTokens.objects.filter(
+
             id_usuario=usuario,
+
             activo=True
         )
 
-        # ============================================
-        # Enviar la notificacion Push
-        # ============================================
+        # =====================================================
+        # ENVIAR NOTIFICACIÓN PUSH
+        # =====================================================
 
         try:
+
             inicializar_firebase()
 
             print(
-    f"FCM - Usuario: {usuario.id_usuario} - "
-    f"Cantidad de tokens: {tokens.count()}"
-)
+                f"FCM - Usuario: {usuario.id_usuario} - "
+                f"Cantidad de tokens: {tokens.count()}"
+            )
+
+            # =================================================
+            # ENVIAR A CADA DISPOSITIVO
+            # =================================================
 
             for fcm_token in tokens:
 
                 mensaje = messaging.Message(
+
                     notification=messaging.Notification(
+
                         title=notificacion.titulo,
+
                         body=notificacion.mensaje
                     ),
+
                     data={
-                        "id_notificacion": str(
+
+                        'id_notificacion': str(
                             notificacion.id_notificacion
                         ),
-                        "tipo": str(
+
+                        'tipo': str(
                             notificacion.tipo or ""
                         )
                     },
+
                     android=messaging.AndroidConfig(
+
                         priority="high",
-                        notification=messaging.AndroidNotification(
-                            channel_id="geriapp_notificaciones"
-                        )
+
+                        notification=
+                            messaging.AndroidNotification(
+
+                                channel_id=
+                                    "geriapp_notificaciones"
+                            )
                     ),
+
                     token=fcm_token.token
                 )
 
+                # =============================================
+                # ENVIAR FCM
+                # =============================================
+
                 try:
-                    respuesta = messaging.send(mensaje)
+
+                    respuesta = messaging.send(
+                        mensaje
+                    )
 
                     print(
                         f"FCM enviado correctamente. "
@@ -1031,17 +1091,20 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
                 f"{error_firebase}"
             )
 
-        # ============================================
-        # Devolver la notificacion creada
-        # ============================================
+        # =====================================================
+        # DEVOLVER NOTIFICACIÓN
+        # =====================================================
 
-        headers = self.get_success_headers(serializer.data)
+        headers = self.get_success_headers(
+            serializer.data
+        )
 
         return Response(
             serializer.data,
             status=status.HTTP_201_CREATED,
             headers=headers
         )
+    
 class GrupoMedicacionViewSet(viewsets.ModelViewSet):
     queryset = GrupoMedicacion.objects.all()
     serializer_class = GrupoMedicacionSerializer
@@ -1091,21 +1154,79 @@ class HabitacionesViewSet(viewsets.ModelViewSet):
     queryset = Habitaciones.objects.all()
     serializer_class = HabitacionesSerializer
 
-class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
+# ============================================================
+# DESTINATARIOS DE NOTIFICACIONES
+# ============================================================
+
+class NotificacionDestinatarioViewSet(
+    viewsets.ModelViewSet
+):
+
     queryset = NotificacionDestinatario.objects.all()
+
     serializer_class = NotificacionDestinatarioSerializer
-    
-    def create(self, request, *args, **kwargs):
 
-        response = super().create(request, *args, **kwargs)
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
 
-        destinatario = NotificacionDestinatario.objects.get(
-            id_notificacion_destinatario=response.data['id_notificacion_destinatario']
+        # =====================================================
+        # CREAR DESTINATARIO
+        # =====================================================
+
+        response = super().create(
+            request,
+            *args,
+            **kwargs
         )
 
-        notificacion = destinatario.id_notificacion
+        # =====================================================
+        # OBTENER ID CREADO
+        # =====================================================
 
-        usuario = destinatario.id_usuario
+        id_destinatario = response.data.get(
+            'id_notificacion_destinatario'
+        )
+
+        if not id_destinatario:
+
+            return response
+
+        # =====================================================
+        # BUSCAR DESTINATARIO
+        # =====================================================
+
+        try:
+
+            destinatario = (
+                NotificacionDestinatario.objects.get(
+                    id_notificacion_destinatario=
+                        id_destinatario
+                )
+            )
+
+        except NotificacionDestinatario.DoesNotExist:
+
+            return response
+
+        # =====================================================
+        # OBTENER NOTIFICACIÓN Y USUARIO
+        # =====================================================
+
+        notificacion = (
+            destinatario.id_notificacion
+        )
+
+        usuario = (
+            destinatario.id_usuario
+        )
+
+        # =====================================================
+        # ENVIAR CORREO SI CORRESPONDE
+        # =====================================================
 
         if (
             notificacion
@@ -1116,38 +1237,80 @@ class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
 
             try:
 
-                configuration = sib_api_v3_sdk.Configuration()
+                # =============================================
+                # CONFIGURACIÓN DE BREVO
+                # =============================================
 
-                configuration.api_key['api-key'] = settings.BREVO_API_KEY
-
-                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
-                    sib_api_v3_sdk.ApiClient(configuration)
+                configuration = (
+                    sib_api_v3_sdk.Configuration()
                 )
 
-                email = sib_api_v3_sdk.SendSmtpEmail(
-                    sender={
-                        "name": "GerIApp",
-                        "email": settings.EMAIL_FROM
-                    },
-                    to=[
-                        {"email": usuario.correo}
-                    ],
-                    subject=notificacion.titulo,
-                    html_content=f"""
-                    <h2>{notificacion.titulo}</h2>
-                    <p>{notificacion.mensaje}</p>
-                    """
+                configuration.api_key[
+                    'api-key'
+                ] = settings.BREVO_API_KEY
+
+                # =============================================
+                # CLIENTE DE BREVO
+                # =============================================
+
+                api_instance = (
+                    sib_api_v3_sdk.TransactionalEmailsApi(
+                        sib_api_v3_sdk.ApiClient(
+                            configuration
+                        )
+                    )
                 )
 
-                api_instance.send_transac_email(email)
+                # =============================================
+                # CREAR CORREO
+                # =============================================
 
-            except Exception as e:
+                email = (
+                    sib_api_v3_sdk.SendSmtpEmail(
 
-                print(f"Error al enviar correo de notificación: {e}")
+                        sender={
+                            "name": "GerIApp",
+                            "email": settings.EMAIL_FROM
+                        },
+
+                        to=[
+                            {
+                                "email": usuario.correo
+                            }
+                        ],
+
+                        subject=notificacion.titulo,
+
+                        html_content=f"""
+                        <h2>{notificacion.titulo}</h2>
+
+                        <p>{notificacion.mensaje}</p>
+                        """
+                    )
+                )
+
+                # =============================================
+                # ENVIAR CORREO
+                # =============================================
+
+                api_instance.send_transac_email(
+                    email
+                )
+
+            except Exception as error:
+
+                print(
+                    f"Error al enviar correo "
+                    f"de notificación: {error}"
+                )
+
+        # =====================================================
+        # DEVOLVER RESPUESTA
+        # =====================================================
 
         return response
 
-class  CitasViewSet(viewsets.ModelViewSet):
+class CitasViewSet(viewsets.ModelViewSet):
     queryset = Citas.objects.all()
     serializer_class = CitasSerializer
 

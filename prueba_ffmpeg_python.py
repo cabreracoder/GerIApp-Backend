@@ -471,7 +471,7 @@ def detectar_postura(puntos):
 
 
     # ========================================================
-    # PROMEDIO DE RODILLAS
+    # PROMEDIO DE LAS RODILLAS
     # ========================================================
 
     angulo_rodillas = (
@@ -507,7 +507,117 @@ def detectar_postura(puntos):
 
 
     # ========================================================
+    # ORIENTACIÓN DE LAS PIERNAS
+    #
+    # Calculamos hacia dónde apuntan las piernas desde
+    # la cadera hasta el tobillo.
+    #
+    # Si las piernas apuntan hacia abajo:
+    #
+    #     dy será positivo y relativamente grande.
+    #
+    # Si las piernas están extendidas hacia adelante:
+    #
+    #     dx tendrá más peso respecto a dy.
+    #
+    # Esto nos ayuda a diferenciar:
+    #
+    # SENTADO EN LA CAMA
+    #
+    # de
+    #
+    # DE PIE
+    # ========================================================
+
+    dx_pierna_izq = (
+        tobillo_izq[0]
+        -
+        cadera_izq[0]
+    )
+
+    dy_pierna_izq = (
+        tobillo_izq[1]
+        -
+        cadera_izq[1]
+    )
+
+
+    dx_pierna_der = (
+        tobillo_der[0]
+        -
+        cadera_der[0]
+    )
+
+    dy_pierna_der = (
+        tobillo_der[1]
+        -
+        cadera_der[1]
+    )
+
+
+    # ========================================================
+    # ÁNGULO DE ORIENTACIÓN DE CADA PIERNA
+    #
+    # 0°  = apunta principalmente hacia abajo.
+    #
+    # 90° = apunta principalmente hacia los lados.
+    #
+    # Mientras más grande sea el ángulo, más horizontal
+    # está la pierna.
+    # ========================================================
+
+    angulo_pierna_izq = abs(
+
+        np.degrees(
+
+            np.arctan2(
+
+                dx_pierna_izq,
+
+                dy_pierna_izq
+
+            )
+
+        )
+
+    )
+
+
+    angulo_pierna_der = abs(
+
+        np.degrees(
+
+            np.arctan2(
+
+                dx_pierna_der,
+
+                dy_pierna_der
+
+            )
+
+        )
+
+    )
+
+
+    # ========================================================
+    # PROMEDIO DE ORIENTACIÓN DE LAS PIERNAS
+    # ========================================================
+
+    angulo_piernas = (
+
+        angulo_pierna_izq
+        +
+        angulo_pierna_der
+
+    ) / 2
+
+
+    # ========================================================
     # ACOSTADA
+    #
+    # Si el cuerpo tiene mucha más anchura que altura,
+    # consideramos que está acostado.
     # ========================================================
 
     if proporcion > 1.30:
@@ -516,7 +626,9 @@ def detectar_postura(puntos):
 
 
     # ========================================================
-    # SENTADA
+    # SENTADA CON PIERNAS DOBLADAS
+    #
+    # Una rodilla bastante flexionada indica posición sentada.
     # ========================================================
 
     if angulo_rodillas < 145:
@@ -525,7 +637,44 @@ def detectar_postura(puntos):
 
 
     # ========================================================
+    # SENTADA CON PIERNAS ESTIRADAS
+    #
+    # Este es el nuevo caso.
+    #
+    # Si las rodillas están rectas pero las piernas están
+    # bastante inclinadas/horizontales, significa que la
+    # persona puede estar sentada en la cama con las piernas
+    # extendidas.
+    #
+    # No la clasificamos como DE PIE.
+    # ========================================================
+
+    if (
+
+        angulo_rodillas >= 145
+
+        and
+
+        angulo_piernas > 45
+
+    ):
+
+        return "SENTADA"
+
+
+    # ========================================================
     # DE PIE
+    #
+    # Para considerar que está de pie ahora exigimos:
+    #
+    # 1. Rodillas relativamente rectas.
+    #
+    # 2. Tronco vertical.
+    #
+    # 3. Piernas orientadas principalmente hacia abajo.
+    #
+    # Esto evita confundir una persona sentada en la cama
+    # con las piernas estiradas con una persona de pie.
     # ========================================================
 
     if (
@@ -535,6 +684,10 @@ def detectar_postura(puntos):
         and
 
         angulo_tronco < 35
+
+        and
+
+        angulo_piernas <= 45
 
     ):
 
@@ -546,6 +699,8 @@ def detectar_postura(puntos):
     # ========================================================
 
     return "DESCONOCIDO"
+
+
 
 
 # ============================================================

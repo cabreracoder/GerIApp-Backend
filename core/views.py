@@ -944,168 +944,44 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
 
-        # =====================================================
-        # VALIDAR DATOS
-        # =====================================================
-
-        serializer = self.get_serializer(
-            data=request.data
+        response = super().create(
+            request,
+            *args,
+            **kwargs
         )
 
-        serializer.is_valid(
-            raise_exception=True
+        id_notificacion = response.data.get(
+            "id_notificacion"
         )
 
-        # =====================================================
-        # CREAR NOTIFICACIÓN
-        # =====================================================
+        if not id_notificacion:
+            return response
 
-        self.perform_create(serializer)
+        try:
 
-        notificacion = serializer.instance
+            notificacion = Notificaciones.objects.get(
+                id_notificacion=id_notificacion
+            )
 
-        # =====================================================
-        # OBTENER USUARIO DESTINATARIO
-        # =====================================================
+        except Notificaciones.DoesNotExist:
+
+            return response
 
         usuario = notificacion.id_usuario
 
         if usuario:
 
             NotificacionDestinatario.objects.get_or_create(
-
                 id_notificacion=notificacion,
-
                 id_usuario=usuario,
-
                 defaults={
-                    'leida': False,
-                    'fecha_lectura': None
+                    "leida": False,
+                    "fecha_lectura": None
                 }
             )
 
-        # =====================================================
-        # SI NO HAY USUARIO
-        # =====================================================
+        return response
 
-        if not usuario:
-
-            return Response(
-                serializer.data,
-                status=status.HTTP_201_CREATED
-            )
-
-        # =====================================================
-        # BUSCAR TOKENS FCM ACTIVOS
-        # =====================================================
-
-        tokens = FcmTokens.objects.filter(
-
-            id_usuario=usuario,
-
-            activo=True
-        )
-
-        # =====================================================
-        # ENVIAR NOTIFICACIÓN PUSH
-        # =====================================================
-
-        try:
-
-            inicializar_firebase()
-
-            print(
-                f"FCM - Usuario: {usuario.id_usuario} - "
-                f"Cantidad de tokens: {tokens.count()}"
-            )
-
-            # =================================================
-            # ENVIAR A CADA DISPOSITIVO
-            # =================================================
-
-            for fcm_token in tokens:
-
-                mensaje = messaging.Message(
-
-                    notification=messaging.Notification(
-
-                        title=notificacion.titulo,
-
-                        body=notificacion.mensaje
-                    ),
-
-                    data={
-
-                        'id_notificacion': str(
-                            notificacion.id_notificacion
-                        ),
-
-                        'tipo': str(
-                            notificacion.tipo or ""
-                        )
-                    },
-
-                    android=messaging.AndroidConfig(
-
-                        priority="high",
-
-                        notification=
-                            messaging.AndroidNotification(
-
-                                channel_id=
-                                    "geriapp_notificaciones"
-                            )
-                    ),
-
-                    token=fcm_token.token
-                )
-
-                # =============================================
-                # ENVIAR FCM
-                # =============================================
-
-                try:
-
-                    respuesta = messaging.send(
-                        mensaje
-                    )
-
-                    print(
-                        f"FCM enviado correctamente. "
-                        f"Usuario: {usuario.id_usuario}, "
-                        f"Token: {fcm_token.id_fcm_token}, "
-                        f"Respuesta: {respuesta}"
-                    )
-
-                except Exception as error_token:
-
-                    print(
-                        f"Error enviando FCM al token "
-                        f"{fcm_token.id_fcm_token}: "
-                        f"{error_token}"
-                    )
-
-        except Exception as error_firebase:
-
-            print(
-                f"Error inicializando/enviando Firebase: "
-                f"{error_firebase}"
-            )
-
-        # =====================================================
-        # DEVOLVER NOTIFICACIÓN
-        # =====================================================
-
-        headers = self.get_success_headers(
-            serializer.data
-        )
-
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED,
-            headers=headers
-        )
-    
 class GrupoMedicacionViewSet(viewsets.ModelViewSet):
     queryset = GrupoMedicacion.objects.all()
     serializer_class = GrupoMedicacionSerializer
@@ -1434,6 +1310,74 @@ class NotificacionDestinatarioViewSet(
                 print(
                     "Error al enviar correo de "
                     f"notificación: {error}"
+                )
+
+        # ============================================
+        # Enviar la notificación Push al destinatario
+        # ============================================
+
+        if notificacion and usuario:
+
+            tokens = FcmTokens.objects.filter(
+                id_usuario=usuario,
+                activo=True
+            )
+
+            try:
+                inicializar_firebase()
+
+                print(
+                    f"FCM - Usuario: {usuario.id_usuario} - "
+                    f"Cantidad de tokens: {tokens.count()}"
+                )
+
+                for fcm_token in tokens:
+
+                    mensaje = messaging.Message(
+                        notification=messaging.Notification(
+                            title=notificacion.titulo,
+                            body=notificacion.mensaje
+                        ),
+                        data={
+                            "id_notificacion": str(
+                                notificacion.id_notificacion
+                            ),
+                            "tipo": str(
+                                notificacion.tipo or ""
+                            )
+                        },
+                        android=messaging.AndroidConfig(
+                            priority="high",
+                            notification=messaging.AndroidNotification(
+                                channel_id="geriapp_notificaciones"
+                            )
+                        ),
+                        token=fcm_token.token
+                    )
+
+                    try:
+                        respuesta = messaging.send(mensaje)
+
+                        print(
+                            f"FCM enviado correctamente. "
+                            f"Usuario: {usuario.id_usuario}, "
+                            f"Token: {fcm_token.id_fcm_token}, "
+                            f"Respuesta: {respuesta}"
+                        )
+
+                    except Exception as error_token:
+
+                        print(
+                            f"Error enviando FCM al token "
+                            f"{fcm_token.id_fcm_token}: "
+                            f"{error_token}"
+                        )
+
+            except Exception as error_firebase:
+
+                print(
+                    f"Error inicializando/enviando Firebase: "
+                    f"{error_firebase}"
                 )
 
         return response

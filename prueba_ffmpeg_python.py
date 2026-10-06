@@ -84,11 +84,32 @@ FRAMES_ESTABILIDAD = 5
 # Última postura válida utilizada para las transiciones.
 postura_anterior = "DESCONOCIDO"
 
+# Indica que la persona inició una secuencia:
+#
+# ACOSTADA → SENTADA
+#
+# y estamos esperando:
+#
+# SENTADA → DE PIE
+#
 levantamiento_en_proceso = False
 
+# Indica que acaba de detectarse un levantamiento.
+#
+# Se utiliza únicamente para mostrar el aviso visual.
 levantamiento_detectado = False
 
+# Total de levantamientos registrados.
 contador_levantamientos = 0
+
+# Guarda el momento exacto en que se detectó el levantamiento.
+#
+# Se utilizará para mostrar "LEVANTAMIENTO: SI"
+# solamente durante 2 segundos.
+tiempo_levantamiento = 0
+
+# Duración del aviso visual.
+DURACION_AVISO_LEVANTAMIENTO = 2
 
 
 # ============================================================
@@ -271,11 +292,9 @@ def cuerpo_valido(keypoints, confianzas):
     # ========================================================
 
     hombros_validos = (
-
         hombro_izq
         or
         hombro_der
-
     )
 
 
@@ -284,11 +303,9 @@ def cuerpo_valido(keypoints, confianzas):
     # ========================================================
 
     caderas_validas = (
-
         cadera_izq
         or
         cadera_der
-
     )
 
 
@@ -297,13 +314,11 @@ def cuerpo_valido(keypoints, confianzas):
     # ========================================================
 
     pierna_izquierda = (
-
         cadera_izq
         and
         rodilla_izq
         and
         tobillo_izq
-
     )
 
 
@@ -312,13 +327,11 @@ def cuerpo_valido(keypoints, confianzas):
     # ========================================================
 
     pierna_derecha = (
-
         cadera_der
         and
         rodilla_der
         and
         tobillo_der
-
     )
 
 
@@ -327,11 +340,9 @@ def cuerpo_valido(keypoints, confianzas):
     # ========================================================
 
     piernas_validas = (
-
         pierna_izquierda
         or
         pierna_derecha
-
     )
 
 
@@ -340,17 +351,14 @@ def cuerpo_valido(keypoints, confianzas):
     # ========================================================
 
     if (
-
         hombros_validos
         and
         caderas_validas
         and
         piernas_validas
-
     ):
 
         return True
-
 
     return False
 
@@ -387,11 +395,8 @@ def detectar_postura(puntos):
     # ========================================================
 
     hombros = (
-
         (hombro_izq[0] + hombro_der[0]) / 2,
-
         (hombro_izq[1] + hombro_der[1]) / 2
-
     )
 
 
@@ -400,11 +405,8 @@ def detectar_postura(puntos):
     # ========================================================
 
     caderas = (
-
         (cadera_izq[0] + cadera_der[0]) / 2,
-
         (cadera_izq[1] + cadera_der[1]) / 2
-
     )
 
 
@@ -415,20 +417,16 @@ def detectar_postura(puntos):
     puntos_validos = np.array(puntos)
 
     ancho = (
-
         puntos_validos[:, 0].max()
         -
         puntos_validos[:, 0].min()
-
     )
 
 
     alto = (
-
         puntos_validos[:, 1].max()
         -
         puntos_validos[:, 1].min()
-
     )
 
 
@@ -445,13 +443,9 @@ def detectar_postura(puntos):
     # ========================================================
 
     angulo_rodilla_izq = calcular_angulo(
-
         cadera_izq,
-
         rodilla_izq,
-
         tobillo_izq
-
     )
 
 
@@ -460,13 +454,9 @@ def detectar_postura(puntos):
     # ========================================================
 
     angulo_rodilla_der = calcular_angulo(
-
         cadera_der,
-
         rodilla_der,
-
         tobillo_der
-
     )
 
 
@@ -475,11 +465,9 @@ def detectar_postura(puntos):
     # ========================================================
 
     angulo_rodillas = (
-
         angulo_rodilla_izq
         +
         angulo_rodilla_der
-
     ) / 2
 
 
@@ -493,40 +481,17 @@ def detectar_postura(puntos):
 
 
     angulo_tronco = abs(
-
         np.degrees(
-
             np.arctan2(
                 dx,
                 dy
             )
-
         )
-
     )
 
 
     # ========================================================
     # ORIENTACIÓN DE LAS PIERNAS
-    #
-    # Calculamos hacia dónde apuntan las piernas desde
-    # la cadera hasta el tobillo.
-    #
-    # Si las piernas apuntan hacia abajo:
-    #
-    #     dy será positivo y relativamente grande.
-    #
-    # Si las piernas están extendidas hacia adelante:
-    #
-    #     dx tendrá más peso respecto a dy.
-    #
-    # Esto nos ayuda a diferenciar:
-    #
-    # SENTADO EN LA CAMA
-    #
-    # de
-    #
-    # DE PIE
     # ========================================================
 
     dx_pierna_izq = (
@@ -557,46 +522,25 @@ def detectar_postura(puntos):
 
     # ========================================================
     # ÁNGULO DE ORIENTACIÓN DE CADA PIERNA
-    #
-    # 0°  = apunta principalmente hacia abajo.
-    #
-    # 90° = apunta principalmente hacia los lados.
-    #
-    # Mientras más grande sea el ángulo, más horizontal
-    # está la pierna.
     # ========================================================
 
     angulo_pierna_izq = abs(
-
         np.degrees(
-
             np.arctan2(
-
                 dx_pierna_izq,
-
                 dy_pierna_izq
-
             )
-
         )
-
     )
 
 
     angulo_pierna_der = abs(
-
         np.degrees(
-
             np.arctan2(
-
                 dx_pierna_der,
-
                 dy_pierna_der
-
             )
-
         )
-
     )
 
 
@@ -605,19 +549,14 @@ def detectar_postura(puntos):
     # ========================================================
 
     angulo_piernas = (
-
         angulo_pierna_izq
         +
         angulo_pierna_der
-
     ) / 2
 
 
     # ========================================================
     # ACOSTADA
-    #
-    # Si el cuerpo tiene mucha más anchura que altura,
-    # consideramos que está acostado.
     # ========================================================
 
     if proporcion > 1.30:
@@ -627,8 +566,6 @@ def detectar_postura(puntos):
 
     # ========================================================
     # SENTADA CON PIERNAS DOBLADAS
-    #
-    # Una rodilla bastante flexionada indica posición sentada.
     # ========================================================
 
     if angulo_rodillas < 145:
@@ -638,25 +575,12 @@ def detectar_postura(puntos):
 
     # ========================================================
     # SENTADA CON PIERNAS ESTIRADAS
-    #
-    # Este es el nuevo caso.
-    #
-    # Si las rodillas están rectas pero las piernas están
-    # bastante inclinadas/horizontales, significa que la
-    # persona puede estar sentada en la cama con las piernas
-    # extendidas.
-    #
-    # No la clasificamos como DE PIE.
     # ========================================================
 
     if (
-
         angulo_rodillas >= 145
-
         and
-
         angulo_piernas > 45
-
     ):
 
         return "SENTADA"
@@ -664,31 +588,14 @@ def detectar_postura(puntos):
 
     # ========================================================
     # DE PIE
-    #
-    # Para considerar que está de pie ahora exigimos:
-    #
-    # 1. Rodillas relativamente rectas.
-    #
-    # 2. Tronco vertical.
-    #
-    # 3. Piernas orientadas principalmente hacia abajo.
-    #
-    # Esto evita confundir una persona sentada en la cama
-    # con las piernas estiradas con una persona de pie.
     # ========================================================
 
     if (
-
         angulo_rodillas >= 145
-
         and
-
         angulo_tronco < 35
-
         and
-
         angulo_piernas <= 45
-
     ):
 
         return "DE PIE"
@@ -701,8 +608,6 @@ def detectar_postura(puntos):
     return "DESCONOCIDO"
 
 
-
-
 # ============================================================
 # HILO DE CAPTURA DE CÁMARA
 # ============================================================
@@ -710,7 +615,6 @@ def detectar_postura(puntos):
 def capturar_camara():
 
     global frame_actual
-
     global ejecutando
 
 
@@ -740,7 +644,6 @@ def capturar_camara():
         "mjpeg",
 
         "pipe:1"
-
     ]
 
 
@@ -753,7 +656,6 @@ def capturar_camara():
         stderr=subprocess.DEVNULL,
 
         bufsize=10**8
-
     )
 
 
@@ -786,11 +688,8 @@ def capturar_camara():
 
 
             fin = buffer.find(
-
                 b"\xff\xd9",
-
                 inicio + 2
-
             )
 
 
@@ -800,32 +699,24 @@ def capturar_camara():
 
 
             jpg = buffer[
-
                 inicio:
                 fin + 2
-
             ]
 
 
             buffer = buffer[
-
                 fin + 2:
-
             ]
 
 
             imagen = cv2.imdecode(
 
                 np.frombuffer(
-
                     jpg,
-
                     dtype=np.uint8
-
                 ),
 
                 cv2.IMREAD_COLOR
-
             )
 
 
@@ -850,26 +741,22 @@ def capturar_camara():
 def procesar_yolo():
 
     global resultado_actual
-
     global ejecutando
 
     global postura_actual
-
     global postura_candidata
-
     global contador_postura
 
     global postura_anterior
-
     global ultima_postura_valida
 
     global levantamiento_en_proceso
-
     global levantamiento_detectado
 
     global contador_levantamientos
-
     global contador_sin_persona
+
+    global tiempo_levantamiento
 
 
     # ========================================================
@@ -912,15 +799,11 @@ def procesar_yolo():
 
 
         if (
-
             ahora
             -
             ultimo_procesamiento
-
             <
-
             intervalo
-
         ):
 
             time.sleep(0.001)
@@ -958,7 +841,6 @@ def procesar_yolo():
             conf=0.5,
 
             imgsz=TAMANO_YOLO
-
         )
 
 
@@ -984,23 +866,17 @@ def procesar_yolo():
         # ====================================================
 
         if (
-
             resultado.keypoints is not None
-
             and
-
             len(resultado.keypoints) > 0
-
         ):
 
             puntos = (
-
                 resultado
                 .keypoints
                 .xy[0]
                 .cpu()
                 .numpy()
-
             )
 
 
@@ -1009,13 +885,11 @@ def procesar_yolo():
             # =================================================
 
             confianzas = (
-
                 resultado
                 .keypoints
                 .conf[0]
                 .cpu()
                 .numpy()
-
             )
 
 
@@ -1024,13 +898,9 @@ def procesar_yolo():
             # =================================================
 
             if (
-
                 len(puntos) >= 17
-
                 and
-
                 len(confianzas) >= 17
-
             ):
 
                 # =================================================
@@ -1038,11 +908,8 @@ def procesar_yolo():
                 # =================================================
 
                 if cuerpo_valido(
-
                     puntos,
-
                     confianzas
-
                 ):
 
                     # =============================================
@@ -1050,9 +917,7 @@ def procesar_yolo():
                     # =============================================
 
                     postura_detectada = detectar_postura(
-
                         puntos
-
                     )
 
                     contador_sin_persona = 0
@@ -1117,7 +982,12 @@ def procesar_yolo():
 
             contador_postura = 0
 
-            levantamiento_detectado = False
+            # No modificamos levantamiento_en_proceso.
+            #
+            # Tampoco modificamos ultima_postura_valida.
+            #
+            # El aviso visual sí se mantiene únicamente
+            # durante el tiempo establecido.
 
 
         # ====================================================
@@ -1178,12 +1048,16 @@ def procesar_yolo():
 
                     postura_actual = postura_detectada
 
-
                     contador_postura = 0
 
 
                     # =================================================
                     # ACOSTADA
+                    #
+                    # IMPORTANTE:
+                    #
+                    # Volver a ACOSTADA reinicia el ciclo y
+                    # permite registrar un nuevo levantamiento.
                     # =================================================
 
                     if postura_actual == "ACOSTADA":
@@ -1199,16 +1073,14 @@ def procesar_yolo():
 
                     # =================================================
                     # ACOSTADA → SENTADA
+                    #
+                    # Aquí comienza un nuevo ciclo.
                     # =================================================
 
                     elif (
-
                         postura_anterior == "ACOSTADA"
-
                         and
-
                         postura_actual == "SENTADA"
-
                     ):
 
                         levantamiento_en_proceso = True
@@ -1216,36 +1088,38 @@ def procesar_yolo():
                         levantamiento_detectado = False
 
                         print(
-
                             "🟡 Persona pasó de "
                             "ACOSTADA a SENTADA"
-
                         )
 
 
                     # =================================================
                     # SENTADA → DE PIE
+                    #
+                    # SOLO se cuenta si previamente se inició
+                    # el ciclo desde ACOSTADA.
                     # =================================================
 
                     elif (
-
                         levantamiento_en_proceso
-
                         and
-
                         postura_anterior == "SENTADA"
-
                         and
-
                         postura_actual == "DE PIE"
-
                     ):
+
+                        # =============================================
+                        # REGISTRAR LEVANTAMIENTO
+                        # =============================================
 
                         levantamiento_detectado = True
 
                         levantamiento_en_proceso = False
 
                         contador_levantamientos += 1
+
+                        # Guardamos el momento exacto del evento.
+                        tiempo_levantamiento = time.time()
 
 
                         print()
@@ -1255,17 +1129,13 @@ def procesar_yolo():
                         )
 
                         print(
-
                             f"   Levantamiento "
                             f"#{contador_levantamientos}"
-
                         )
 
                         print(
-
                             "   Secuencia: "
                             "ACOSTADA → SENTADA → DE PIE"
-
                         )
 
                         print()
@@ -1278,6 +1148,35 @@ def procesar_yolo():
                     # =================================================
 
                     postura_actual = postura_detectada
+
+
+        # ====================================================
+        # AVISO TEMPORAL DE LEVANTAMIENTO
+        #
+        # El aviso permanece durante 2 segundos.
+        #
+        # IMPORTANTE:
+        #
+        # Esto NO modifica el contador.
+        #
+        # Solamente controla lo que aparece como:
+        #
+        # LEVANTAMIENTO: SI
+        # ====================================================
+
+        if (
+            levantamiento_detectado
+            and
+            (
+                time.time()
+                -
+                tiempo_levantamiento
+            )
+            >=
+            DURACION_AVISO_LEVANTAMIENTO
+        ):
+
+            levantamiento_detectado = False
 
 
         # ====================================================
@@ -1301,7 +1200,6 @@ def procesar_yolo():
             3,
 
             cv2.LINE_AA
-
         )
 
 
@@ -1326,7 +1224,6 @@ def procesar_yolo():
             2,
 
             cv2.LINE_AA
-
         )
 
 
@@ -1353,7 +1250,6 @@ def procesar_yolo():
             2,
 
             cv2.LINE_AA
-
         )
 
 
@@ -1370,7 +1266,6 @@ def procesar_yolo():
             else
 
             "NO"
-
         )
 
 
@@ -1398,7 +1293,6 @@ def procesar_yolo():
             2,
 
             cv2.LINE_AA
-
         )
 
 
@@ -1424,7 +1318,6 @@ def procesar_yolo():
             2,
 
             cv2.LINE_AA
-
         )
 
 
@@ -1529,9 +1422,7 @@ def main():
     # ========================================================
 
     nombre_ventana = (
-
         "GerIApp - JALTECH + YOLO POSE"
-
     )
 
 
@@ -1610,15 +1501,11 @@ def main():
         # ====================================================
 
         hilo_camara.join(
-
             timeout=2
-
         )
 
         hilo_yolo.join(
-
             timeout=2
-
         )
 
 
@@ -1636,10 +1523,8 @@ def main():
         )
 
         print(
-
             f"Levantamientos detectados: "
             f"{contador_levantamientos}"
-
         )
 
         print(

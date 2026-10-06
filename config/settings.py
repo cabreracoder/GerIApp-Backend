@@ -1,6 +1,7 @@
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
@@ -17,6 +18,8 @@ GOOGLE_CLIENT_SECRET = os.getenv(
 CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME")
 CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY")
 CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET")
+
+
 
 # CONFIGURACION DEL SDK DE CLOUDINARY 
 
@@ -159,6 +162,12 @@ BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
 EMAIL_FROM = os.getenv('EMAIL_FROM')
 
+# CONFIGURACION DEL SDK DE FIREBASE
+FIREBASE_CREDENTIALS = os.getenv(
+    "FIREBASE_CREDENTIALS",
+    str(BASE_DIR / "secrets" / "firebase-service-account.json")
+)
+
 
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:4200',
@@ -166,4 +175,9 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost:\d+$",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:4200',
+    'https://geriapp-backend.onrender.com',
 ]

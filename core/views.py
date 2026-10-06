@@ -12,11 +12,19 @@ from rest_framework.parsers import MultiPartParser, FormParser
 import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
+
+# Notificaciones push firebase-admin
+from firebase_admin import messaging
+from .firebase_config import inicializar_firebase
+
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import random
 from datetime import timedelta
 from django.utils import timezone
+from rest_framework.decorators import action
+
+
 
 from .models import (
     HistoriaClinicas,
@@ -70,7 +78,9 @@ from .models import (
     TiposEventoIa,
     EventosIa,
     EvidenciasIa,
-    AsignacionHabitacion  
+    AsignacionHabitacion,
+    GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 from .serializers import (
@@ -127,7 +137,9 @@ from .serializers import (
     TiposEventoIaSerializer,
     EventosIaSerializer,
     EvidenciasIaSerializer,
-    AsignacionHabitacionSerializer
+    AsignacionHabitacionSerializer,
+    GrupoMedicacionSerializer,
+    FormulacionMedicamentosSerializer,
 )
 
 
@@ -922,9 +934,185 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
+
+
 class NotificacionesViewSet(viewsets.ModelViewSet):
+
     queryset = Notificaciones.objects.all()
+
     serializer_class = NotificacionesSerializer
+
+    def create(self, request, *args, **kwargs):
+
+        # =====================================================
+        # VALIDAR DATOS
+        # =====================================================
+
+        serializer = self.get_serializer(
+            data=request.data
+        )
+
+        serializer.is_valid(
+            raise_exception=True
+        )
+
+        # =====================================================
+        # CREAR NOTIFICACIÓN
+        # =====================================================
+
+        self.perform_create(serializer)
+
+        notificacion = serializer.instance
+
+        # =====================================================
+        # OBTENER USUARIO DESTINATARIO
+        # =====================================================
+
+        usuario = notificacion.id_usuario
+
+        if usuario:
+
+            NotificacionDestinatario.objects.get_or_create(
+
+                id_notificacion=notificacion,
+
+                id_usuario=usuario,
+
+                defaults={
+                    'leida': False,
+                    'fecha_lectura': None
+                }
+            )
+
+        # =====================================================
+        # SI NO HAY USUARIO
+        # =====================================================
+
+        if not usuario:
+
+            return Response(
+                serializer.data,
+                status=status.HTTP_201_CREATED
+            )
+
+        # =====================================================
+        # BUSCAR TOKENS FCM ACTIVOS
+        # =====================================================
+
+        tokens = FcmTokens.objects.filter(
+
+            id_usuario=usuario,
+
+            activo=True
+        )
+
+        # =====================================================
+        # ENVIAR NOTIFICACIÓN PUSH
+        # =====================================================
+
+        try:
+
+            inicializar_firebase()
+
+            print(
+                f"FCM - Usuario: {usuario.id_usuario} - "
+                f"Cantidad de tokens: {tokens.count()}"
+            )
+
+            # =================================================
+            # ENVIAR A CADA DISPOSITIVO
+            # =================================================
+
+            for fcm_token in tokens:
+
+                mensaje = messaging.Message(
+
+                    notification=messaging.Notification(
+
+                        title=notificacion.titulo,
+
+                        body=notificacion.mensaje
+                    ),
+
+                    data={
+
+                        'id_notificacion': str(
+                            notificacion.id_notificacion
+                        ),
+
+                        'tipo': str(
+                            notificacion.tipo or ""
+                        )
+                    },
+
+                    android=messaging.AndroidConfig(
+
+                        priority="high",
+
+                        notification=
+                            messaging.AndroidNotification(
+
+                                channel_id=
+                                    "geriapp_notificaciones"
+                            )
+                    ),
+
+                    token=fcm_token.token
+                )
+
+                # =============================================
+                # ENVIAR FCM
+                # =============================================
+
+                try:
+
+                    respuesta = messaging.send(
+                        mensaje
+                    )
+
+                    print(
+                        f"FCM enviado correctamente. "
+                        f"Usuario: {usuario.id_usuario}, "
+                        f"Token: {fcm_token.id_fcm_token}, "
+                        f"Respuesta: {respuesta}"
+                    )
+
+                except Exception as error_token:
+
+                    print(
+                        f"Error enviando FCM al token "
+                        f"{fcm_token.id_fcm_token}: "
+                        f"{error_token}"
+                    )
+
+        except Exception as error_firebase:
+
+            print(
+                f"Error inicializando/enviando Firebase: "
+                f"{error_firebase}"
+            )
+
+        # =====================================================
+        # DEVOLVER NOTIFICACIÓN
+        # =====================================================
+
+        headers = self.get_success_headers(
+            serializer.data
+        )
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED,
+            headers=headers
+        )
+    
+class GrupoMedicacionViewSet(viewsets.ModelViewSet):
+    queryset = GrupoMedicacion.objects.all()
+    serializer_class = GrupoMedicacionSerializer
+
+class FormulacionMedicamentosViewSet(viewsets.ModelViewSet):
+    queryset = FormulacionMedicamentos.objects.all()
+    serializer_class = FormulacionMedicamentosSerializer
 
 class FcmTokensViewSet(viewsets.ModelViewSet):
     queryset = FcmTokens.objects.all()
@@ -967,21 +1155,224 @@ class HabitacionesViewSet(viewsets.ModelViewSet):
     queryset = Habitaciones.objects.all()
     serializer_class = HabitacionesSerializer
 
-class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
+
+class NotificacionDestinatarioViewSet(
+    viewsets.ModelViewSet
+):
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
-    
-    def create(self, request, *args, **kwargs):
 
-        response = super().create(request, *args, **kwargs)
+    # ============================================================
+    # LISTAR DESTINATARIOS
+    # ============================================================
 
-        destinatario = NotificacionDestinatario.objects.get(
-            id_notificacion_destinatario=response.data['id_notificacion_destinatario']
+    def list(self, request, *args, **kwargs):
+
+        # --------------------------------------------------------
+        # Reparar notificaciones antiguas que no tengan
+        # destinatario para el usuario indicado en id_usuario
+        # --------------------------------------------------------
+
+        notificaciones = Notificaciones.objects.filter(
+            id_usuario__isnull=False
         )
 
-        notificacion = destinatario.id_notificacion
+        for notificacion in notificaciones:
 
-        usuario = destinatario.id_usuario
+            NotificacionDestinatario.objects.get_or_create(
+                id_notificacion=notificacion,
+                id_usuario=notificacion.id_usuario,
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+
+        return super().list(
+            request,
+            *args,
+            **kwargs
+        )
+
+    # ============================================================
+    # MARCAR CUALQUIER NOTIFICACIÓN COMO LEÍDA
+    # ============================================================
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="marcar-leida"
+    )
+    def marcar_leida(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
+
+        id_notificacion = request.data.get(
+            "id_notificacion"
+        )
+
+        id_usuario = request.data.get(
+            "id_usuario"
+        )
+
+        # --------------------------------------------------------
+        # VALIDAR DATOS
+        # --------------------------------------------------------
+
+        if not id_notificacion:
+            return Response(
+                {
+                    "error": "Se requiere id_notificacion."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not id_usuario:
+            return Response(
+                {
+                    "error": "Se requiere id_usuario."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            id_notificacion = int(
+                id_notificacion
+            )
+
+            id_usuario = int(
+                id_usuario
+            )
+
+        except (TypeError, ValueError):
+
+            return Response(
+                {
+                    "error": "Los IDs deben ser números."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # --------------------------------------------------------
+        # BUSCAR NOTIFICACIÓN
+        # --------------------------------------------------------
+
+        try:
+
+            notificacion = Notificaciones.objects.get(
+                id_notificacion=id_notificacion
+            )
+
+        except Notificaciones.DoesNotExist:
+
+            return Response(
+                {
+                    "error": "La notificación no existe."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # --------------------------------------------------------
+        # BUSCAR O CREAR DESTINATARIO
+        # --------------------------------------------------------
+
+        destinatario, creado = (
+            NotificacionDestinatario.objects.get_or_create(
+
+                id_notificacion=notificacion,
+
+                id_usuario_id=id_usuario,
+
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+        )
+
+        # --------------------------------------------------------
+        # MARCAR COMO LEÍDA
+        # --------------------------------------------------------
+
+        destinatario.leida = True
+        destinatario.fecha_lectura = timezone.now()
+
+        destinatario.save(
+            update_fields=[
+                "leida",
+                "fecha_lectura"
+            ]
+        )
+
+        # --------------------------------------------------------
+        # RESPUESTA
+        # --------------------------------------------------------
+
+        return Response(
+            {
+                "mensaje": "Notificación marcada como leída.",
+                "id_notificacion": notificacion.id_notificacion,
+                "id_notificacion_destinatario":
+                    destinatario.id_notificacion_destinatario,
+                "id_usuario": id_usuario,
+                "leida": True,
+                "creado": creado
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # ============================================================
+    # CREAR DESTINATARIO
+    # ============================================================
+
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
+
+        response = super().create(
+            request,
+            *args,
+            **kwargs
+        )
+
+        id_destinatario = response.data.get(
+            "id_notificacion_destinatario"
+        )
+
+        if not id_destinatario:
+            return response
+
+        try:
+
+            destinatario = (
+                NotificacionDestinatario.objects.get(
+                    id_notificacion_destinatario=
+                        id_destinatario
+                )
+            )
+
+        except NotificacionDestinatario.DoesNotExist:
+
+            return response
+
+        notificacion = (
+            destinatario.id_notificacion
+        )
+
+        usuario = (
+            destinatario.id_usuario
+        )
+
+        # ========================================================
+        # ENVÍO DE CORREO
+        # ========================================================
 
         if (
             notificacion
@@ -992,38 +1383,62 @@ class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
 
             try:
 
-                configuration = sib_api_v3_sdk.Configuration()
-
-                configuration.api_key['api-key'] = settings.BREVO_API_KEY
-
-                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
-                    sib_api_v3_sdk.ApiClient(configuration)
+                configuration = (
+                    sib_api_v3_sdk.Configuration()
                 )
 
-                email = sib_api_v3_sdk.SendSmtpEmail(
-                    sender={
-                        "name": "GerIApp",
-                        "email": settings.EMAIL_FROM
-                    },
-                    to=[
-                        {"email": usuario.correo}
-                    ],
-                    subject=notificacion.titulo,
-                    html_content=f"""
-                    <h2>{notificacion.titulo}</h2>
-                    <p>{notificacion.mensaje}</p>
-                    """
+                configuration.api_key[
+                    "api-key"
+                ] = settings.BREVO_API_KEY
+
+                api_instance = (
+                    sib_api_v3_sdk.TransactionalEmailsApi(
+                        sib_api_v3_sdk.ApiClient(
+                            configuration
+                        )
+                    )
                 )
 
-                api_instance.send_transac_email(email)
+                email = (
+                    sib_api_v3_sdk.SendSmtpEmail(
+                        sender={
+                            "name": "GerIApp",
+                            "email": settings.EMAIL_FROM
+                        },
+                        to=[
+                            {
+                                "email":
+                                    usuario.correo
+                            }
+                        ],
+                        subject=
+                            notificacion.titulo,
+                        html_content=f"""
+                            <h2>
+                                {notificacion.titulo}
+                            </h2>
 
-            except Exception as e:
+                            <p>
+                                {notificacion.mensaje}
+                            </p>
+                        """
+                    )
+                )
 
-                print(f"Error al enviar correo de notificación: {e}")
+                api_instance.send_transac_email(
+                    email
+                )
+
+            except Exception as error:
+
+                print(
+                    "Error al enviar correo de "
+                    f"notificación: {error}"
+                )
 
         return response
 
-class  CitasViewSet(viewsets.ModelViewSet):
+class CitasViewSet(viewsets.ModelViewSet):
     queryset = Citas.objects.all()
     serializer_class = CitasSerializer
 

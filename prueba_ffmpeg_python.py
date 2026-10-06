@@ -1,3 +1,4 @@
+
 import subprocess
 import cv2
 import numpy as np
@@ -18,11 +19,18 @@ MODELO_YOLO = "yolo11n-pose.pt"
 
 FPS_CAMARA = 30
 
-# YOLO no necesita procesar los 30 FPS.
-# Procesamos solamente 10 FPS.
+# YOLO procesa 10 FPS para mantener buena velocidad.
 FPS_YOLO = 10
 
 TAMANO_YOLO = 640
+
+
+# ============================================================
+# CONFIGURACIÓN DE VALIDACIÓN DEL CUERPO
+# ============================================================
+
+# Confianza mínima que debe tener cada punto importante.
+CONFIANZA_MINIMA_PUNTO = 0.35
 
 
 # ============================================================
@@ -49,9 +57,20 @@ resultado_lock = threading.Lock()
 # VARIABLES DE POSTURA
 # ============================================================
 
+# Postura que se muestra actualmente en pantalla.
 postura_actual = "DESCONOCIDO"
 
+# Postura que estamos esperando confirmar.
 postura_candidata = "DESCONOCIDO"
+
+# Última postura válida y estable.
+#
+# Esta variable es independiente de postura_actual.
+#
+# Esto permite mostrar DESCONOCIDO cuando el cuerpo está
+# incompleto, pero conservar la última postura válida para
+# continuar correctamente la secuencia del levantamiento.
+ultima_postura_valida = "DESCONOCIDO"
 
 contador_postura = 0
 
@@ -62,6 +81,7 @@ FRAMES_ESTABILIDAD = 5
 # VARIABLES DE LEVANTAMIENTO
 # ============================================================
 
+# Última postura válida utilizada para las transiciones.
 postura_anterior = "DESCONOCIDO"
 
 levantamiento_en_proceso = False
@@ -87,10 +107,13 @@ MAX_SIN_PERSONA = 15
 def calcular_angulo(a, b, c):
 
     a = np.array(a, dtype=np.float32)
+
     b = np.array(b, dtype=np.float32)
+
     c = np.array(c, dtype=np.float32)
 
     ba = a - b
+
     bc = c - b
 
     producto = np.dot(ba, bc)
@@ -120,6 +143,219 @@ def calcular_angulo(a, b, c):
 
 
 # ============================================================
+# VALIDAR CUERPO COMPLETO
+# ============================================================
+
+def cuerpo_valido(keypoints, confianzas):
+
+    # ========================================================
+    # PUNTOS IMPORTANTES
+    #
+    # 5  = hombro izquierdo
+    # 6  = hombro derecho
+    # 11 = cadera izquierda
+    # 12 = cadera derecha
+    # 13 = rodilla izquierda
+    # 14 = rodilla derecha
+    # 15 = tobillo izquierdo
+    # 16 = tobillo derecho
+    # ========================================================
+
+    puntos_importantes = [
+        5,
+        6,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16
+    ]
+
+
+    # ========================================================
+    # COMPROBAR CONFIANZAS
+    # ========================================================
+
+    if confianzas is None:
+
+        return False
+
+
+    if len(confianzas) < 17:
+
+        return False
+
+
+    # ========================================================
+    # CONTAR PUNTOS VISIBLES
+    # ========================================================
+
+    puntos_visibles = 0
+
+
+    for indice in puntos_importantes:
+
+        if confianzas[indice] >= CONFIANZA_MINIMA_PUNTO:
+
+            puntos_visibles += 1
+
+
+    # ========================================================
+    # EXIGIMOS MÍNIMO 6 DE 8 PUNTOS
+    # ========================================================
+
+    if puntos_visibles < 6:
+
+        return False
+
+
+    # ========================================================
+    # COMPROBAR PARTES PRINCIPALES
+    # ========================================================
+
+    hombro_izq = (
+        confianzas[5]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+    hombro_der = (
+        confianzas[6]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+
+    cadera_izq = (
+        confianzas[11]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+    cadera_der = (
+        confianzas[12]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+
+    rodilla_izq = (
+        confianzas[13]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+    rodilla_der = (
+        confianzas[14]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+
+    tobillo_izq = (
+        confianzas[15]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+    tobillo_der = (
+        confianzas[16]
+        >=
+        CONFIANZA_MINIMA_PUNTO
+    )
+
+
+    # ========================================================
+    # HOMBROS
+    # ========================================================
+
+    hombros_validos = (
+
+        hombro_izq
+        or
+        hombro_der
+
+    )
+
+
+    # ========================================================
+    # CADERAS
+    # ========================================================
+
+    caderas_validas = (
+
+        cadera_izq
+        or
+        cadera_der
+
+    )
+
+
+    # ========================================================
+    # PIERNA IZQUIERDA COMPLETA
+    # ========================================================
+
+    pierna_izquierda = (
+
+        cadera_izq
+        and
+        rodilla_izq
+        and
+        tobillo_izq
+
+    )
+
+
+    # ========================================================
+    # PIERNA DERECHA COMPLETA
+    # ========================================================
+
+    pierna_derecha = (
+
+        cadera_der
+        and
+        rodilla_der
+        and
+        tobillo_der
+
+    )
+
+
+    # ========================================================
+    # AL MENOS UNA PIERNA COMPLETA
+    # ========================================================
+
+    piernas_validas = (
+
+        pierna_izquierda
+        or
+        pierna_derecha
+
+    )
+
+
+    # ========================================================
+    # VALIDACIÓN FINAL
+    # ========================================================
+
+    if (
+
+        hombros_validos
+        and
+        caderas_validas
+        and
+        piernas_validas
+
+    ):
+
+        return True
+
+
+    return False
+
+
+# ============================================================
 # FUNCIÓN PARA DETECTAR POSTURA
 # ============================================================
 
@@ -130,15 +366,19 @@ def detectar_postura(puntos):
     # ========================================================
 
     hombro_izq = puntos[5]
+
     hombro_der = puntos[6]
 
     cadera_izq = puntos[11]
+
     cadera_der = puntos[12]
 
     rodilla_izq = puntos[13]
+
     rodilla_der = puntos[14]
 
     tobillo_izq = puntos[15]
+
     tobillo_der = puntos[16]
 
 
@@ -147,8 +387,11 @@ def detectar_postura(puntos):
     # ========================================================
 
     hombros = (
+
         (hombro_izq[0] + hombro_der[0]) / 2,
+
         (hombro_izq[1] + hombro_der[1]) / 2
+
     )
 
 
@@ -157,8 +400,11 @@ def detectar_postura(puntos):
     # ========================================================
 
     caderas = (
+
         (cadera_izq[0] + cadera_der[0]) / 2,
+
         (cadera_izq[1] + cadera_der[1]) / 2
+
     )
 
 
@@ -169,15 +415,20 @@ def detectar_postura(puntos):
     puntos_validos = np.array(puntos)
 
     ancho = (
+
         puntos_validos[:, 0].max()
         -
         puntos_validos[:, 0].min()
+
     )
 
+
     alto = (
+
         puntos_validos[:, 1].max()
         -
         puntos_validos[:, 1].min()
+
     )
 
 
@@ -194,9 +445,13 @@ def detectar_postura(puntos):
     # ========================================================
 
     angulo_rodilla_izq = calcular_angulo(
+
         cadera_izq,
+
         rodilla_izq,
+
         tobillo_izq
+
     )
 
 
@@ -205,20 +460,26 @@ def detectar_postura(puntos):
     # ========================================================
 
     angulo_rodilla_der = calcular_angulo(
+
         cadera_der,
+
         rodilla_der,
+
         tobillo_der
+
     )
 
 
     # ========================================================
-    # PROMEDIO
+    # PROMEDIO DE RODILLAS
     # ========================================================
 
     angulo_rodillas = (
+
         angulo_rodilla_izq
         +
         angulo_rodilla_der
+
     ) / 2
 
 
@@ -230,10 +491,18 @@ def detectar_postura(puntos):
 
     dy = caderas[1] - hombros[1]
 
+
     angulo_tronco = abs(
+
         np.degrees(
-            np.arctan2(dx, dy)
+
+            np.arctan2(
+                dx,
+                dy
+            )
+
         )
+
     )
 
 
@@ -260,9 +529,13 @@ def detectar_postura(puntos):
     # ========================================================
 
     if (
+
         angulo_rodillas >= 145
+
         and
+
         angulo_tronco < 35
+
     ):
 
         return "DE PIE"
@@ -282,10 +555,12 @@ def detectar_postura(puntos):
 def capturar_camara():
 
     global frame_actual
+
     global ejecutando
 
 
     comando = [
+
         FFMPEG,
 
         "-f",
@@ -310,14 +585,20 @@ def capturar_camara():
         "mjpeg",
 
         "pipe:1"
+
     ]
 
 
     proceso = subprocess.Popen(
+
         comando,
+
         stdout=subprocess.PIPE,
+
         stderr=subprocess.DEVNULL,
+
         bufsize=10**8
+
     )
 
 
@@ -350,8 +631,11 @@ def capturar_camara():
 
 
             fin = buffer.find(
+
                 b"\xff\xd9",
+
                 inicio + 2
+
             )
 
 
@@ -361,35 +645,39 @@ def capturar_camara():
 
 
             jpg = buffer[
+
                 inicio:
                 fin + 2
+
             ]
 
 
             buffer = buffer[
+
                 fin + 2:
+
             ]
 
 
             imagen = cv2.imdecode(
+
                 np.frombuffer(
+
                     jpg,
+
                     dtype=np.uint8
+
                 ),
+
                 cv2.IMREAD_COLOR
+
             )
 
 
             if imagen is not None:
 
                 # =================================================
-                # IMPORTANTE:
-                #
-                # No guardamos una cola de imágenes.
-                #
-                # Reemplazamos la anterior por la más reciente.
-                #
-                # Esto evita el retraso de varios segundos.
+                # GUARDAR SOLO EL ÚLTIMO FRAME
                 # =================================================
 
                 with frame_lock:
@@ -418,6 +706,8 @@ def procesar_yolo():
 
     global postura_anterior
 
+    global ultima_postura_valida
+
     global levantamiento_en_proceso
 
     global levantamiento_detectado
@@ -431,15 +721,25 @@ def procesar_yolo():
     # CARGAR YOLO
     # ========================================================
 
-    print("==========================================")
+    print(
+        "=========================================="
+    )
 
-    print("🤖 Cargando modelo YOLO Pose...")
+    print(
+        "🤖 Cargando modelo YOLO Pose..."
+    )
 
-    modelo = YOLO(MODELO_YOLO)
+    modelo = YOLO(
+        MODELO_YOLO
+    )
 
-    print("✅ YOLO Pose iniciado")
+    print(
+        "✅ YOLO Pose iniciado"
+    )
 
-    print("==========================================")
+    print(
+        "=========================================="
+    )
 
 
     ultimo_procesamiento = 0
@@ -457,10 +757,15 @@ def procesar_yolo():
 
 
         if (
-            ahora -
+
+            ahora
+            -
             ultimo_procesamiento
+
             <
+
             intervalo
+
         ):
 
             time.sleep(0.001)
@@ -481,6 +786,7 @@ def procesar_yolo():
 
                 continue
 
+
             frame = frame_actual.copy()
 
 
@@ -489,10 +795,15 @@ def procesar_yolo():
         # ====================================================
 
         resultados = modelo(
+
             frame,
+
             verbose=False,
+
             conf=0.5,
+
             imgsz=TAMANO_YOLO
+
         )
 
 
@@ -507,35 +818,100 @@ def procesar_yolo():
 
 
         # ====================================================
-        # POSTURA
+        # POSTURA DETECTADA EN ESTE FRAME
         # ====================================================
 
         postura_detectada = "SIN PERSONA"
 
 
+        # ====================================================
+        # EXISTE DETECCIÓN DE PERSONA
+        # ====================================================
+
         if (
+
             resultado.keypoints is not None
+
             and
+
             len(resultado.keypoints) > 0
+
         ):
 
             puntos = (
+
                 resultado
                 .keypoints
                 .xy[0]
                 .cpu()
                 .numpy()
+
             )
 
 
-            if len(puntos) >= 17:
+            # =================================================
+            # OBTENER CONFIANZAS
+            # =================================================
 
-                postura_detectada = detectar_postura(
-                    puntos
-                )
+            confianzas = (
+
+                resultado
+                .keypoints
+                .conf[0]
+                .cpu()
+                .numpy()
+
+            )
 
 
-                contador_sin_persona = 0
+            # =================================================
+            # COMPROBAR LOS 17 PUNTOS
+            # =================================================
+
+            if (
+
+                len(puntos) >= 17
+
+                and
+
+                len(confianzas) >= 17
+
+            ):
+
+                # =================================================
+                # VALIDAR CUERPO
+                # =================================================
+
+                if cuerpo_valido(
+
+                    puntos,
+
+                    confianzas
+
+                ):
+
+                    # =============================================
+                    # CUERPO SUFICIENTEMENTE COMPLETO
+                    # =============================================
+
+                    postura_detectada = detectar_postura(
+
+                        puntos
+
+                    )
+
+                    contador_sin_persona = 0
+
+
+                else:
+
+                    # =============================================
+                    # PERSONA DETECTADA PERO CUERPO INCOMPLETO
+                    # =============================================
+
+                    postura_detectada = "DESCONOCIDO"
+
+                    contador_sin_persona = 0
 
 
         else:
@@ -544,7 +920,7 @@ def procesar_yolo():
 
 
         # ====================================================
-        # PERSONA NO DETECTADA
+        # SIN PERSONA
         # ====================================================
 
         if contador_sin_persona >= MAX_SIN_PERSONA:
@@ -557,20 +933,36 @@ def procesar_yolo():
 
             postura_anterior = "SIN PERSONA"
 
+            ultima_postura_valida = "SIN PERSONA"
+
             levantamiento_en_proceso = False
 
             levantamiento_detectado = False
 
 
         # ====================================================
-        # POSTURA DESCONOCIDA
+        # CUERPO INCOMPLETO
+        #
+        # IMPORTANTE:
+        #
+        # Mostramos DESCONOCIDO inmediatamente.
+        #
+        # Pero NO borramos ultima_postura_valida.
+        #
+        # Así la pantalla refleja lo que YOLO sabe ahora,
+        # mientras la lógica del levantamiento conserva
+        # la última postura válida.
         # ====================================================
 
         elif postura_detectada == "DESCONOCIDO":
 
-            # No cambiamos la postura confirmada.
+            postura_actual = "DESCONOCIDO"
+
+            postura_candidata = "DESCONOCIDO"
 
             contador_postura = 0
+
+            levantamiento_detectado = False
 
 
         # ====================================================
@@ -591,7 +983,7 @@ def procesar_yolo():
             else:
 
                 # =================================================
-                # NUEVA POSTURA
+                # NUEVA POSTURA CANDIDATA
                 # =================================================
 
                 postura_candidata = postura_detectada
@@ -605,20 +997,32 @@ def procesar_yolo():
 
             if contador_postura >= FRAMES_ESTABILIDAD:
 
-                if postura_actual != postura_candidata:
+                # =================================================
+                # SOLO PROCESAR SI CAMBIÓ LA POSTURA VÁLIDA
+                # =================================================
+
+                if postura_detectada != ultima_postura_valida:
 
                     # =================================================
-                    # GUARDAR POSTURA ANTERIOR
+                    # GUARDAR LA POSTURA VÁLIDA ANTERIOR
                     # =================================================
 
-                    postura_anterior = postura_actual
+                    postura_anterior = ultima_postura_valida
 
 
                     # =================================================
-                    # CONFIRMAR
+                    # ACTUALIZAR ÚLTIMA POSTURA VÁLIDA
                     # =================================================
 
-                    postura_actual = postura_candidata
+                    ultima_postura_valida = postura_detectada
+
+
+                    # =================================================
+                    # ACTUALIZAR POSTURA MOSTRADA
+                    # =================================================
+
+                    postura_actual = postura_detectada
+
 
                     contador_postura = 0
 
@@ -643,9 +1047,13 @@ def procesar_yolo():
                     # =================================================
 
                     elif (
+
                         postura_anterior == "ACOSTADA"
+
                         and
+
                         postura_actual == "SENTADA"
+
                     ):
 
                         levantamiento_en_proceso = True
@@ -653,8 +1061,10 @@ def procesar_yolo():
                         levantamiento_detectado = False
 
                         print(
+
                             "🟡 Persona pasó de "
                             "ACOSTADA a SENTADA"
+
                         )
 
 
@@ -663,11 +1073,17 @@ def procesar_yolo():
                     # =================================================
 
                     elif (
+
                         levantamiento_en_proceso
+
                         and
+
                         postura_anterior == "SENTADA"
+
                         and
+
                         postura_actual == "DE PIE"
+
                     ):
 
                         levantamiento_detectado = True
@@ -684,15 +1100,29 @@ def procesar_yolo():
                         )
 
                         print(
-                            f"   Levantamiento #{contador_levantamientos}"
+
+                            f"   Levantamiento "
+                            f"#{contador_levantamientos}"
+
                         )
 
                         print(
+
                             "   Secuencia: "
                             "ACOSTADA → SENTADA → DE PIE"
+
                         )
 
                         print()
+
+
+                else:
+
+                    # =================================================
+                    # LA POSTURA SIGUE SIENDO LA MISMA
+                    # =================================================
+
+                    postura_actual = postura_detectada
 
 
         # ====================================================
@@ -700,14 +1130,23 @@ def procesar_yolo():
         # ====================================================
 
         cv2.putText(
+
             frame_con_detecciones,
+
             f"POSTURA: {postura_actual}",
+
             (30, 60),
+
             cv2.FONT_HERSHEY_SIMPLEX,
+
             1.3,
+
             (0, 255, 0),
+
             3,
+
             cv2.LINE_AA
+
         )
 
 
@@ -716,14 +1155,23 @@ def procesar_yolo():
         # ====================================================
 
         cv2.putText(
+
             frame_con_detecciones,
+
             f"DETECTANDO: {postura_detectada}",
+
             (30, 105),
+
             cv2.FONT_HERSHEY_SIMPLEX,
+
             0.8,
+
             (255, 255, 0),
+
             2,
+
             cv2.LINE_AA
+
         )
 
 
@@ -732,15 +1180,25 @@ def procesar_yolo():
         # ====================================================
 
         cv2.putText(
+
             frame_con_detecciones,
+
             f"CONFIRMACION: "
-            f"{contador_postura}/{FRAMES_ESTABILIDAD}",
+            f"{contador_postura}/"
+            f"{FRAMES_ESTABILIDAD}",
+
             (30, 140),
+
             cv2.FONT_HERSHEY_SIMPLEX,
+
             0.7,
+
             (255, 255, 255),
+
             2,
+
             cv2.LINE_AA
+
         )
 
 
@@ -749,24 +1207,43 @@ def procesar_yolo():
         # ====================================================
 
         texto_levantamiento = (
+
             "SI"
+
             if levantamiento_detectado
-            else "NO"
+
+            else
+
+            "NO"
+
         )
 
 
         cv2.putText(
+
             frame_con_detecciones,
+
             f"LEVANTAMIENTO: "
             f"{texto_levantamiento}",
+
             (30, 175),
+
             cv2.FONT_HERSHEY_SIMPLEX,
+
             0.7,
+
             (0, 0, 255)
+
             if levantamiento_detectado
-            else (255, 255, 255),
+
+            else
+
+            (255, 255, 255),
+
             2,
+
             cv2.LINE_AA
+
         )
 
 
@@ -775,15 +1252,24 @@ def procesar_yolo():
         # ====================================================
 
         cv2.putText(
+
             frame_con_detecciones,
+
             f"TOTAL LEVANTAMIENTOS: "
             f"{contador_levantamientos}",
+
             (30, 210),
+
             cv2.FONT_HERSHEY_SIMPLEX,
+
             0.7,
+
             (0, 165, 255),
+
             2,
+
             cv2.LINE_AA
+
         )
 
 
@@ -794,12 +1280,19 @@ def procesar_yolo():
         with resultado_lock:
 
             resultado_actual = (
+
                 frame_con_detecciones,
+
                 postura_actual,
+
                 postura_detectada,
+
                 contador_postura,
+
                 levantamiento_detectado,
+
                 contador_levantamientos
+
             )
 
 
@@ -812,13 +1305,17 @@ def main():
     global ejecutando
 
 
-    print("==========================================")
+    print(
+        "=========================================="
+    )
 
     print(
         "🤖 GerIApp - YOLO POSE + JALTECH"
     )
 
-    print("==========================================")
+    print(
+        "=========================================="
+    )
 
     print(
         "📷 Resolución: 1920x1080"
@@ -836,7 +1333,9 @@ def main():
         "Presiona Q para cerrar."
     )
 
-    print("==========================================")
+    print(
+        "=========================================="
+    )
 
 
     # ========================================================
@@ -844,8 +1343,11 @@ def main():
     # ========================================================
 
     hilo_camara = threading.Thread(
+
         target=capturar_camara,
+
         daemon=True
+
     )
 
 
@@ -854,8 +1356,11 @@ def main():
     # ========================================================
 
     hilo_yolo = threading.Thread(
+
         target=procesar_yolo,
+
         daemon=True
+
     )
 
 
@@ -869,20 +1374,29 @@ def main():
     # ========================================================
 
     nombre_ventana = (
+
         "GerIApp - JALTECH + YOLO POSE"
+
     )
 
 
     cv2.namedWindow(
+
         nombre_ventana,
+
         cv2.WINDOW_NORMAL
+
     )
 
 
     cv2.resizeWindow(
+
         nombre_ventana,
+
         1280,
+
         720
+
     )
 
 
@@ -911,8 +1425,11 @@ def main():
             # =================================================
 
             cv2.imshow(
+
                 nombre_ventana,
+
                 frame
+
             )
 
 
@@ -938,11 +1455,15 @@ def main():
         # ====================================================
 
         hilo_camara.join(
+
             timeout=2
+
         )
 
         hilo_yolo.join(
+
             timeout=2
+
         )
 
 
@@ -950,13 +1471,25 @@ def main():
 
 
         print()
-        print("==========================================")
-        print("🛑 Cámara detenida.")
+
         print(
+            "=========================================="
+        )
+
+        print(
+            "🛑 Cámara detenida."
+        )
+
+        print(
+
             f"Levantamientos detectados: "
             f"{contador_levantamientos}"
+
         )
-        print("==========================================")
+
+        print(
+            "=========================================="
+        )
 
 
 # ============================================================
@@ -966,4 +1499,3 @@ def main():
 if __name__ == "__main__":
 
     main()
-

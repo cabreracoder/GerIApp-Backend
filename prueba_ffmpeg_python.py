@@ -414,6 +414,12 @@ def detectar_postura(puntos):
 
     # ========================================================
     # DIMENSIONES DEL CUERPO
+    #
+    # Se conservan estos cálculos para no modificar
+    # innecesariamente la estructura original.
+    #
+    # Ya NO utilizamos esta proporción para determinar
+    # directamente ACOSTADA.
     # ========================================================
 
     puntos_validos = np.array(puntos)
@@ -558,9 +564,23 @@ def detectar_postura(puntos):
 
     # ========================================================
     # ACOSTADA
+    #
+    # NUEVA CONDICIÓN
+    #
+    # Para considerar que la persona está realmente acostada,
+    # comprobamos principalmente la orientación del tronco
+    # y de las piernas.
+    #
+    # Esto evita que los brazos extendidos o una inclinación
+    # hacia adelante hagan que una persona sentada sea
+    # confundida con ACOSTADA.
     # ========================================================
 
-    if proporcion > 1.30:
+    if (
+        angulo_tronco > 55
+        and
+        angulo_piernas > 55
+    ):
 
         return "ACOSTADA"
 
@@ -1569,4 +1589,3 @@ def main():
 if __name__ == "__main__":
 
     main()
-

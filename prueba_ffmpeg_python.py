@@ -1,4 +1,3 @@
-
 import subprocess
 import cv2
 import numpy as np
@@ -29,7 +28,6 @@ TAMANO_YOLO = 640
 # CONFIGURACIÓN DE VALIDACIÓN DEL CUERPO
 # ============================================================
 
-# Confianza mínima que debe tener cada punto importante.
 CONFIANZA_MINIMA_PUNTO = 0.35
 
 
@@ -57,19 +55,10 @@ resultado_lock = threading.Lock()
 # VARIABLES DE POSTURA
 # ============================================================
 
-# Postura que se muestra actualmente en pantalla.
 postura_actual = "DESCONOCIDO"
 
-# Postura que estamos esperando confirmar.
 postura_candidata = "DESCONOCIDO"
 
-# Última postura válida y estable.
-#
-# Esta variable es independiente de postura_actual.
-#
-# Esto permite mostrar DESCONOCIDO cuando el cuerpo está
-# incompleto, pero conservar la última postura válida para
-# continuar correctamente la secuencia del levantamiento.
 ultima_postura_valida = "DESCONOCIDO"
 
 contador_postura = 0
@@ -84,31 +73,44 @@ FRAMES_ESTABILIDAD = 5
 # Última postura válida utilizada para las transiciones.
 postura_anterior = "DESCONOCIDO"
 
-# Indica que la persona inició una secuencia:
+
+# Indica que la persona ya inició el levantamiento.
+#
+# Se activa cuando ocurre:
 #
 # ACOSTADA → SENTADA
 #
-# y estamos esperando:
+# y permanece activa hasta:
 #
 # SENTADA → DE PIE
 #
 levantamiento_en_proceso = False
 
-# Indica que acaba de detectarse un levantamiento.
-#
-# Se utiliza únicamente para mostrar el aviso visual.
+
+# Indica que existe una alerta visual activa.
 levantamiento_detectado = False
 
-# Total de levantamientos registrados.
+
+# Tipo de alerta que se está mostrando.
+#
+# Puede ser:
+#
+# "INICIO"
+# "COMPLETO"
+# ""
+#
+tipo_alerta_levantamiento = ""
+
+
+# Total de levantamientos completos.
 contador_levantamientos = 0
 
-# Guarda el momento exacto en que se detectó el levantamiento.
-#
-# Se utilizará para mostrar "LEVANTAMIENTO: SI"
-# solamente durante 2 segundos.
+
+# Momento en que se generó la última alerta.
 tiempo_levantamiento = 0
 
-# Duración del aviso visual.
+
+# Duración de cada alerta visual.
 DURACION_AVISO_LEVANTAMIENTO = 2
 
 
@@ -421,7 +423,6 @@ def detectar_postura(puntos):
         -
         puntos_validos[:, 0].min()
     )
-
 
     alto = (
         puntos_validos[:, 1].max()
@@ -752,6 +753,7 @@ def procesar_yolo():
 
     global levantamiento_en_proceso
     global levantamiento_detectado
+    global tipo_alerta_levantamiento
 
     global contador_levantamientos
     global contador_sin_persona
@@ -823,7 +825,6 @@ def procesar_yolo():
             if frame_actual is None:
 
                 continue
-
 
             frame = frame_actual.copy()
 
@@ -959,19 +960,16 @@ def procesar_yolo():
 
             levantamiento_detectado = False
 
+            tipo_alerta_levantamiento = ""
+
 
         # ====================================================
         # CUERPO INCOMPLETO
         #
-        # IMPORTANTE:
+        # NO eliminamos la última postura válida.
         #
-        # Mostramos DESCONOCIDO inmediatamente.
-        #
-        # Pero NO borramos ultima_postura_valida.
-        #
-        # Así la pantalla refleja lo que YOLO sabe ahora,
-        # mientras la lógica del levantamiento conserva
-        # la última postura válida.
+        # Esto permite continuar la secuencia después de
+        # un frame temporalmente incompleto.
         # ====================================================
 
         elif postura_detectada == "DESCONOCIDO":
@@ -981,13 +979,6 @@ def procesar_yolo():
             postura_candidata = "DESCONOCIDO"
 
             contador_postura = 0
-
-            # No modificamos levantamiento_en_proceso.
-            #
-            # Tampoco modificamos ultima_postura_valida.
-            #
-            # El aviso visual sí se mantiene únicamente
-            # durante el tiempo establecido.
 
 
         # ====================================================
@@ -1029,7 +1020,7 @@ def procesar_yolo():
                 if postura_detectada != ultima_postura_valida:
 
                     # =================================================
-                    # GUARDAR LA POSTURA VÁLIDA ANTERIOR
+                    # GUARDAR POSTURA VÁLIDA ANTERIOR
                     # =================================================
 
                     postura_anterior = ultima_postura_valida
@@ -1054,17 +1045,13 @@ def procesar_yolo():
                     # =================================================
                     # ACOSTADA
                     #
-                    # IMPORTANTE:
-                    #
-                    # Volver a ACOSTADA reinicia el ciclo y
-                    # permite registrar un nuevo levantamiento.
+                    # Si vuelve a acostarse, el ciclo anterior
+                    # termina y queda preparado uno nuevo.
                     # =================================================
 
                     if postura_actual == "ACOSTADA":
 
                         levantamiento_en_proceso = False
-
-                        levantamiento_detectado = False
 
                         print(
                             "🔵 Persona está ACOSTADA"
@@ -1074,7 +1061,12 @@ def procesar_yolo():
                     # =================================================
                     # ACOSTADA → SENTADA
                     #
-                    # Aquí comienza un nuevo ciclo.
+                    # PRIMERA ALERTA
+                    #
+                    # Aquí NO sumamos todavía el levantamiento.
+                    #
+                    # Solamente indicamos que la persona comenzó
+                    # a levantarse.
                     # =================================================
 
                     elif (
@@ -1085,19 +1077,37 @@ def procesar_yolo():
 
                         levantamiento_en_proceso = True
 
-                        levantamiento_detectado = False
+                        levantamiento_detectado = True
+
+                        tipo_alerta_levantamiento = "INICIO"
+
+                        tiempo_levantamiento = time.time()
+
+
+                        print()
 
                         print(
-                            "🟡 Persona pasó de "
-                            "ACOSTADA a SENTADA"
+                            "⚠️ INICIO DE LEVANTAMIENTO"
                         )
+
+                        print(
+                            "   Secuencia: "
+                            "ACOSTADA → SENTADA"
+                        )
+
+                        print(
+                            "   Esperando que pase a DE PIE..."
+                        )
+
+                        print()
 
 
                     # =================================================
                     # SENTADA → DE PIE
                     #
-                    # SOLO se cuenta si previamente se inició
-                    # el ciclo desde ACOSTADA.
+                    # SEGUNDA ALERTA
+                    #
+                    # Aquí sí completamos el levantamiento.
                     # =================================================
 
                     elif (
@@ -1109,16 +1119,17 @@ def procesar_yolo():
                     ):
 
                         # =============================================
-                        # REGISTRAR LEVANTAMIENTO
+                        # REGISTRAR LEVANTAMIENTO COMPLETO
                         # =============================================
-
-                        levantamiento_detectado = True
-
-                        levantamiento_en_proceso = False
 
                         contador_levantamientos += 1
 
-                        # Guardamos el momento exacto del evento.
+                        levantamiento_en_proceso = False
+
+                        levantamiento_detectado = True
+
+                        tipo_alerta_levantamiento = "COMPLETO"
+
                         tiempo_levantamiento = time.time()
 
 
@@ -1134,7 +1145,7 @@ def procesar_yolo():
                         )
 
                         print(
-                            "   Secuencia: "
+                            "   Secuencia completa: "
                             "ACOSTADA → SENTADA → DE PIE"
                         )
 
@@ -1151,17 +1162,14 @@ def procesar_yolo():
 
 
         # ====================================================
-        # AVISO TEMPORAL DE LEVANTAMIENTO
+        # AVISO TEMPORAL
         #
-        # El aviso permanece durante 2 segundos.
+        # La alerta visual dura 2 segundos.
         #
         # IMPORTANTE:
         #
-        # Esto NO modifica el contador.
-        #
-        # Solamente controla lo que aparece como:
-        #
-        # LEVANTAMIENTO: SI
+        # El contador NO depende de este tiempo.
+        # El contador ya fue actualizado cuando correspondía.
         # ====================================================
 
         if (
@@ -1177,6 +1185,8 @@ def procesar_yolo():
         ):
 
             levantamiento_detectado = False
+
+            tipo_alerta_levantamiento = ""
 
 
         # ====================================================
@@ -1254,19 +1264,32 @@ def procesar_yolo():
 
 
         # ====================================================
-        # MOSTRAR LEVANTAMIENTO
+        # MOSTRAR ESTADO DEL LEVANTAMIENTO
         # ====================================================
 
-        texto_levantamiento = (
+        if levantamiento_detectado:
 
-            "SI"
+            if tipo_alerta_levantamiento == "INICIO":
 
-            if levantamiento_detectado
+                texto_levantamiento = "INICIO"
 
-            else
+            elif tipo_alerta_levantamiento == "COMPLETO":
 
-            "NO"
-        )
+                texto_levantamiento = "COMPLETO"
+
+            else:
+
+                texto_levantamiento = "SI"
+
+        else:
+
+            if levantamiento_en_proceso:
+
+                texto_levantamiento = "EN PROCESO"
+
+            else:
+
+                texto_levantamiento = "NO"
 
 
         cv2.putText(
@@ -1297,7 +1320,7 @@ def procesar_yolo():
 
 
         # ====================================================
-        # TOTAL
+        # MOSTRAR TOTAL
         # ====================================================
 
         cv2.putText(
@@ -1375,6 +1398,14 @@ def main():
 
     print(
         "🤖 YOLO: 10 FPS"
+    )
+
+    print(
+        "⚠️ Alerta inicial: ACOSTADA → SENTADA"
+    )
+
+    print(
+        "🚨 Levantamiento: ACOSTADA → SENTADA → DE PIE"
     )
 
     print(
@@ -1462,7 +1493,6 @@ def main():
 
                     continue
 
-
                 frame = resultado_actual[0].copy()
 
 
@@ -1539,3 +1569,4 @@ def main():
 if __name__ == "__main__":
 
     main()
+

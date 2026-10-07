@@ -4,7 +4,6 @@ from rest_framework.decorators import api_view, parser_classes
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
-
 # IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
 from servicios.cloudinary_service import subir_imagen
 
@@ -1023,15 +1022,57 @@ class FcmTokensViewSet(viewsets.ModelViewSet):
         )
 
 
-class CamasViewSet(viewsets.ModelViewSet):
-    queryset = Camas.objects.all()
-    serializer_class = CamasSerializer
+class CamasViewSet(viewsets.ModelViewSet): 
+    queryset = Camas.objects.all() 
+    serializer_class = CamasSerializer 
 
 class HabitacionesViewSet(viewsets.ModelViewSet):
     queryset = Habitaciones.objects.all()
     serializer_class = HabitacionesSerializer
 
+    @transaction.atomic
+    def perform_destroy(self, instance):
 
+        id_habitacion = instance.id_habitacion
+
+        # 1. Dejar pacientes sin habitación y sin cama
+        #    El paciente NO se elimina
+        Pacientes.objects.filter(
+            habitacion=id_habitacion
+        ).update(
+            habitacion=None,
+            cama=None
+        )
+
+        # 2. Eliminar evidencias de los eventos IA
+        eventos = EventosIa.objects.filter(
+            id_habitacion=id_habitacion
+        )
+
+        EvidenciasIa.objects.filter(
+            id_evento__in=eventos
+        ).delete()
+
+        # 3. Eliminar eventos IA
+        eventos.delete()
+
+        # 4. Eliminar cámaras
+        Camaras.objects.filter(
+            id_habitacion=id_habitacion
+        ).delete()
+
+        # 5. Eliminar asignaciones
+        AsignacionHabitacion.objects.filter(
+            id_habitacion=id_habitacion
+        ).delete()
+
+        # 6. Eliminar camas
+        Camas.objects.filter(
+            id_habitacion=id_habitacion
+        ).delete()
+
+        # 7. Eliminar habitación
+        instance.delete()
 class NotificacionDestinatarioViewSet(
     viewsets.ModelViewSet
 ):

@@ -565,8 +565,6 @@ def detectar_postura(puntos):
     # ========================================================
     # ACOSTADA
     #
-    # NUEVA CONDICIÓN
-    #
     # Para considerar que la persona está realmente acostada,
     # comprobamos principalmente la orientación del tronco
     # y de las piernas.
@@ -608,15 +606,91 @@ def detectar_postura(puntos):
 
 
     # ========================================================
+    # VALIDACIÓN ESPECÍFICA PARA DE PIE
+    #
+    # IMPORTANTE:
+    #
+    # Ya NO utilizamos únicamente el promedio de las piernas.
+    #
+    # Esto evita que una pierna levantada mientras la persona
+    # está sentada pueda ser compensada por la otra pierna.
+    # ========================================================
+
+    # Las dos rodillas deben estar extendidas.
+    rodillas_extendidas = (
+        angulo_rodilla_izq >= 145
+        and
+        angulo_rodilla_der >= 145
+    )
+
+
+    # Las dos piernas deben estar orientadas verticalmente.
+    piernas_verticales = (
+        angulo_pierna_izq <= 45
+        and
+        angulo_pierna_der <= 45
+    )
+
+
+    # ========================================================
+    # POSICIÓN VERTICAL DE RODILLAS Y TOBILLOS
+    #
+    # En la imagen:
+    #
+    # Y pequeño = arriba
+    # Y grande  = abajo
+    #
+    # Para una persona realmente de pie:
+    #
+    # CADERAS
+    #    ↓
+    # RODILLAS
+    #    ↓
+    # TOBILLOS
+    #
+    # Esto ayuda a evitar que levantar una sola pierna
+    # estando sentado sea interpretado como DE PIE.
+    # ========================================================
+
+    rodillas_debajo_caderas = (
+        rodilla_izq[1] > caderas[1]
+        and
+        rodilla_der[1] > caderas[1]
+    )
+
+
+    tobillos_debajo_rodillas = (
+        tobillo_izq[1] > rodilla_izq[1]
+        and
+        tobillo_der[1] > rodilla_der[1]
+    )
+
+
+    # ========================================================
     # DE PIE
+    #
+    # Ahora necesitamos TODAS estas condiciones:
+    #
+    # 1. Rodillas extendidas.
+    # 2. Las dos piernas verticales.
+    # 3. Las dos rodillas debajo de las caderas.
+    # 4. Los dos tobillos debajo de las rodillas.
+    # 5. Tronco vertical.
+    #
+    # Levantar solamente una pierna sentado ya no debería
+    # cumplir todas estas condiciones.
     # ========================================================
 
     if (
-        angulo_rodillas >= 145
+        rodillas_extendidas
+        and
+        piernas_verticales
+        and
+        rodillas_debajo_caderas
+        and
+        tobillos_debajo_rodillas
         and
         angulo_tronco < 35
-        and
-        angulo_piernas <= 45
     ):
 
         return "DE PIE"

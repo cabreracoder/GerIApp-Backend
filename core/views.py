@@ -8,7 +8,7 @@ from django.contrib.auth.hashers import check_password, make_password
 # IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
 from servicios.cloudinary_service import subir_imagen
 
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
@@ -148,7 +148,7 @@ from .serializers import (
 # ============================================================
 
 @api_view(['POST'])
-@parser_classes([MultiPartParser, FormParser])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def registro_usuario(request):
     serializer = RegistroUsuarioSerializer(data=request.data)
 

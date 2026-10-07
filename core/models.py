@@ -512,6 +512,7 @@ class Pacientes(models.Model):
     rh = models.CharField(max_length=5, blank=True, null=True)
     cama = models.IntegerField()
     estado = models.BooleanField()
+    foto = models.CharField(blank=True, null=True)
 
     class Meta:
         managed = False

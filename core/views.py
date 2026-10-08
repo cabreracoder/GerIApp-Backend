@@ -1,17 +1,29 @@
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view
+from rest_framework import viewsets, status, parsers
+from rest_framework.views import APIView
+from rest_framework.decorators import api_view, parser_classes
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
+# IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
+from servicios.cloudinary_service import subir_imagen
 
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
+
+# Notificaciones push firebase-admin
+from firebase_admin import messaging
+from .firebase_config import inicializar_firebase
+
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import random
 from datetime import timedelta
 from django.utils import timezone
+from rest_framework.decorators import action
+
+
 
 from .models import (
     HistoriaClinicas,
@@ -56,6 +68,18 @@ from .models import (
     Notificaciones,
     NotificacionDestinatario,
     Citas,
+    FcmTokens,
+    Camas,
+    Habitaciones,
+    Fundaciones,
+    Sedes,
+    Camaras,
+    TiposEventoIa,
+    EventosIa,
+    EvidenciasIa,
+    AsignacionHabitacion,
+    GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 from .serializers import (
@@ -103,6 +127,18 @@ from .serializers import (
     NotificacionesSerializer,
     NotificacionDestinatarioSerializer,
     CitasSerializer,
+    FcmTokensSerializer,
+    CamasSerializer,
+    HabitacionesSerializer,
+    FundacionesSerializer,
+    SedesSerializer,
+    CamarasSerializer,
+    TiposEventoIaSerializer,
+    EventosIaSerializer,
+    EvidenciasIaSerializer,
+    AsignacionHabitacionSerializer,
+    GrupoMedicacionSerializer,
+    FormulacionMedicamentosSerializer,
 )
 
 
@@ -111,6 +147,7 @@ from .serializers import (
 # ============================================================
 
 @api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def registro_usuario(request):
     serializer = RegistroUsuarioSerializer(data=request.data)
 
@@ -150,7 +187,9 @@ def registro_usuario(request):
                     'correo': usuario.correo,
                     'id_rol': usuario.id_rol_id,
                     'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-                    'estado': usuario.estado
+                    'estado': usuario.estado,
+                    'foto': usuario.foto
+                    
                 }
             },
             status=status.HTTP_200_OK
@@ -229,12 +268,14 @@ def login_usuario(request):
                 'correo': usuario.correo,
                 'id_rol': usuario.id_rol_id,
                 'rol': usuario.id_rol.nombre if usuario.id_rol else None,
-                'estado': usuario.estado
+                'estado': usuario.estado,
+
+                # URL de la foto almacenada en Cloudinary
+                'foto': usuario.foto
             }
         },
         status=status.HTTP_200_OK
     )
-
 # ============================================================
 # LOGIN CON GOOGLE
 # ============================================================
@@ -660,6 +701,13 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
 
+    # Permite recibir datos normales y archivos mediante FormData
+    parser_classes = [
+        parsers.MultiPartParser,
+        parsers.FormParser,
+        parsers.JSONParser
+    ]
+
 
 class DocumentosViewSet(viewsets.ModelViewSet):
     queryset = Documentos.objects.all()
@@ -885,26 +933,363 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
+
+
 class NotificacionesViewSet(viewsets.ModelViewSet):
+
     queryset = Notificaciones.objects.all()
+
     serializer_class = NotificacionesSerializer
 
-
-class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
-    queryset = NotificacionDestinatario.objects.all()
-    serializer_class = NotificacionDestinatarioSerializer
-    
     def create(self, request, *args, **kwargs):
 
-        response = super().create(request, *args, **kwargs)
-
-        destinatario = NotificacionDestinatario.objects.get(
-            id_notificacion_destinatario=response.data['id_notificacion_destinatario']
+        response = super().create(
+            request,
+            *args,
+            **kwargs
         )
 
-        notificacion = destinatario.id_notificacion
+        id_notificacion = response.data.get(
+            "id_notificacion"
+        )
 
-        usuario = destinatario.id_usuario
+        if not id_notificacion:
+            return response
+
+        try:
+
+            notificacion = Notificaciones.objects.get(
+                id_notificacion=id_notificacion
+            )
+
+        except Notificaciones.DoesNotExist:
+
+            return response
+
+        usuario = notificacion.id_usuario
+
+        if usuario:
+
+            NotificacionDestinatario.objects.get_or_create(
+                id_notificacion=notificacion,
+                id_usuario=usuario,
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+
+        return response
+
+class GrupoMedicacionViewSet(viewsets.ModelViewSet):
+    queryset = GrupoMedicacion.objects.all()
+    serializer_class = GrupoMedicacionSerializer
+
+class FormulacionMedicamentosViewSet(viewsets.ModelViewSet):
+    queryset = FormulacionMedicamentos.objects.all()
+    serializer_class = FormulacionMedicamentosSerializer
+
+class FcmTokensViewSet(viewsets.ModelViewSet):
+    queryset = FcmTokens.objects.all()
+    serializer_class = FcmTokensSerializer
+
+    def create(self, request, *args, **kwargs):
+        id_usuario = request.data.get("id_usuario")
+        token = request.data.get("token")
+
+        if not id_usuario or not token:
+            return Response(
+                {
+                    "error": "id_usuario y token son obligatorios"
+                },
+                status=400
+            )
+
+        fcm_token, creado = FcmTokens.objects.update_or_create(
+            token=token,
+            defaults={
+                "id_usuario_id": id_usuario,
+                "activo": True,
+                "fecha_actualizacion": timezone.now()
+            }
+        )
+
+        serializer = self.get_serializer(fcm_token)
+
+        return Response(
+            serializer.data,
+            status=201 if creado else 200
+        )
+
+
+class CamasViewSet(viewsets.ModelViewSet): 
+    queryset = Camas.objects.all() 
+    serializer_class = CamasSerializer 
+
+class HabitacionesViewSet(viewsets.ModelViewSet):
+    queryset = Habitaciones.objects.all()
+    serializer_class = HabitacionesSerializer
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+
+        id_habitacion = instance.id_habitacion
+
+        # 1. Dejar pacientes sin habitación y sin cama
+        #    El paciente NO se elimina
+        Pacientes.objects.filter(
+            habitacion=id_habitacion
+        ).update(
+            habitacion=None,
+            cama=None
+        )
+
+        # 2. Eliminar evidencias de los eventos IA
+        eventos = EventosIa.objects.filter(
+            id_habitacion=id_habitacion
+        )
+
+        EvidenciasIa.objects.filter(
+            id_evento__in=eventos
+        ).delete()
+
+        # 3. Eliminar eventos IA
+        eventos.delete()
+
+        # 4. Eliminar cámaras
+        Camaras.objects.filter(
+            id_habitacion=id_habitacion
+        ).delete()
+
+        # 5. Eliminar asignaciones
+        AsignacionHabitacion.objects.filter(
+            id_habitacion=id_habitacion
+        ).delete()
+
+        # 6. Eliminar camas
+        Camas.objects.filter(
+            id_habitacion=id_habitacion
+        ).delete()
+
+        # 7. Eliminar habitación
+        instance.delete()
+class NotificacionDestinatarioViewSet(
+    viewsets.ModelViewSet
+):
+    queryset = NotificacionDestinatario.objects.all()
+    serializer_class = NotificacionDestinatarioSerializer
+
+    # ============================================================
+    # LISTAR DESTINATARIOS
+    # ============================================================
+
+    def list(self, request, *args, **kwargs):
+
+        # --------------------------------------------------------
+        # Reparar notificaciones antiguas que no tengan
+        # destinatario para el usuario indicado en id_usuario
+        # --------------------------------------------------------
+
+        notificaciones = Notificaciones.objects.filter(
+            id_usuario__isnull=False
+        )
+
+        for notificacion in notificaciones:
+
+            NotificacionDestinatario.objects.get_or_create(
+                id_notificacion=notificacion,
+                id_usuario=notificacion.id_usuario,
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+
+        return super().list(
+            request,
+            *args,
+            **kwargs
+        )
+
+    # ============================================================
+    # MARCAR CUALQUIER NOTIFICACIÓN COMO LEÍDA
+    # ============================================================
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="marcar-leida"
+    )
+    def marcar_leida(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
+
+        id_notificacion = request.data.get(
+            "id_notificacion"
+        )
+
+        id_usuario = request.data.get(
+            "id_usuario"
+        )
+
+        # --------------------------------------------------------
+        # VALIDAR DATOS
+        # --------------------------------------------------------
+
+        if not id_notificacion:
+            return Response(
+                {
+                    "error": "Se requiere id_notificacion."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not id_usuario:
+            return Response(
+                {
+                    "error": "Se requiere id_usuario."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            id_notificacion = int(
+                id_notificacion
+            )
+
+            id_usuario = int(
+                id_usuario
+            )
+
+        except (TypeError, ValueError):
+
+            return Response(
+                {
+                    "error": "Los IDs deben ser números."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # --------------------------------------------------------
+        # BUSCAR NOTIFICACIÓN
+        # --------------------------------------------------------
+
+        try:
+
+            notificacion = Notificaciones.objects.get(
+                id_notificacion=id_notificacion
+            )
+
+        except Notificaciones.DoesNotExist:
+
+            return Response(
+                {
+                    "error": "La notificación no existe."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # --------------------------------------------------------
+        # BUSCAR O CREAR DESTINATARIO
+        # --------------------------------------------------------
+
+        destinatario, creado = (
+            NotificacionDestinatario.objects.get_or_create(
+
+                id_notificacion=notificacion,
+
+                id_usuario_id=id_usuario,
+
+                defaults={
+                    "leida": False,
+                    "fecha_lectura": None
+                }
+            )
+        )
+
+        # --------------------------------------------------------
+        # MARCAR COMO LEÍDA
+        # --------------------------------------------------------
+
+        destinatario.leida = True
+        destinatario.fecha_lectura = timezone.now()
+
+        destinatario.save(
+            update_fields=[
+                "leida",
+                "fecha_lectura"
+            ]
+        )
+
+        # --------------------------------------------------------
+        # RESPUESTA
+        # --------------------------------------------------------
+
+        return Response(
+            {
+                "mensaje": "Notificación marcada como leída.",
+                "id_notificacion": notificacion.id_notificacion,
+                "id_notificacion_destinatario":
+                    destinatario.id_notificacion_destinatario,
+                "id_usuario": id_usuario,
+                "leida": True,
+                "creado": creado
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # ============================================================
+    # CREAR DESTINATARIO
+    # ============================================================
+
+    def create(
+        self,
+        request,
+        *args,
+        **kwargs
+    ):
+
+        response = super().create(
+            request,
+            *args,
+            **kwargs
+        )
+
+        id_destinatario = response.data.get(
+            "id_notificacion_destinatario"
+        )
+
+        if not id_destinatario:
+            return response
+
+        try:
+
+            destinatario = (
+                NotificacionDestinatario.objects.get(
+                    id_notificacion_destinatario=
+                        id_destinatario
+                )
+            )
+
+        except NotificacionDestinatario.DoesNotExist:
+
+            return response
+
+        notificacion = (
+            destinatario.id_notificacion
+        )
+
+        usuario = (
+            destinatario.id_usuario
+        )
+
+        # ========================================================
+        # ENVÍO DE CORREO
+        # ========================================================
 
         if (
             notificacion
@@ -915,38 +1300,130 @@ class NotificacionDestinatarioViewSet(viewsets.ModelViewSet):
 
             try:
 
-                configuration = sib_api_v3_sdk.Configuration()
-
-                configuration.api_key['api-key'] = settings.BREVO_API_KEY
-
-                api_instance = sib_api_v3_sdk.TransactionalEmailsApi(
-                    sib_api_v3_sdk.ApiClient(configuration)
+                configuration = (
+                    sib_api_v3_sdk.Configuration()
                 )
 
-                email = sib_api_v3_sdk.SendSmtpEmail(
-                    sender={
-                        "name": "GerIApp",
-                        "email": settings.EMAIL_FROM
-                    },
-                    to=[
-                        {"email": usuario.correo}
-                    ],
-                    subject=notificacion.titulo,
-                    html_content=f"""
-                    <h2>{notificacion.titulo}</h2>
-                    <p>{notificacion.mensaje}</p>
-                    """
+                configuration.api_key[
+                    "api-key"
+                ] = settings.BREVO_API_KEY
+
+                api_instance = (
+                    sib_api_v3_sdk.TransactionalEmailsApi(
+                        sib_api_v3_sdk.ApiClient(
+                            configuration
+                        )
+                    )
                 )
 
-                api_instance.send_transac_email(email)
+                email = (
+                    sib_api_v3_sdk.SendSmtpEmail(
+                        sender={
+                            "name": "GerIApp",
+                            "email": settings.EMAIL_FROM
+                        },
+                        to=[
+                            {
+                                "email":
+                                    usuario.correo
+                            }
+                        ],
+                        subject=
+                            notificacion.titulo,
+                        html_content=f"""
+                            <h2>
+                                {notificacion.titulo}
+                            </h2>
 
-            except Exception as e:
+                            <p>
+                                {notificacion.mensaje}
+                            </p>
+                        """
+                    )
+                )
 
-                print(f"Error al enviar correo de notificación: {e}")
+                api_instance.send_transac_email(
+                    email
+                )
+
+            except Exception as error:
+
+                print(
+                    "Error al enviar correo de "
+                    f"notificación: {error}"
+                )
+
+        # ============================================
+        # Enviar la notificación Push al destinatario
+        # ============================================
+
+        if notificacion and usuario:
+
+            tokens = FcmTokens.objects.filter(
+                id_usuario=usuario,
+                activo=True
+            )
+
+            try:
+                inicializar_firebase()
+
+                print(
+                    f"FCM - Usuario: {usuario.id_usuario} - "
+                    f"Cantidad de tokens: {tokens.count()}"
+                )
+
+                for fcm_token in tokens:
+
+                    mensaje = messaging.Message(
+                        notification=messaging.Notification(
+                            title=notificacion.titulo,
+                            body=notificacion.mensaje
+                        ),
+                        data={
+                            "id_notificacion": str(
+                                notificacion.id_notificacion
+                            ),
+                            "tipo": str(
+                                notificacion.tipo or ""
+                            )
+                        },
+                        android=messaging.AndroidConfig(
+                            priority="high",
+                            notification=messaging.AndroidNotification(
+                                channel_id="geriapp_notificaciones"
+                            )
+                        ),
+                        token=fcm_token.token
+                    )
+
+                    try:
+                        respuesta = messaging.send(mensaje)
+
+                        print(
+                            f"FCM enviado correctamente. "
+                            f"Usuario: {usuario.id_usuario}, "
+                            f"Token: {fcm_token.id_fcm_token}, "
+                            f"Respuesta: {respuesta}"
+                        )
+
+                    except Exception as error_token:
+
+                        print(
+                            f"Error enviando FCM al token "
+                            f"{fcm_token.id_fcm_token}: "
+                            f"{error_token}"
+                        )
+
+            except Exception as error_firebase:
+
+                print(
+                    f"Error inicializando/enviando Firebase: "
+                    f"{error_firebase}"
+                )
 
         return response
 
-class  CitasViewSet(viewsets.ModelViewSet):
+class CitasViewSet(viewsets.ModelViewSet):
     queryset = Citas.objects.all()
     serializer_class = CitasSerializer
 
@@ -1027,6 +1504,34 @@ class RecomendacionesViewSet(viewsets.ModelViewSet):
 class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
     queryset = CuidadosEnfermeria.objects.all()
     serializer_class = CuidadosEnfermeriaSerializer
+
+class AsignacionHabitacionViewSet(viewsets.ModelViewSet):
+    queryset = AsignacionHabitacion.objects.all()
+    serializer_class = AsignacionHabitacionSerializer
+
+class FundacionesViewSet(viewsets.ModelViewSet):
+    queryset = Fundaciones.objects.all()
+    serializer_class = FundacionesSerializer
+
+class SedesViewSet(viewsets.ModelViewSet):
+    queryset = Sedes.objects.all()
+    serializer_class = SedesSerializer
+
+class CamarasViewSet(viewsets.ModelViewSet):
+    queryset = Camaras.objects.all()
+    serializer_class = CamarasSerializer
+
+class TiposEventoIaViewSet(viewsets.ModelViewSet):
+    queryset = TiposEventoIa.objects.all()
+    serializer_class = TiposEventoIaSerializer
+
+class EventosIaViewSet(viewsets.ModelViewSet):
+    queryset = EventosIa.objects.all()
+    serializer_class = EventosIaSerializer
+
+class EvidenciasIaViewSet(viewsets.ModelViewSet):
+    queryset = EvidenciasIa.objects.all()
+    serializer_class = EvidenciasIaSerializer
 
 
 # ============================================================
@@ -1181,3 +1686,51 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
     queryset = RecuperacionPassword.objects.all()
     serializer_class = RecuperacionPasswordSerializer
+
+# ============================================================
+# SUBIR IMAGEN A CLOUDINARY
+# ============================================================
+
+class SubirImagenCloudinaryView(APIView):
+
+    def post(self, request):
+
+        # Obtener la imagen enviada desde Insomnia
+        imagen = request.FILES.get('imagen')
+
+        # Verificar que se haya enviado una imagen
+        if not imagen:
+            return Response(
+                {
+                    'error': 'Debe seleccionar una imagen.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+
+            # Subir la imagen a Cloudinary
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/imagenes'
+            )
+
+            # Devolver la URL generada por Cloudinary
+            return Response(
+                {
+                    'mensaje': 'Imagen subida correctamente.',
+                    'url': resultado['secure_url'],
+                    'public_id': resultado['public_id']
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception as error:
+
+            return Response(
+                {
+                    'error': 'No se pudo subir la imagen.',
+                    'detalle': str(error)
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

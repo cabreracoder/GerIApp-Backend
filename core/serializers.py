@@ -45,14 +45,95 @@ from .models import (
     Notificaciones,
     NotificacionDestinatario,
     Citas,
+    FcmTokens,
+    Camas,
+    Habitaciones,
+    Fundaciones,
+    Sedes,
+    Camaras,
+    TiposEventoIa,
+    EventosIa,
+    EvidenciasIa,
+    AsignacionHabitacion,
+    GrupoMedicacion,
+    FormulacionMedicamentos,
 )
 
 
 
 class PacientesSerializer(serializers.ModelSerializer):
+    # Permite recibir una imagen desde FormData
+    foto = serializers.CharField(
+        required=False,
+        allow_null=True
+    )
+
     class Meta:
         model = Pacientes
         fields = '__all__'
+
+    def to_internal_value(self, data):
+        # Copiamos los datos recibidos para poder modificar la foto
+        data = data.copy()
+
+        imagen = data.get('foto')
+
+        # Si Angular envía un archivo, lo dejamos pasar directamente
+        if imagen and hasattr(imagen, 'read'):
+            data.pop('foto')
+
+            datos_validados = super().to_internal_value(data)
+
+            # Agregamos el archivo manualmente
+            datos_validados['foto'] = imagen
+
+            return datos_validados
+
+        return super().to_internal_value(data)
+
+    def create(self, validated_data):
+        from servicios.cloudinary_service import subir_imagen
+
+        # Obtener la foto enviada
+        imagen = validated_data.pop('foto', None)
+
+        # Si se envió una foto, subirla a Cloudinary
+        if imagen and hasattr(imagen, 'read'):
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/pacientes'
+            )
+
+            # Guardar la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        paciente = Pacientes.objects.create(**validated_data)
+
+        return paciente
+
+    def update(self, instance, validated_data):
+        from servicios.cloudinary_service import subir_imagen
+
+        # Obtener la foto enviada
+        imagen = validated_data.pop('foto', None)
+
+        # Si se envió una nueva foto, subirla a Cloudinary
+        if imagen and hasattr(imagen, 'read'):
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/pacientes'
+            )
+
+            # Guardar la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        # Actualizar los demás campos
+        for atributo, valor in validated_data.items():
+            setattr(instance, atributo, valor)
+
+        instance.save()
+
+        return instance
 
 
 class MedicamentosSerializer(serializers.ModelSerializer):
@@ -66,12 +147,59 @@ class RolesSerializer(serializers.ModelSerializer):
         model = Roles
         fields = '__all__'
 
-
 class UsuariosSerializer(serializers.ModelSerializer):
+    # Permite recibir una imagen desde FormData
+    foto = serializers.CharField(
+        required=False,
+        allow_null=True
+    )
+
     class Meta:
         model = Usuarios
         fields = '__all__'
 
+    def to_internal_value(self, data):
+        # Copiamos los datos recibidos para poder modificar la foto
+        data = data.copy()
+
+        imagen = data.get('foto')
+
+        # Si Angular envía un archivo, lo dejamos pasar directamente
+        if imagen and hasattr(imagen, 'read'):
+            data.pop('foto')
+
+            datos_validados = super().to_internal_value(data)
+
+            # Agregamos el archivo manualmente para procesarlo en update()
+            datos_validados['foto'] = imagen
+
+            return datos_validados
+
+        return super().to_internal_value(data)
+
+    def update(self, instance, validated_data):
+        from servicios.cloudinary_service import subir_imagen
+
+        # Obtener la foto enviada
+        imagen = validated_data.pop('foto', None)
+
+        # Si se envió una nueva foto, subirla a Cloudinary
+        if imagen and hasattr(imagen, 'read'):
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+
+            # Guardar la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        # Actualizar los demás campos
+        for atributo, valor in validated_data.items():
+            setattr(instance, atributo, valor)
+
+        instance.save()
+
+        return instance
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Documentos
@@ -137,9 +265,67 @@ class NotificacionesSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = NotificacionDestinatario
         fields = '__all__'
+
+    def update(self, instance, validated_data):
+
+        # =====================================================
+        # OBTENER NUEVO ESTADO
+        # =====================================================
+
+        nueva_leida = validated_data.get(
+            'leida',
+            instance.leida
+        )
+
+        # =====================================================
+        # ACTUALIZAR ESTADO
+        # =====================================================
+
+        instance.leida = nueva_leida
+
+        # =====================================================
+        # ACTUALIZAR FECHA DE LECTURA
+        # =====================================================
+
+        if nueva_leida:
+
+            # Solo colocar fecha si todavía no tenía
+            if not instance.fecha_lectura:
+                instance.fecha_lectura = timezone.now()
+
+        else:
+
+            # Si vuelve a no leída, quitar fecha
+            instance.fecha_lectura = None
+
+        # =====================================================
+        # ACTUALIZAR OTROS CAMPOS
+        # =====================================================
+
+        for atributo, valor in validated_data.items():
+
+            if atributo not in [
+                'leida',
+                'fecha_lectura'
+            ]:
+
+                setattr(
+                    instance,
+                    atributo,
+                    valor
+                )
+
+        # =====================================================
+        # GUARDAR
+        # =====================================================
+
+        instance.save()
+
+        return instance
 
 class AplicacionMedicamentoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -206,11 +392,66 @@ class TipoEmergenciaSerializer(serializers.ModelSerializer):
         model = TipoEmergencia
         fields = '__all__'
 
+class GrupoMedicacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GrupoMedicacion
+        fields = '__all__'
 
 class EventosAdversosSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventosAdversos
         fields = '__all__'
+        
+    def create(self, validated_data):
+
+        evento = EventosAdversos.objects.create(**validated_data)
+
+        if not evento.id_bitacora:
+            return evento
+
+        bitacora = evento.id_bitacora
+
+        paciente = bitacora.id_paciente
+        cuidador = bitacora.id_usuario
+
+        if not cuidador:
+            return evento
+
+        destinatarios = Usuarios.objects.filter(
+            id_rol_id__in=[6, 7],
+            estado=True
+        )
+
+        if not destinatarios.exists():
+            return evento
+
+        mensaje = "Se registró un evento adverso."
+
+        if paciente:
+            nombre_paciente = f"{paciente.nombre} {paciente.apellido}".strip()
+            mensaje = f"Se registró un evento adverso para el paciente {nombre_paciente}."
+
+        notificacion = Notificaciones.objects.create(
+            titulo="Evento adverso registrado",
+            tipo="EVENTO_ADVERSO",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=paciente,
+            id_usuario=cuidador
+        )
+
+        for usuario in destinatarios:
+            NotificacionDestinatario.objects.create(
+                leida=False,
+                fecha_lectura=None,
+                id_notificacion=notificacion,
+                id_usuario=usuario
+            )
+
+        return evento   
+        
 
 
 class ImagenesEventoAdversoSerializer(serializers.ModelSerializer):
@@ -283,6 +524,72 @@ class RecuperacionPasswordSerializer(serializers.ModelSerializer):
         model = RecuperacionPassword
         fields = '__all__'
 
+class FcmTokensSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FcmTokens
+        fields = '__all__'
+
+class CamasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Camas
+        fields = '__all__'
+
+class HabitacionesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Habitaciones
+        fields = '__all__'
+
+class FundacionesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Fundaciones
+        fields = '__all__'
+
+class SedesSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Sedes
+        fields = '__all__'
+
+class CamarasSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Camaras
+        fields = '__all__'
+
+class TiposEventoIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = TiposEventoIa
+        fields = '__all__'
+
+class EventosIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = EventosIa
+        fields = '__all__'
+
+class EvidenciasIaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = EvidenciasIa
+        fields = '__all__'
+
+class AsignacionHabitacionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = AsignacionHabitacion
+        fields = '__all__'
+
+class FormulacionMedicamentosSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = FormulacionMedicamentos
+        fields = '__all__'
+        
 
 class CitasSerializer(serializers.ModelSerializer):
 
@@ -360,6 +667,13 @@ class CitasSerializer(serializers.ModelSerializer):
 # Esta parte permite registrar un usuario desde la aplicación,
 # encripta la contraseña y establece el usuario como activo.
 class RegistroUsuarioSerializer(serializers.ModelSerializer):
+    # Recibe el archivo de imagen enviado desde Insomnia o Angular
+    foto = serializers.FileField(
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
+
     class Meta:
         model = Usuarios
         fields = [
@@ -370,6 +684,7 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
             'numero_documento',
             'telefono',
             'contrasena',
+            'foto',
         ]
         extra_kwargs = {
             'contrasena': {'write_only': True}
@@ -377,18 +692,36 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         from django.contrib.auth.hashers import make_password
+        from servicios.cloudinary_service import subir_imagen
 
+        # Sacar la imagen de los datos antes de crear el usuario
+        imagen = validated_data.pop('foto', None)
+
+        # Encriptar la contraseña
         validated_data['contrasena'] = make_password(
             validated_data['contrasena']
         )
 
+        # Datos automáticos del usuario
         validated_data['estado'] = True
         validated_data['fecha_ingreso'] = timezone.now()
 
-        usuario = Usuarios.objects.create(**validated_data)
+        # Si se envió una imagen, subirla a Cloudinary
+        if imagen:
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+
+            # Guardar solamente la URL de Cloudinary
+            validated_data['foto'] = resultado['secure_url']
+
+        # Crear el usuario
+        usuario = Usuarios.objects.create(
+            **validated_data
+        )
 
         return usuario
-
 #Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
 #este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
 #nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación. 

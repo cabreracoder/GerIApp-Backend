@@ -938,10 +938,13 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
 class NotificacionesViewSet(viewsets.ModelViewSet):
 
     queryset = Notificaciones.objects.all()
-
     serializer_class = NotificacionesSerializer
 
     def create(self, request, *args, **kwargs):
+
+        # ============================================================
+        # CREAR NOTIFICACIÓN
+        # ============================================================
 
         response = super().create(
             request,
@@ -956,6 +959,10 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
         if not id_notificacion:
             return response
 
+        # ============================================================
+        # BUSCAR NOTIFICACIÓN CREADA
+        # ============================================================
+
         try:
 
             notificacion = Notificaciones.objects.get(
@@ -966,18 +973,148 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
 
             return response
 
+        # ============================================================
+        # OBTENER USUARIO DESTINATARIO
+        # ============================================================
+
         usuario = notificacion.id_usuario
 
-        if usuario:
+        if not usuario:
+            print(
+                "FCM: la notificación no tiene usuario destinatario."
+            )
+            return response
 
+        # ============================================================
+        # CREAR DESTINATARIO
+        # ============================================================
+
+        destinatario, creado = (
             NotificacionDestinatario.objects.get_or_create(
+
                 id_notificacion=notificacion,
+
                 id_usuario=usuario,
+
                 defaults={
                     "leida": False,
                     "fecha_lectura": None
                 }
             )
+        )
+
+        print(
+            f"NOTIFICACION: {notificacion.id_notificacion} "
+            f"creada para usuario {usuario.id_usuario}"
+        )
+
+        # ============================================================
+        # BUSCAR TOKENS FCM DEL USUARIO
+        # ============================================================
+
+        tokens = FcmTokens.objects.filter(
+            id_usuario=usuario,
+            activo=True
+        )
+
+        print(
+            f"FCM - Usuario: {usuario.id_usuario} - "
+            f"Cantidad de tokens: {tokens.count()}"
+        )
+
+        if not tokens.exists():
+
+            print(
+                f"FCM - El usuario {usuario.id_usuario} "
+                f"no tiene tokens FCM activos."
+            )
+
+            return response
+
+        # ============================================================
+        # INICIALIZAR FIREBASE
+        # ============================================================
+
+        try:
+
+            app = inicializar_firebase()
+
+            if app is None:
+
+                print(
+                    "FCM - Firebase no pudo inicializarse."
+                )
+
+                return response
+
+        except Exception as error_firebase:
+
+            print(
+                "FCM - Error inicializando Firebase: "
+                f"{error_firebase}"
+            )
+
+            return response
+
+        # ============================================================
+        # ENVIAR PUSH A CADA TOKEN
+        # ============================================================
+
+        for fcm_token in tokens:
+
+            mensaje = messaging.Message(
+
+                notification=messaging.Notification(
+
+                    title=notificacion.titulo,
+
+                    body=notificacion.mensaje
+                ),
+
+                data={
+
+                    "id_notificacion": str(
+                        notificacion.id_notificacion
+                    ),
+
+                    "tipo": str(
+                        notificacion.tipo or ""
+                    )
+                },
+
+                android=messaging.AndroidConfig(
+
+                    priority="high",
+
+                    notification=messaging.AndroidNotification(
+
+                        channel_id="geriapp_notificaciones"
+                    )
+                ),
+
+                token=fcm_token.token
+            )
+
+            try:
+
+                respuesta = messaging.send(
+                    mensaje
+                )
+
+                print(
+                    "FCM enviado correctamente. "
+                    f"Usuario: {usuario.id_usuario}, "
+                    f"Token: {fcm_token.id_fcm_token}, "
+                    f"Respuesta: {respuesta}"
+                )
+
+            except Exception as error_token:
+
+                print(
+                    "FCM - Error enviando al token "
+                    f"{fcm_token.id_fcm_token}: "
+                    f"{error_token}"
+                )
 
         return response
 

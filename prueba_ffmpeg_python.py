@@ -6,7 +6,11 @@ import threading
 import time
 import queue
 from ultralytics import YOLO
-from conexion_backend import enviar_evento_geriapp
+from conexion_backend import (
+    enviar_evento_geriapp,
+    subir_imagen_cloudinary,
+    registrar_evidencia_geriapp
+)
 
 # ============================================================
 # CONFIGURACIÓN
@@ -358,14 +362,12 @@ def capturar_camara():
 # ============================================================
 
 def enviar_eventos_backend():
-    # Este hilo sigue activo hasta recibir la señal de cierre.
-    # Si quedan eventos en la cola, los procesa antes de terminar.
-
+    # Procesar los eventos pendientes sin bloquear el hilo de YOLO.
     while True:
         evento = cola_eventos.get()
 
         try:
-            # None significa que debemos cerrar el hilo.
+            # None indica que debemos cerrar el hilo.
             if evento is None:
                 return
 
@@ -374,6 +376,7 @@ def enviar_eventos_backend():
                 f"{evento['id_tipo_evento']} a GerIApp..."
             )
 
+            # 1. Registrar el evento y recuperar su identificador.
             resultado = enviar_evento_geriapp(
                 id_camara=evento["id_camara"],
                 id_habitacion=evento["id_habitacion"],
@@ -382,12 +385,78 @@ def enviar_eventos_backend():
                 confianza=evento["confianza"]
             )
 
-            if resultado:
-                print("✅ GerIApp confirmó el registro del evento.")
+            if not resultado:
+                print("⚠️ No se confirmó el registro del evento.")
+                continue
+
+            id_evento = resultado.get("id_evento")
+
+            if not id_evento:
+                print(
+                    "⚠️ El evento fue enviado, pero no se recibió "
+                    "su id_evento. No se registrará la evidencia."
+                )
+                continue
+
+            print(f"✅ Evento registrado. ID: {id_evento}")
+
+            # 2. Obtener la imagen capturada al detectar la alerta.
+            imagen_evento = evento.get("imagen")
+
+            if imagen_evento is None:
+                print(
+                    "⚠️ El evento no tiene una imagen disponible "
+                    "para la evidencia."
+                )
+                continue
+
+            # 3. Convertir la imagen a formato JPEG en memoria.
+            correcto, imagen_codificada = cv2.imencode(
+                ".jpg",
+                imagen_evento,
+                [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+            )
+
+            if not correcto:
+                print("⚠️ No se pudo preparar la imagen.")
+                continue
+
+            imagen_bytes = imagen_codificada.tobytes()
+
+            # 4. Subir la imagen a Cloudinary.
+            resultado_imagen = subir_imagen_cloudinary(imagen_bytes)
+
+            if not resultado_imagen:
+                print(
+                    "⚠️ El evento quedó registrado, pero la imagen "
+                    "no se pudo subir a Cloudinary."
+                )
+                continue
+
+            url_imagen = resultado_imagen.get("url")
+            public_id = resultado_imagen.get("public_id")
+
+            if not url_imagen or not public_id:
+                print(
+                    "⚠️ Cloudinary no devolvió la URL o el public_id."
+                )
+                continue
+
+            # 5. Guardar la evidencia vinculada al evento.
+            resultado_evidencia = registrar_evidencia_geriapp(
+                id_evento=id_evento,
+                url=url_imagen,
+                public_id=public_id
+            )
+
+            if resultado_evidencia:
+                print(
+                    f"✅ Evidencia vinculada al evento {id_evento}."
+                )
             else:
                 print(
-                    "⚠️ No se confirmó el registro del evento. "
-                    "Revisa el mensaje anterior."
+                    "⚠️ La imagen está en Cloudinary, pero no se "
+                    "confirmó su registro en la base de datos."
                 )
 
         except Exception as error:
@@ -396,25 +465,36 @@ def enviar_eventos_backend():
         finally:
             cola_eventos.task_done()
 
+
 # ============================================================
 # AGREGAR EVENTO A LA COLA
 # ============================================================
 
 def registrar_evento(tipo_evento):
+    # Tomar una copia del fotograma actual para esta alerta.
+    with frame_lock:
+        if frame_actual is None:
+            print("⚠️ No hay imagen disponible para la evidencia.")
+            imagen_evento = None
+        else:
+            imagen_evento = frame_actual.copy()
+
     evento = {
         "id_camara": ID_CAMARA,
         "id_habitacion": ID_HABITACION,
         "id_paciente": ID_PACIENTE,
         "id_tipo_evento": tipo_evento,
-        "confianza": CONFIANZA_EVENTO
+        "confianza": CONFIANZA_EVENTO,
+        "imagen": imagen_evento
     }
 
-    # No hacemos solicitudes HTTP en el hilo de YOLO.
+    # La solicitud HTTP se realiza en otro hilo.
     cola_eventos.put(evento)
 
     print(
         f"📥 Evento tipo {tipo_evento} agregado a la cola."
     )
+
 
 # ============================================================
 # HILO DE YOLO

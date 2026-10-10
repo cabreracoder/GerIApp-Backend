@@ -1171,52 +1171,135 @@ class CamasViewSet(viewsets.ModelViewSet):
     serializer_class = CamasSerializer 
 
 class HabitacionesViewSet(viewsets.ModelViewSet):
+
     queryset = Habitaciones.objects.all()
     serializer_class = HabitacionesSerializer
 
+    # --------------------------------------------------------
+    # ELIMINAR SOLO SI NO EXISTEN RELACIONES
+    # --------------------------------------------------------
+
     @transaction.atomic
-    def perform_destroy(self, instance):
+    def destroy(self, request, *args, **kwargs):
 
-        id_habitacion = instance.id_habitacion
+        from django.db.models.deletion import ProtectedError, RestrictedError
+        from django.db import IntegrityError
 
-        # 1. Dejar pacientes sin habitación y sin cama
-        #    El paciente NO se elimina
-        Pacientes.objects.filter(
+        habitacion = self.get_object()
+        id_habitacion = habitacion.id_habitacion
+
+        # Comprobar todas las relaciones conocidas
+
+        tiene_pacientes = Pacientes.objects.filter(
             habitacion=id_habitacion
-        ).update(
-            habitacion=None,
-            cama=None
+        ).exists()
+
+        tiene_camas = Camas.objects.filter(
+            id_habitacion_id=id_habitacion
+        ).exists()
+
+        tiene_asignaciones = AsignacionHabitacion.objects.filter(
+            id_habitacion_id=id_habitacion
+        ).exists()
+
+        tiene_camaras = Camaras.objects.filter(
+            id_habitacion_id=id_habitacion
+        ).exists()
+
+        tiene_eventos = EventosIa.objects.filter(
+            id_habitacion_id=id_habitacion
+        ).exists()
+
+        if any([
+            tiene_pacientes,
+            tiene_camas,
+            tiene_asignaciones,
+            tiene_camaras,
+            tiene_eventos
+        ]):
+
+            return Response(
+                {
+                    "error": (
+                        "No se puede eliminar esta habitación "
+                        "porque tiene información relacionada. "
+                        "Puedes desactivarla si está desocupada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Eliminar solamente la habitación.
+        # Nunca borrar los registros relacionados.
+
+        try:
+            with transaction.atomic():
+                habitacion.delete()
+
+        except (IntegrityError, ProtectedError, RestrictedError):
+            return Response(
+                {
+                    "error": (
+                        "No se puede eliminar la habitación "
+                        "porque existen relaciones adicionales "
+                        "en la base de datos."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        return Response(
+            {
+                "mensaje": "Habitación eliminada correctamente."
+            },
+            status=status.HTTP_200_OK
         )
 
-        # 2. Eliminar evidencias de los eventos IA
-        eventos = EventosIa.objects.filter(
-            id_habitacion=id_habitacion
-        )
+    # --------------------------------------------------------
+    # ACTIVAR / DESACTIVAR
+    # --------------------------------------------------------
 
-        EvidenciasIa.objects.filter(
-            id_evento__in=eventos
-        ).delete()
+    def perform_update(self, serializer):
 
-        # 3. Eliminar eventos IA
-        eventos.delete()
+        from rest_framework.exceptions import ValidationError
 
-        # 4. Eliminar cámaras
-        Camaras.objects.filter(
-            id_habitacion=id_habitacion
-        ).delete()
+        with transaction.atomic():
 
-        # 5. Eliminar asignaciones
-        AsignacionHabitacion.objects.filter(
-            id_habitacion=id_habitacion
-        ).delete()
+            habitacion = self.get_object()
 
-        # 6. Eliminar camas
-        Camas.objects.filter(
-            id_habitacion=id_habitacion
-        ).delete()
+            nuevo_estado = serializer.validated_data.get(
+                "estado",
+                habitacion.estado
+            )
 
-        # 7. Eliminar habitación
-        instance.delete()
+            # Si se va a desactivar la habitación
+            if habitacion.estado and nuevo_estado is False:
+
+                # Comprobar pacientes asignados
+                pacientes_asignados = Pacientes.objects.filter(
+                    habitacion=habitacion.id_habitacion
+                ).exists()
+
+                # Comprobar asignaciones vigentes
+                asignaciones_activas = AsignacionHabitacion.objects.filter(
+                    id_habitacion_id=habitacion.id_habitacion,
+                    estado=True
+                ).exists()
+
+                if pacientes_asignados or asignaciones_activas:
+
+                    raise ValidationError({
+                        "estado": (
+                            "No se puede desactivar esta habitación "
+                            "porque tiene pacientes asignados. "
+                            "Primero debes trasladarlos."
+                        )
+                    })
+
+            serializer.save()
+
+            # Las camas conservan su estado independiente.
+
 class NotificacionDestinatarioViewSet(
     viewsets.ModelViewSet
 ):

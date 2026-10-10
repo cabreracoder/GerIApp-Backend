@@ -91,6 +91,86 @@ class PacientesSerializer(serializers.ModelSerializer):
 
         return super().to_internal_value(data)
 
+    # =====================================================
+    # VALIDAR HABITACIÓN Y CAMA DEL PACIENTE
+    # =====================================================
+
+    def validate(self, attrs):
+
+        from .models import Habitaciones, Camas, Pacientes
+
+        # Mantener los valores actuales al editar
+        habitacion_id = attrs.get(
+            'habitacion',
+            self.instance.habitacion if self.instance else None
+        )
+
+        cama_id = attrs.get(
+            'cama',
+            self.instance.cama if self.instance else None
+        )
+
+        # Comprobar que haya habitación y cama
+        if habitacion_id is None or cama_id is None:
+            raise serializers.ValidationError({
+                'ubicacion': 'Debes seleccionar una habitación y una cama.'
+            })
+
+        # Verificar habitación
+        habitacion = Habitaciones.objects.filter(
+            id_habitacion=habitacion_id
+        ).first()
+
+        if not habitacion:
+            raise serializers.ValidationError({
+                'habitacion': 'La habitación seleccionada no existe.'
+            })
+
+        if not habitacion.estado:
+            raise serializers.ValidationError({
+                'habitacion': 'Esta habitación está inactiva.'
+            })
+
+        # Verificar cama
+        cama = Camas.objects.filter(
+            id_cama=cama_id
+        ).first()
+
+        if not cama:
+            raise serializers.ValidationError({
+                'cama': 'La cama seleccionada no existe.'
+            })
+
+        if not cama.estado:
+            raise serializers.ValidationError({
+                'cama': 'Esta cama está inactiva.'
+            })
+
+        # Verificar que pertenezca a la habitación
+        if cama.id_habitacion_id != habitacion.id_habitacion:
+            raise serializers.ValidationError({
+                'cama': 'La cama no pertenece a la habitación seleccionada.'
+            })
+
+        # Buscar pacientes que ya ocupan esa cama
+        ocupantes = Pacientes.objects.filter(
+            habitacion=habitacion_id,
+            cama=cama_id
+        )
+
+        # Al editar, excluir al mismo paciente
+        if self.instance:
+            ocupantes = ocupantes.exclude(
+                id_paciente=self.instance.id_paciente
+            )
+
+        if ocupantes.exists():
+            raise serializers.ValidationError({
+                'cama': 'Esta cama ya está asignada a otro paciente.'
+            })
+
+        return attrs
+
     def create(self, validated_data):
         from servicios.cloudinary_service import subir_imagen
 

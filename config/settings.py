@@ -5,6 +5,10 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
+NOMBRE_INSTITUCION = os.getenv(
+    'NOMBRE_INSTITUCION',
+    ''
+)
 GOOGLE_CLIENT_ID = os.getenv(
     'GOOGLE_CLIENT_ID'
 )

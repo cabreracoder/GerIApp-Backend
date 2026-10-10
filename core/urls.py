@@ -9,6 +9,7 @@ from rest_framework.routers import DefaultRouter
 # ViewSets principales
 # ==============================
 from .views import (
+    ConfiguracionInstitucionView,
     DiagnosticosViewSet,
     PacientesViewSet,
     MedicamentosViewSet,
@@ -312,6 +313,11 @@ path(
     'usuarios/cambiar-password-recuperacion/',
     cambiar_password_recuperacion,
     name='cambiar_password_recuperacion'
+),
+path(
+    'configuracion/institucion/',
+    ConfiguracionInstitucionView.as_view(),
+    name='configuracion-institucion'
 ),
 path(
     '',

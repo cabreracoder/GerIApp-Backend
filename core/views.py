@@ -682,6 +682,13 @@ def cambiar_password_recuperacion(request):
 # VIEWSETS
 # ============================================================
 
+class ConfiguracionInstitucionView(APIView):
+    def get(self, request):
+        return Response({
+            "nombre_institucion": settings.NOMBRE_INSTITUCION
+        })
+
+
 class PacientesViewSet(viewsets.ModelViewSet):
     queryset = Pacientes.objects.all()
     serializer_class = PacientesSerializer

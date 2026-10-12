@@ -717,6 +717,7 @@ class Recomendaciones(models.Model):
         blank=True,
         null=True
     )
+    fecha_registro = models.DateField(blank=True, null=True)
 
     class Meta:
         managed = False
@@ -751,6 +752,7 @@ class CuidadosEnfermeria(models.Model):
         blank=True,
         null=True
     )
+    fecha_registro = models.DateField(blank=True, null=True)
 
     class Meta:
         managed = False

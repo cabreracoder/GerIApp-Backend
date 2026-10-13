@@ -1726,6 +1726,10 @@ class DisponibilidadUsuarioViewSet(viewsets.ModelViewSet):
 class RecomendacionesViewSet(viewsets.ModelViewSet):
     queryset = Recomendaciones.objects.all()
     serializer_class = RecomendacionesSerializer
+    def perform_create(self, serializer):
+        serializer.save(
+            fecha_registro=timezone.localdate()
+        )
 
 
 class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):

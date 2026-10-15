@@ -502,7 +502,7 @@ class Pacientes(models.Model):
     eps = models.CharField()
     sede = models.CharField()
     fecha_ingreso = models.DateTimeField()
-    habitacion = models.IntegerField(blank=True, null=True)
+    habitacion = models.IntegerField()
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
     tipo_documento = models.CharField()
     numero_documento = models.CharField()
@@ -510,15 +510,15 @@ class Pacientes(models.Model):
     genero = models.CharField()
     grupo_sanguineo = models.CharField(max_length=5, blank=True, null=True)
     rh = models.CharField(max_length=5, blank=True, null=True)
-    cama = models.IntegerField(blank=True, null=True)
+    cama = models.IntegerField()
     estado = models.BooleanField()
     foto = models.CharField(blank=True, null=True)
+    id_sede = models.ForeignKey('Sedes', models.DO_NOTHING, db_column='id_sede', blank=True, null=True)
 
     class Meta:
         managed = False
         db_table = 'pacientes'
-
-
+        
 class PerfilProfesional(models.Model):
     id_perfil_profesional = models.AutoField(primary_key=True)
     id_usuario = models.OneToOneField('Usuarios', models.CASCADE, db_column='id_usuario')

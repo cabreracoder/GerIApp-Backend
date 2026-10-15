@@ -280,6 +280,7 @@ class UsuariosSerializer(serializers.ModelSerializer):
         instance.save()
 
         return instance
+    
 class DocumentosSerializer(serializers.ModelSerializer):
     class Meta:
         model = Documentos

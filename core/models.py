@@ -563,28 +563,24 @@ class Roles(models.Model):
         db_table = 'roles'
 
 class Usuarios(models.Model):
-    id_usuario = models.AutoField(primary_key=True)
-    id_rol = models.ForeignKey(
-        'Roles',
-        models.DO_NOTHING,
-        db_column='id_rol',
-        blank=True,
-        null=True
-    )
-    tipo_documento = models.CharField()
-    numero_documento = models.CharField()
     nombres = models.CharField()
     apellidos = models.CharField()
     correo = models.CharField()
-    telefono = models.CharField(blank=True, null=True)
     fecha_ingreso = models.DateTimeField()
     estado = models.BooleanField()
+    id_usuario = models.AutoField(primary_key=True)
+    id_rol = models.ForeignKey('Roles', models.DO_NOTHING, db_column='id_rol', blank=True, null=True)
+    tipo_documento = models.CharField()
+    numero_documento = models.CharField()
+    telefono = models.CharField(blank=True, null=True)
     contrasena = models.CharField(max_length=255, blank=True, null=True)
     foto = models.TextField(blank=True, null=True)
+    id_sede = models.ForeignKey('Sedes', models.DO_NOTHING, db_column='id_sede', blank=True, null=True)
 
     class Meta:
         managed = False
         db_table = 'usuarios'
+
 
 class Documentos(models.Model):
     id_documento = models.AutoField(primary_key=True)
@@ -607,7 +603,7 @@ class Documentos(models.Model):
 class SignosVitales(models.Model):
     id_signos_vitales = models.AutoField(primary_key=True)
     id_bitacora = models.ForeignKey(Bitacora, models.DO_NOTHING, db_column='id_bitacora', blank=True, null=True)
-    temperatura = models.CharField()
+    temperatura = models.CharField(max_length=100)
     presion_sistolica = models.CharField()
     presion_diastolica = models.CharField()
     frecuencia_cardiaca = models.CharField()

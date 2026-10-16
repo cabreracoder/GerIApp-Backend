@@ -50,16 +50,6 @@ def enviar_evento_geriapp(
             datos_evento = respuesta.json()
 
             print("Evento enviado correctamente a GerIApp.")
-            print("Código HTTP:", respuesta.status_code)
-            print("Respuesta:", respuesta.text)
-
-            # Devolver los datos para recuperar id_evento.
-            return datos_evento
-
-        print("El backend respondió con un error.")
-        print("Código HTTP:", respuesta.status_code)
-        print("Respuesta:", respuesta.text[:500])
-        return None
 
     except (requests.exceptions.RequestException, ValueError) as error:
         print("No se pudo confirmar el envío del evento.")

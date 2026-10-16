@@ -29,12 +29,13 @@ TAMANO_YOLO = 640
 # ============================================================
 
 ID_CAMARA = 1
-ID_HABITACION = 1
-ID_PACIENTE = 24
+ID_HABITACION = 3
+ID_PACIENTE = 1
 
-# IDs del catálogo TiposEventoIa
+# Tipos de eventos de IA
 TIPO_PACIENTE_SENTADO = 2
 TIPO_LEVANTAMIENTO_COMPLETO = 4
+
 
 # Confianza provisional para el registro del evento.
 # No es la confianza real calculada por YOLO.

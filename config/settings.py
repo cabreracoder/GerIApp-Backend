@@ -173,15 +173,23 @@ FIREBASE_CREDENTIALS = os.getenv(
 )
 
 
+
+# CONFIGURACIÓN CORS
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:4200',
+    'https://geriapp-delta.vercel.app',
+    'https://geriapp-cfemvhn7a-ger-ia-pp-frontend.vercel.app',
 ]
 
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://localhost:\d+$",
+    r'^http://localhost:\d+$',
 ]
 
+CORS_ALLOW_CREDENTIALS = True
+
+# ORÍGENES CONFIABLES PARA CSRF
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:4200',
-    'https://geriapp-backend.onrender.com',
+    'https://geriapp-delta.vercel.app',
+    'https://geriapp-cfemvhn7a-ger-ia-pp-frontend.vercel.app',
 ]

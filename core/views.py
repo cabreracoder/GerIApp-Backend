@@ -1143,26 +1143,120 @@ class FcmTokensViewSet(viewsets.ModelViewSet):
 
         if not id_usuario or not token:
             return Response(
-                {
-                    "error": "id_usuario y token son obligatorios"
-                },
-                status=400
+                {"error": "id_usuario y token son obligatorios"},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-        fcm_token, creado = FcmTokens.objects.update_or_create(
-            token=token,
-            defaults={
-                "id_usuario_id": id_usuario,
-                "activo": True,
-                "fecha_actualizacion": timezone.now()
-            }
-        )
+        try:
+            id_usuario = int(id_usuario)
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "id_usuario debe ser un número válido"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if id_usuario <= 0 or not isinstance(token, str) or not token.strip():
+            return Response(
+                {"error": "id_usuario o token no son válidos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        token = token.strip()
+
+        # Buscar si el token ya existe
+        fcm_token = FcmTokens.objects.filter(token=token).first()
+
+        if fcm_token:
+            # Actualizar el usuario y la fecha sin reactivar
+            # un token que el usuario haya desactivado
+            fcm_token.id_usuario_id = id_usuario
+            fcm_token.fecha_actualizacion = timezone.now()
+            fcm_token.save(
+                update_fields=["id_usuario", "fecha_actualizacion"]
+            )
+            creado = False
+        else:
+            # Si el usuario ya tiene tokens registrados y todos estan
+            # desactivados, conservar esa preferencia para el nuevo token
+            tokens_usuario = FcmTokens.objects.filter(
+                id_usuario_id=id_usuario
+            )
+
+            tiene_tokens = tokens_usuario.exists()
+            push_desactivadas = (
+                tiene_tokens and not tokens_usuario.filter(activo=True).exists()
+            )
+
+            fcm_token = FcmTokens.objects.create(
+                id_usuario_id=id_usuario,
+                token=token,
+                activo=not push_desactivadas,
+                fecha_actualizacion=timezone.now()
+            )
+            creado = True
 
         serializer = self.get_serializer(fcm_token)
 
         return Response(
             serializer.data,
-            status=201 if creado else 200
+            status=status.HTTP_201_CREATED if creado
+            else status.HTTP_200_OK
+        )
+
+    @action(detail=False, methods=["post"], url_path="preferencia")
+    def configurar_preferencia(self, request, *args, **kwargs):
+        id_usuario = request.data.get("id_usuario")
+        activadas = request.data.get("activadas")
+
+        if id_usuario is None or activadas is None:
+            return Response(
+                {"error": "id_usuario y activadas son obligatorios"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            id_usuario = int(id_usuario)
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "id_usuario debe ser un número válido"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validar un booleano real evitar aceptar cadenas como "false".
+        if id_usuario <= 0 or not isinstance(activadas, bool):
+            return Response(
+                {"error": "id_usuario o activadas no son válidos"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tokens = FcmTokens.objects.filter(id_usuario_id=id_usuario)
+
+        if not tokens.exists():
+            return Response(
+                {
+                    "error": "El usuario no tiene tokens FCM registrados",
+                    "id_usuario": id_usuario,
+                    "push_activadas": activadas
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        tokens.update(
+            activo=activadas,
+            fecha_actualizacion=timezone.now()
+        )
+
+        return Response(
+            {
+                "id_usuario": id_usuario,
+                "push_activadas": activadas,
+                "mensaje": (
+                    "Notificaciones push activadas"
+                    if activadas
+                    else "Notificaciones push desactivadas"
+                )
+            },
+            status=status.HTTP_200_OK
         )
 
 

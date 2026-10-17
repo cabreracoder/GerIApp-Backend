@@ -671,7 +671,6 @@ class FormulacionMedicamentosSerializer(serializers.ModelSerializer):
         model = FormulacionMedicamentos
         fields = '__all__'
         
-
 class CitasSerializer(serializers.ModelSerializer):
 
     class Meta:
@@ -733,13 +732,11 @@ class CitasSerializer(serializers.ModelSerializer):
             id_usuario=asignacion.id_usuario
         )
 
-        # CREAR EL DESTINATARIO
+        from core.notificaciones_utils import enviar_notificacion_fcm
 
-        NotificacionDestinatario.objects.create(
-            leida=False,
-            fecha_lectura=None,
-            id_notificacion=notificacion,
-            id_usuario=asignacion.id_usuario
+        enviar_notificacion_fcm(
+            notificacion,
+            asignacion.id_usuario
         )
 
         return cita

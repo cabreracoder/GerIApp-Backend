@@ -1817,6 +1817,64 @@ class CitasViewSet(viewsets.ModelViewSet):
     queryset = Citas.objects.all()
     serializer_class = CitasSerializer
 
+    def perform_create(self, serializer):
+        # Guardar la cita normalmente.
+        cita = serializer.save()
+
+        # Verificar que la cita tenga un paciente.
+        paciente = cita.id_paciente
+
+        if not paciente:
+            print(
+                "CITAS: La cita fue guardada, "
+                "pero no tiene paciente asociado."
+            )
+            return
+
+        # Buscar la asignación activa más reciente del cuidador.
+        asignacion = (
+            AsignacionPacienteCuidador.objects
+            .filter(
+                id_paciente=paciente,
+                estado__iexact="Activo"
+            )
+            .order_by("-fecha_inicio")
+            .first()
+        )
+
+        if not asignacion or not asignacion.id_usuario:
+            print(
+                "CITAS: No se encontró un cuidador "
+                "con asignación activa para este paciente."
+            )
+            return
+
+        cuidador = asignacion.id_usuario
+
+        # Crear la notificación dirigida al cuidador.
+        notificacion = Notificaciones.objects.create(
+            titulo="Nueva cita en tu agenda",
+            tipo="cita",
+            mensaje=(
+                "Se ha registrado una nueva cita para un paciente "
+                "a tu cargo. Ingresa a GeriApp para consultar "
+                "los detalles."
+            ),
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=paciente,
+            id_usuario=cuidador
+        )
+
+        print(
+            "CITAS: Notificación creada. "
+            f"Cita: {cita.id_cita}, "
+            f"Paciente: {paciente.pk}, "
+            f"Cuidador: {cuidador.pk}, "
+            f"Notificación: {notificacion.id_notificacion}"
+        )
+
 
 # ============================================================
 # TURNOS

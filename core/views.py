@@ -16,6 +16,10 @@ from django.conf import settings
 from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
 
+from servicios.cloudinary_service import eliminar_imagen
+from urllib.parse import urlparse
+import re
+
 from google.oauth2 import id_token
 from google.auth.transport import requests
 import random
@@ -714,6 +718,71 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         parsers.FormParser,
         parsers.JSONParser
     ]
+
+    @action(
+        detail=True,
+        methods=['delete'],
+        url_path='foto'
+    )
+    def eliminar_foto(self, request, pk=None):
+        """
+        Elimina la foto del usuario en Cloudinary
+        y limpia el campo foto en Django.
+        """
+
+        usuario = self.get_object()
+        url_foto = usuario.foto
+
+        if not url_foto:
+            return Response(
+                {'mensaje': 'El usuario no tiene una foto.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            # Extraer la ruta del recurso desde la URL.
+            ruta = urlparse(url_foto).path
+            marcador = '/upload/'
+
+            if marcador not in ruta:
+                return Response(
+                    {
+                        'error':
+                        'No se pudo identificar la imagen en Cloudinary.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            public_id = ruta.split(marcador, 1)[1]
+
+            # Quitar el segmento de versión de Cloudinary.
+            public_id = re.sub(r'^v\d+/', '', public_id)
+
+            # Quitar la extensión del archivo.
+            public_id = re.sub(r'\.[^/.]+$', '', public_id)
+
+            # Eliminar el recurso remoto.
+            resultado = eliminar_imagen(public_id)
+
+            # Limpiar la URL únicamente tras confirmar el borrado.
+            usuario.foto = None
+            usuario.save(update_fields=['foto'])
+
+            return Response(
+                {
+                    'mensaje': 'Foto eliminada correctamente.'
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception:
+            return Response(
+                {
+                    'error': 'No se pudo eliminar la foto.'
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 
 class DocumentosViewSet(viewsets.ModelViewSet):

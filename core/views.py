@@ -15,6 +15,25 @@ from django.conf import settings
 # Notificaciones push firebase-admin
 from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
+from .notificaciones_utils import enviar_notificacion_fcm
+
+#notificacion de Turnos
+
+from .models import (
+    AsignacionTurnoUsuario,
+    Notificaciones,
+)
+
+from .serializers import (
+    AsignacionTurnoUsuarioSerializer,
+)
+
+from .notificaciones_utils import enviar_notificacion_fcm
+
+import logging
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from servicios.cloudinary_service import eliminar_imagen
 from urllib.parse import urlparse
@@ -1918,6 +1937,49 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
     queryset = AsignacionTurnoUsuario.objects.all()
     serializer_class = AsignacionTurnoUsuarioSerializer
 
+    def perform_create(self, serializer):
+        asignacion = serializer.save()
+        usuario = asignacion.id_usuario
+
+        print("========== PUSH TURNO ==========")
+        print("Asignación creada:", asignacion.pk)
+        print("Usuario asignado:", usuario.pk if usuario else None)
+        print("Fecha del turno:", asignacion.fecha)
+
+        if not usuario:
+            print("ERROR: La asignación no tiene usuario.")
+            return
+
+        try:
+            fecha_turno = asignacion.fecha.strftime("%d/%m/%Y")
+
+            mensaje = (
+                f"Te han asignado un nuevo turno para el día "
+                f"{fecha_turno}. Consulta la sección Inicio de GerIApp."
+            )
+
+            notificacion = Notificaciones.objects.create(
+                titulo="Nuevo turno asignado",
+                tipo="TURNO",
+                mensaje=mensaje,
+                enviar_correo=False,
+                fecha_hora=timezone.now(),
+                estado=True,
+                id_usuario=usuario,
+            )
+
+            print(
+                "Notificación creada:",
+                notificacion.id_notificacion
+            )
+
+            enviar_notificacion_fcm(notificacion, usuario)
+
+            print("Función de envío FCM ejecutada.")
+
+        except Exception as e:
+            print("ERROR EN PUSH TURNO:", repr(e))
+            raise
 
 class PermisosViewSet(viewsets.ModelViewSet):
     queryset = Permisos.objects.all()

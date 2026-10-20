@@ -1,6 +1,11 @@
 from rest_framework import viewsets, status, parsers
 from rest_framework.views import APIView
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import (
+    api_view,
+    parser_classes,
+    permission_classes,
+)
+from rest_framework.permissions import AllowAny
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.response import Response
 from django.contrib.auth.hashers import check_password, make_password
@@ -26,6 +31,8 @@ import random
 from datetime import timedelta
 from django.utils import timezone
 from rest_framework.decorators import action
+from .authentication import crear_token_usuario
+from .permissions import EsSuperadministradorOMetodoLectura
 
 
 
@@ -151,6 +158,7 @@ from .serializers import (
 # ============================================================
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 @parser_classes([MultiPartParser, FormParser, JSONParser])
 def registro_usuario(request):
     serializer = RegistroUsuarioSerializer(data=request.data)
@@ -210,6 +218,7 @@ def registro_usuario(request):
 # ============================================================
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def login_usuario(request):
     correo = request.data.get('correo')
     contrasena = request.data.get('contrasena')
@@ -265,6 +274,7 @@ def login_usuario(request):
     return Response(
         {
             'mensaje': 'Inicio de sesión exitoso.',
+             'token': crear_token_usuario(usuario),
             'usuario': {
                 'id_usuario': usuario.id_usuario,
                 'nombres': usuario.nombres,
@@ -285,6 +295,7 @@ def login_usuario(request):
 # ============================================================
 @csrf_exempt
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def login_google(request):
 
     token = request.data.get('token')
@@ -321,35 +332,28 @@ def login_google(request):
                     'Usuario no registrado. Por favor cree una cuenta.'
                 },
                 status=status.HTTP_404_NOT_FOUND
+                )
+        if not usuario.estado:return Response(
+                {
+                    'error': 'El usuario se encuentra inactivo.'
+                },
+                status=status.HTTP_403_FORBIDDEN
             )
 
-
         return Response(
-            {
-                'mensaje':
-                'Inicio de sesión exitoso.',
-
-                'usuario': {
-
-                    'id_usuario':
-                    usuario.id_usuario,
-
-                    'nombres':
-                    usuario.nombres,
-
-                    'apellidos':
-                    usuario.apellidos,
-
-                    'correo':
-                    usuario.correo,
-
-                    'id_rol':
-                    usuario.id_rol_id
-
-                }
-            },
-            status=status.HTTP_200_OK
-        )
+                {
+                    'mensaje': 'Inicio de sesión exitoso.',
+                    'token': crear_token_usuario(usuario),
+                    'usuario': {
+                        'id_usuario': usuario.id_usuario,
+                        'nombres': usuario.nombres,
+                        'apellidos': usuario.apellidos,
+                        'correo': usuario.correo,
+                        'id_rol': usuario.id_rol_id
+                    }
+                },
+                status=status.HTTP_200_OK
+            )
 
 
     except Exception as error:
@@ -377,6 +381,11 @@ def cambiar_contrasena(request):
                 'error': 'El ID del usuario es obligatorio.'
             },
             status=status.HTTP_400_BAD_REQUEST
+        )
+    if str(request.user.id_usuario) != str(id_usuario):
+        return Response(
+            {'error': 'No puedes cambiar la contraseña de otro usuario.'},
+            status=status.HTTP_403_FORBIDDEN
         )
 
     try:
@@ -466,6 +475,7 @@ def cambiar_contrasena(request):
 # ============================================================
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def recuperar_password(request):
     correo = request.data.get('correo')
 
@@ -549,6 +559,7 @@ def recuperar_password(request):
 # ============================================================
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def verificar_codigo(request):
     correo = request.data.get('correo')
     codigo = request.data.get('codigo')
@@ -612,6 +623,7 @@ def verificar_codigo(request):
 # ============================================================
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def cambiar_password_recuperacion(request):
     correo = request.data.get('correo')
     codigo = request.data.get('codigo')
@@ -706,11 +718,187 @@ class MedicamentosViewSet(viewsets.ModelViewSet):
 class RolesViewSet(viewsets.ModelViewSet):
     queryset = Roles.objects.all()
     serializer_class = RolesSerializer
+    permission_classes = [EsSuperadministradorOMetodoLectura]
 
 
 class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
+    def _obtener_id_rol(self, usuario):
+        """Obtiene el ID del rol del usuario."""
+        rol = getattr(usuario, 'id_rol', None)
+
+        if rol is None:
+            return None
+
+        return getattr(rol, 'id_rol', None)
+
+    def get_queryset(self):
+        """Limita los usuarios visibles según el rol y la sede."""
+        usuario = self.request.user
+        rol_id = self._obtener_id_rol(usuario)
+
+        if rol_id == 4:
+            # El Súper Administrador puede consultar todos.
+            return Usuarios.objects.all()
+
+        if rol_id == 1:
+            # El Administrador solo consulta usuarios de su sede.
+            sede_id = getattr(usuario, 'id_sede_id', None)
+
+            if sede_id is not None:
+                return Usuarios.objects.filter(id_sede_id=sede_id)
+
+        # Los demás usuarios solo consultan su propio registro.
+        return Usuarios.objects.filter(
+            id_usuario=usuario.id_usuario
+        )
+
+    def create(self, request, *args, **kwargs):
+        """El registro debe pasar por el endpoint específico."""
+        return Response(
+            {
+                'error':
+                    'Utiliza el endpoint de registro de usuarios.'
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    def update(self, request, *args, **kwargs):
+        """Valida los campos que puede modificar cada rol."""
+        usuario_actual = request.user
+        rol_actual = self._obtener_id_rol(usuario_actual)
+
+        # get_object respeta el queryset limitado por rol y sede.
+        usuario_objetivo = self.get_object()
+        rol_objetivo = self._obtener_id_rol(usuario_objetivo)
+
+        campos_personales = {
+            'nombres',
+            'apellidos',
+            'correo',
+            'telefono',
+            'tipo_documento',
+            'numero_documento',
+            'foto',
+        }
+
+        campos_recibidos = set(request.data.keys())
+
+        if rol_actual == 4:
+            # Protegemos la cuenta global de Superadministrador.
+            if rol_objetivo == 4:
+                campos_permitidos = campos_personales
+            else:
+                campos_permitidos = campos_personales | {
+                    'estado',
+                    'id_rol',
+                    'id_sede',
+                }
+
+                # No se permite asignar el rol Superadministrador
+                # mediante el módulo ordinario de usuarios.
+                if 'id_rol' in campos_recibidos:
+                    try:
+                        nuevo_rol = int(request.data['id_rol'])
+                    except (TypeError, ValueError):
+                        return Response(
+                            {'error': 'El rol indicado no es válido.'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                    if nuevo_rol == 4:
+                        return Response(
+                            {
+                                'error':
+                                    'No se puede asignar el rol '
+                                    'Superadministrador desde esta operación.'
+                            },
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+
+        elif rol_actual == 1:
+            # El Administrador no puede modificar su propia
+            # configuración privilegiada ni gestionar otros roles.
+            if usuario_objetivo.id_usuario == usuario_actual.id_usuario:
+                campos_permitidos = campos_personales
+            elif rol_objetivo in (2, 3):
+                campos_permitidos = campos_personales | {
+                    'estado',
+                    'id_rol',
+                }
+
+                if 'id_rol' in campos_recibidos:
+                    try:
+                        nuevo_rol = int(request.data['id_rol'])
+                    except (TypeError, ValueError):
+                        return Response(
+                            {'error': 'El rol indicado no es válido.'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+
+                    if nuevo_rol not in (2, 3):
+                        return Response(
+                            {
+                                'error':
+                                    'El Administrador solo puede asignar '
+                                    'los roles operativos autorizados.'
+                            },
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+            else:
+                return Response(
+                    {'error': 'No tienes permiso para modificar este usuario.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        else:
+            # Los demás usuarios únicamente modifican sus datos personales.
+            if usuario_objetivo.id_usuario != usuario_actual.id_usuario:
+                return Response(
+                    {'error': 'No tienes permiso para modificar este usuario.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            campos_permitidos = campos_personales
+
+        campos_no_permitidos = campos_recibidos - campos_permitidos
+
+        if campos_no_permitidos:
+            return Response(
+                {
+                    'error':
+                        'No tienes permiso para modificar estos campos.',
+                    'campos': sorted(campos_no_permitidos),
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """Restringe la eliminación de cuentas."""
+        rol_actual = self._obtener_id_rol(request.user)
+
+        if rol_actual != 4:
+            return Response(
+                {'error': 'Solo el Superadministrador puede eliminar usuarios.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        usuario_objetivo = self.get_object()
+
+        if self._obtener_id_rol(usuario_objetivo) == 4:
+            return Response(
+                {
+                    'error':
+                        'No se puede eliminar la cuenta global '
+                        'de Superadministrador desde esta operación.'
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        return super().destroy(request, *args, **kwargs)
 
     # Permite recibir datos normales y archivos mediante FormData
     parser_classes = [
@@ -1968,6 +2156,7 @@ class FundacionesViewSet(viewsets.ModelViewSet):
 class SedesViewSet(viewsets.ModelViewSet):
     queryset = Sedes.objects.all()
     serializer_class = SedesSerializer
+    permission_classes = [EsSuperadministradorOMetodoLectura]
 
 class CamarasViewSet(viewsets.ModelViewSet):
     queryset = Camaras.objects.all()

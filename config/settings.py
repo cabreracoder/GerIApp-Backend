@@ -192,4 +192,14 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:4200',
     'https://geriapp-delta.vercel.app',
     'https://geriapp-cfemvhn7a-ger-ia-pp-frontend.vercel.app',
+    'https://geriapp-backend.onrender.com',
 ]
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'core.authentication.GeriAppTokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}

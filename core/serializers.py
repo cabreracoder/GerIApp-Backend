@@ -236,7 +236,7 @@ class UsuariosSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Usuarios
-        fields = '__all__'
+        exclude = ['contrasena']
 
     def to_internal_value(self, data):
         # Copiamos los datos recibidos para poder modificar la foto

@@ -581,7 +581,13 @@ class Usuarios(models.Model):
     estado = models.BooleanField()
     contrasena = models.CharField(max_length=255, blank=True, null=True)
     foto = models.TextField(blank=True, null=True)
-
+    id_sede = models.ForeignKey(
+        'Sedes',
+        models.DO_NOTHING,
+        db_column='id_sede',
+        blank=True,
+        null=True
+    )
     class Meta:
         managed = False
         db_table = 'usuarios'

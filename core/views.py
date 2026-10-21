@@ -21,6 +21,7 @@ from django.conf import settings
 from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
+from django.db.models import Q
 
 #notificacion de Turnos
 
@@ -742,9 +743,16 @@ class RolesViewSet(viewsets.ModelViewSet):
 
 
 
+
 class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
+
+    parser_classes = [
+        parsers.MultiPartParser,
+        parsers.FormParser,
+        parsers.JSONParser,
+    ]
 
     # =====================================================
     # OBTENER ROL DEL USUARIO
@@ -752,12 +760,12 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
     def _obtener_id_rol(self, usuario):
         """Obtiene el ID del rol del usuario autenticado."""
-        rol = getattr(usuario, 'id_rol', None)
+        rol = getattr(usuario, "id_rol", None)
 
         if rol is None:
-            return None
+            return getattr(usuario, "id_rol_id", None)
 
-        return getattr(rol, 'id_rol', None)
+        return getattr(rol, "id_rol", None)
 
     # =====================================================
     # CONSULTAR USUARIOS SEGÚN ROL Y SEDE
@@ -765,46 +773,44 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        El Encargado puede consultar su propio perfil y listar
-        cuidadores. Los demás roles conservan sus restricciones.
+        Superadministrador: todos los usuarios.
+        Administrador: usuarios de su sede.
+        Encargado: su perfil y todos los cuidadores.
+        Otros roles: únicamente su propio perfil.
+
+        El filtro también se aplica al consultar un usuario
+        individual mediante /usuarios/<id>/.
         """
         usuario = self.request.user
-        rol_id = self._obtener_id_rol(usuario)
 
-        if rol_id == 4:
-            # Superadministrador: puede consultar todos.
-            return Usuarios.objects.all()
-
-        if rol_id == 1:
-            # Administrador: usuarios de su sede.
-            sede_id = getattr(usuario, 'id_sede_id', None)
-
-            if sede_id is not None:
-                return Usuarios.objects.filter(
-                    id_sede_id=sede_id
-                )
-
+        if not getattr(usuario, "is_authenticated", False):
             return Usuarios.objects.none()
 
+        rol_id = self._obtener_id_rol(usuario)
+
+        # Superadministrador.
+        if rol_id == 4:
+            return Usuarios.objects.all()
+
+        # Administrador: solo usuarios de su sede.
+        if rol_id == 1:
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if sede_id is None:
+                return Usuarios.objects.none()
+
+            return Usuarios.objects.filter(
+                id_sede_id=sede_id
+            )
+
+        # Encargado: puede consultar su perfil y los cuidadores.
         if rol_id == 2:
-            if self.action in ('retrieve', 'update', 'partial_update'):
-                # El Encargado solo puede consultar o modificar
-                # su propio registro mediante estas acciones.
-                return Usuarios.objects.filter(
-                    id_usuario=usuario.id_usuario
-                )
+            return Usuarios.objects.filter(
+                Q(id_usuario=usuario.id_usuario)
+                | Q(id_rol_id=3)
+            ).distinct()
 
-            if self.action == 'eliminar_foto':
-                # La acción de foto también queda limitada
-                # al propio usuario para este rol.
-                return Usuarios.objects.filter(
-                    id_usuario=usuario.id_usuario
-                )
-
-            # En la lista, el Encargado solo consulta cuidadores.
-            return Usuarios.objects.filter(id_rol_id=3)
-
-        # Los demás usuarios solo consultan su propio registro.
+        # Los demás roles solo consultan su propio perfil.
         return Usuarios.objects.filter(
             id_usuario=usuario.id_usuario
         )
@@ -817,11 +823,11 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         """El registro debe pasar por el endpoint específico."""
         return Response(
             {
-                'error': (
-                    'Utiliza el endpoint de registro de usuarios.'
+                "error": (
+                    "Utiliza el endpoint de registro de usuarios."
                 )
             },
-            status=status.HTTP_403_FORBIDDEN
+            status=status.HTTP_403_FORBIDDEN,
         )
 
     # =====================================================
@@ -833,116 +839,139 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         usuario_actual = request.user
         rol_actual = self._obtener_id_rol(usuario_actual)
 
+        # Respeta las restricciones definidas en get_queryset().
         usuario_objetivo = self.get_object()
         rol_objetivo = self._obtener_id_rol(usuario_objetivo)
 
         campos_personales = {
-            'nombres',
-            'apellidos',
-            'correo',
-            'telefono',
-            'tipo_documento',
-            'numero_documento',
-            'foto',
+            "nombres",
+            "apellidos",
+            "correo",
+            "telefono",
+            "tipo_documento",
+            "numero_documento",
+            "foto",
         }
 
         campos_recibidos = set(request.data.keys())
 
+        # Superadministrador.
         if rol_actual == 4:
-            # Protege la cuenta global de Superadministrador.
             if rol_objetivo == 4:
+                # No permite modificar privilegios de la cuenta global.
                 campos_permitidos = campos_personales
             else:
                 campos_permitidos = campos_personales | {
-                    'estado',
-                    'id_rol',
-                    'id_sede',
+                    "estado",
+                    "id_rol",
+                    "id_sede",
                 }
 
-                if 'id_rol' in campos_recibidos:
+                if "id_rol" in campos_recibidos:
                     try:
-                        nuevo_rol = int(request.data['id_rol'])
+                        nuevo_rol = int(request.data["id_rol"])
                     except (TypeError, ValueError):
                         return Response(
-                            {'error': 'El rol indicado no es válido.'},
-                            status=status.HTTP_400_BAD_REQUEST
+                            {
+                                "error": "El rol indicado no es válido."
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
                         )
 
                     if nuevo_rol == 4:
                         return Response(
                             {
-                                'error': (
-                                    'No se puede asignar el rol '
-                                    'Superadministrador desde esta operación.'
+                                "error": (
+                                    "No se puede asignar el rol "
+                                    "Superadministrador desde "
+                                    "esta operación."
                                 )
                             },
-                            status=status.HTTP_403_FORBIDDEN
+                            status=status.HTTP_403_FORBIDDEN,
                         )
 
+        # Administrador.
         elif rol_actual == 1:
-            if usuario_objetivo.id_usuario == usuario_actual.id_usuario:
+            if (
+                usuario_objetivo.id_usuario
+                == usuario_actual.id_usuario
+            ):
                 campos_permitidos = campos_personales
 
             elif rol_objetivo in (2, 3):
                 campos_permitidos = campos_personales | {
-                    'estado',
-                    'id_rol',
+                    "estado",
+                    "id_rol",
                 }
 
-                if 'id_rol' in campos_recibidos:
+                if "id_rol" in campos_recibidos:
                     try:
-                        nuevo_rol = int(request.data['id_rol'])
+                        nuevo_rol = int(request.data["id_rol"])
                     except (TypeError, ValueError):
                         return Response(
-                            {'error': 'El rol indicado no es válido.'},
-                            status=status.HTTP_400_BAD_REQUEST
+                            {
+                                "error": "El rol indicado no es válido."
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
                         )
 
                     if nuevo_rol not in (2, 3):
                         return Response(
                             {
-                                'error': (
-                                    'El Administrador solo puede asignar '
-                                    'los roles operativos autorizados.'
+                                "error": (
+                                    "El Administrador solo puede "
+                                    "asignar los roles operativos "
+                                    "autorizados."
                                 )
                             },
-                            status=status.HTTP_403_FORBIDDEN
+                            status=status.HTTP_403_FORBIDDEN,
                         )
+
             else:
                 return Response(
                     {
-                        'error': (
-                            'No tienes permiso para modificar este usuario.'
+                        "error": (
+                            "No tienes permiso para modificar "
+                            "este usuario."
                         )
                     },
-                    status=status.HTTP_403_FORBIDDEN
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
+        # Encargado y demás roles.
         else:
-            # Encargados y demás roles solo modifican sus datos personales.
-            if usuario_objetivo.id_usuario != usuario_actual.id_usuario:
+            # Poder consultar un cuidador no significa poder editarlo.
+            if (
+                usuario_objetivo.id_usuario
+                != usuario_actual.id_usuario
+            ):
                 return Response(
                     {
-                        'error': (
-                            'No tienes permiso para modificar este usuario.'
+                        "error": (
+                            "No tienes permiso para modificar "
+                            "este usuario."
                         )
                     },
-                    status=status.HTTP_403_FORBIDDEN
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
             campos_permitidos = campos_personales
 
-        campos_no_permitidos = campos_recibidos - campos_permitidos
+        # Bloquear campos que el rol no puede modificar.
+        campos_no_permitidos = (
+            campos_recibidos - campos_permitidos
+        )
 
         if campos_no_permitidos:
             return Response(
                 {
-                    'error': (
-                        'No tienes permiso para modificar estos campos.'
+                    "error": (
+                        "No tienes permiso para modificar "
+                        "estos campos."
                     ),
-                    'campos': sorted(campos_no_permitidos),
+                    "campos": sorted(campos_no_permitidos),
                 },
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         return super().update(request, *args, **kwargs)
@@ -958,12 +987,12 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         if rol_actual != 4:
             return Response(
                 {
-                    'error': (
-                        'Solo el Superadministrador puede '
-                        'eliminar usuarios.'
+                    "error": (
+                        "Solo el Superadministrador puede "
+                        "eliminar usuarios."
                     )
                 },
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         usuario_objetivo = self.get_object()
@@ -971,25 +1000,15 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         if self._obtener_id_rol(usuario_objetivo) == 4:
             return Response(
                 {
-                    'error': (
-                        'No se puede eliminar la cuenta global '
-                        'de Superadministrador desde esta operación.'
+                    "error": (
+                        "No se puede eliminar la cuenta global "
+                        "de Superadministrador desde esta operación."
                     )
                 },
-                status=status.HTTP_403_FORBIDDEN
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         return super().destroy(request, *args, **kwargs)
-
-    # =====================================================
-    # PARSERS
-    # =====================================================
-
-    parser_classes = [
-        parsers.MultiPartParser,
-        parsers.FormParser,
-        parsers.JSONParser,
-    ]
 
     # =====================================================
     # ELIMINAR FOTO DE PERFIL
@@ -997,8 +1016,8 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
     @action(
         detail=True,
-        methods=['delete'],
-        url_path='foto'
+        methods=["delete"],
+        url_path="foto",
     )
     def eliminar_foto(self, request, pk=None):
         """Elimina la foto de Cloudinary y limpia el campo foto."""
@@ -1007,44 +1026,67 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         if not url_foto:
             return Response(
-                {'mensaje': 'El usuario no tiene una foto.'},
-                status=status.HTTP_404_NOT_FOUND
+                {"mensaje": "El usuario no tiene una foto."},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         try:
-            ruta = urlparse(url_foto).path
-            marcador = '/upload/'
+            ruta = urlparse(str(url_foto)).path
+            marcador = "/upload/"
 
             if marcador not in ruta:
                 return Response(
                     {
-                        'error': (
-                            'No se pudo identificar la imagen '
-                            'en Cloudinary.'
+                        "error": (
+                            "No se pudo identificar la imagen "
+                            "en Cloudinary."
                         )
                     },
-                    status=status.HTTP_400_BAD_REQUEST
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
 
             public_id = ruta.split(marcador, 1)[1]
-            public_id = re.sub(r'^v\d+/', '', public_id)
-            public_id = re.sub(r'\.[^/.]+$', '', public_id)
+            public_id = re.sub(r"^v\d+/", "", public_id)
+            public_id = re.sub(r"\.[^/.]+$", "", public_id)
 
-            eliminar_imagen(public_id)
+            resultado = eliminar_imagen(public_id)
+
+            # Si Cloudinary devuelve un resultado explícito de fallo,
+            # no borrar la URL guardada en la base de datos.
+            if isinstance(resultado, dict):
+                if resultado.get("result") not in (
+                    "ok",
+                    "not found",
+                ):
+                    return Response(
+                        {
+                            "error": (
+                                "No se pudo eliminar la imagen "
+                                "en Cloudinary."
+                            )
+                        },
+                        status=status.HTTP_502_BAD_GATEWAY,
+                    )
 
             usuario.foto = None
-            usuario.save(update_fields=['foto'])
+            usuario.save(update_fields=["foto"])
 
             return Response(
-                {'mensaje': 'Foto eliminada correctamente.'},
-                status=status.HTTP_200_OK
+                {"mensaje": "Foto eliminada correctamente."},
+                status=status.HTTP_200_OK,
             )
 
         except Exception:
-            return Response(
-                {'error': 'No se pudo eliminar la foto.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            logger.exception(
+                "Error eliminando la foto del usuario %s",
+                usuario.id_usuario,
             )
+
+            return Response(
+                {"error": "No se pudo eliminar la foto."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 
 

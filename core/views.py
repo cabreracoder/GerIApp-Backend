@@ -741,12 +741,17 @@ class RolesViewSet(viewsets.ModelViewSet):
 
 
 
+
 class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
 
+    # =====================================================
+    # OBTENER ROL DEL USUARIO
+    # =====================================================
+
     def _obtener_id_rol(self, usuario):
-        """Obtiene el ID del rol del usuario."""
+        """Obtiene el ID del rol del usuario autenticado."""
         rol = getattr(usuario, 'id_rol', None)
 
         if rol is None:
@@ -759,16 +764,19 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     # =====================================================
 
     def get_queryset(self):
-        """Limita los usuarios visibles según el rol y la sede."""
+        """
+        El Encargado puede consultar su propio perfil y listar
+        cuidadores. Los demás roles conservan sus restricciones.
+        """
         usuario = self.request.user
         rol_id = self._obtener_id_rol(usuario)
 
         if rol_id == 4:
-            # El Superadministrador puede consultar todos.
+            # Superadministrador: puede consultar todos.
             return Usuarios.objects.all()
 
         if rol_id == 1:
-            # El Administrador consulta usuarios de su sede.
+            # Administrador: usuarios de su sede.
             sede_id = getattr(usuario, 'id_sede_id', None)
 
             if sede_id is not None:
@@ -776,11 +784,24 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                     id_sede_id=sede_id
                 )
 
-            # Sin sede asignada, no mostrar usuarios de otras sedes.
             return Usuarios.objects.none()
 
         if rol_id == 2:
-            # El Encargado puede consultar los cuidadores.
+            if self.action in ('retrieve', 'update', 'partial_update'):
+                # El Encargado solo puede consultar o modificar
+                # su propio registro mediante estas acciones.
+                return Usuarios.objects.filter(
+                    id_usuario=usuario.id_usuario
+                )
+
+            if self.action == 'eliminar_foto':
+                # La acción de foto también queda limitada
+                # al propio usuario para este rol.
+                return Usuarios.objects.filter(
+                    id_usuario=usuario.id_usuario
+                )
+
+            # En la lista, el Encargado solo consulta cuidadores.
             return Usuarios.objects.filter(id_rol_id=3)
 
         # Los demás usuarios solo consultan su propio registro.
@@ -812,7 +833,6 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         usuario_actual = request.user
         rol_actual = self._obtener_id_rol(usuario_actual)
 
-        # Respeta el queryset limitado por rol y sede.
         usuario_objetivo = self.get_object()
         rol_objetivo = self._obtener_id_rol(usuario_objetivo)
 
@@ -839,15 +859,12 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                     'id_sede',
                 }
 
-                # No permite asignar el rol Superadministrador.
                 if 'id_rol' in campos_recibidos:
                     try:
                         nuevo_rol = int(request.data['id_rol'])
                     except (TypeError, ValueError):
                         return Response(
-                            {
-                                'error': 'El rol indicado no es válido.'
-                            },
+                            {'error': 'El rol indicado no es válido.'},
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
@@ -863,12 +880,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                         )
 
         elif rol_actual == 1:
-            # El Administrador no modifica su propia configuración
-            # privilegiada ni gestiona roles no autorizados.
-            if (
-                usuario_objetivo.id_usuario
-                == usuario_actual.id_usuario
-            ):
+            if usuario_objetivo.id_usuario == usuario_actual.id_usuario:
                 campos_permitidos = campos_personales
 
             elif rol_objetivo in (2, 3):
@@ -882,9 +894,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                         nuevo_rol = int(request.data['id_rol'])
                     except (TypeError, ValueError):
                         return Response(
-                            {
-                                'error': 'El rol indicado no es válido.'
-                            },
+                            {'error': 'El rol indicado no es válido.'},
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
@@ -898,29 +908,23 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                             },
                             status=status.HTTP_403_FORBIDDEN
                         )
-
             else:
                 return Response(
                     {
                         'error': (
-                            'No tienes permiso para modificar '
-                            'este usuario.'
+                            'No tienes permiso para modificar este usuario.'
                         )
                     },
                     status=status.HTTP_403_FORBIDDEN
                 )
 
         else:
-            # Los demás usuarios solo modifican sus datos personales.
-            if (
-                usuario_objetivo.id_usuario
-                != usuario_actual.id_usuario
-            ):
+            # Encargados y demás roles solo modifican sus datos personales.
+            if usuario_objetivo.id_usuario != usuario_actual.id_usuario:
                 return Response(
                     {
                         'error': (
-                            'No tienes permiso para modificar '
-                            'este usuario.'
+                            'No tienes permiso para modificar este usuario.'
                         )
                     },
                     status=status.HTTP_403_FORBIDDEN
@@ -928,16 +932,13 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
             campos_permitidos = campos_personales
 
-        campos_no_permitidos = (
-            campos_recibidos - campos_permitidos
-        )
+        campos_no_permitidos = campos_recibidos - campos_permitidos
 
         if campos_no_permitidos:
             return Response(
                 {
                     'error': (
-                        'No tienes permiso para modificar '
-                        'estos campos.'
+                        'No tienes permiso para modificar estos campos.'
                     ),
                     'campos': sorted(campos_no_permitidos),
                 },
@@ -951,7 +952,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     # =====================================================
 
     def destroy(self, request, *args, **kwargs):
-        """Solo el Superadministrador puede eliminar cuentas."""
+        """Solo el Superadministrador puede eliminar usuarios."""
         rol_actual = self._obtener_id_rol(request.user)
 
         if rol_actual != 4:
@@ -980,6 +981,9 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         return super().destroy(request, *args, **kwargs)
 
+    # =====================================================
+    # PARSERS
+    # =====================================================
 
     parser_classes = [
         parsers.MultiPartParser,
@@ -988,7 +992,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     ]
 
     # =====================================================
-    # ELIMINAR FOTO
+    # ELIMINAR FOTO DE PERFIL
     # =====================================================
 
     @action(
@@ -997,10 +1001,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         url_path='foto'
     )
     def eliminar_foto(self, request, pk=None):
-        """
-        Elimina la foto de Cloudinary y limpia el campo
-        foto del usuario en Django.
-        """
+        """Elimina la foto de Cloudinary y limpia el campo foto."""
         usuario = self.get_object()
         url_foto = usuario.foto
 
@@ -1026,34 +1027,25 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                 )
 
             public_id = ruta.split(marcador, 1)[1]
-
-            # Quitar el segmento de versión de Cloudinary.
             public_id = re.sub(r'^v\d+/', '', public_id)
-
-            # Quitar la extensión del archivo.
             public_id = re.sub(r'\.[^/.]+$', '', public_id)
 
-            # Eliminar el recurso remoto.
             eliminar_imagen(public_id)
 
-            # Limpiar la URL después de eliminar la imagen.
             usuario.foto = None
             usuario.save(update_fields=['foto'])
 
             return Response(
-                {
-                    'mensaje': 'Foto eliminada correctamente.'
-                },
+                {'mensaje': 'Foto eliminada correctamente.'},
                 status=status.HTTP_200_OK
             )
 
         except Exception:
             return Response(
-                {
-                    'error': 'No se pudo eliminar la foto.'
-                },
+                {'error': 'No se pudo eliminar la foto.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 
 

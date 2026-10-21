@@ -740,9 +740,11 @@ class RolesViewSet(viewsets.ModelViewSet):
     permission_classes = [EsSuperadministradorOMetodoLectura]
 
 
+
 class UsuariosViewSet(viewsets.ModelViewSet):
     queryset = Usuarios.objects.all()
     serializer_class = UsuariosSerializer
+
     def _obtener_id_rol(self, usuario):
         """Obtiene el ID del rol del usuario."""
         rol = getattr(usuario, 'id_rol', None)
@@ -752,43 +754,65 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         return getattr(rol, 'id_rol', None)
 
+    # =====================================================
+    # CONSULTAR USUARIOS SEGÚN ROL Y SEDE
+    # =====================================================
+
     def get_queryset(self):
         """Limita los usuarios visibles según el rol y la sede."""
         usuario = self.request.user
         rol_id = self._obtener_id_rol(usuario)
 
         if rol_id == 4:
-            # El Súper Administrador puede consultar todos.
+            # El Superadministrador puede consultar todos.
             return Usuarios.objects.all()
 
         if rol_id == 1:
-            # El Administrador solo consulta usuarios de su sede.
+            # El Administrador consulta usuarios de su sede.
             sede_id = getattr(usuario, 'id_sede_id', None)
 
             if sede_id is not None:
-                return Usuarios.objects.filter(id_sede_id=sede_id)
+                return Usuarios.objects.filter(
+                    id_sede_id=sede_id
+                )
+
+            # Sin sede asignada, no mostrar usuarios de otras sedes.
+            return Usuarios.objects.none()
+
+        if rol_id == 2:
+            # El Encargado puede consultar los cuidadores.
+            return Usuarios.objects.filter(id_rol_id=3)
 
         # Los demás usuarios solo consultan su propio registro.
         return Usuarios.objects.filter(
             id_usuario=usuario.id_usuario
         )
 
+    # =====================================================
+    # CREAR USUARIO
+    # =====================================================
+
     def create(self, request, *args, **kwargs):
         """El registro debe pasar por el endpoint específico."""
         return Response(
             {
-                'error':
+                'error': (
                     'Utiliza el endpoint de registro de usuarios.'
+                )
             },
             status=status.HTTP_403_FORBIDDEN
         )
+
+    # =====================================================
+    # ACTUALIZAR USUARIO
+    # =====================================================
 
     def update(self, request, *args, **kwargs):
         """Valida los campos que puede modificar cada rol."""
         usuario_actual = request.user
         rol_actual = self._obtener_id_rol(usuario_actual)
 
-        # get_object respeta el queryset limitado por rol y sede.
+        # Respeta el queryset limitado por rol y sede.
         usuario_objetivo = self.get_object()
         rol_objetivo = self._obtener_id_rol(usuario_objetivo)
 
@@ -805,7 +829,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         campos_recibidos = set(request.data.keys())
 
         if rol_actual == 4:
-            # Protegemos la cuenta global de Superadministrador.
+            # Protege la cuenta global de Superadministrador.
             if rol_objetivo == 4:
                 campos_permitidos = campos_personales
             else:
@@ -815,32 +839,38 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                     'id_sede',
                 }
 
-                # No se permite asignar el rol Superadministrador
-                # mediante el módulo ordinario de usuarios.
+                # No permite asignar el rol Superadministrador.
                 if 'id_rol' in campos_recibidos:
                     try:
                         nuevo_rol = int(request.data['id_rol'])
                     except (TypeError, ValueError):
                         return Response(
-                            {'error': 'El rol indicado no es válido.'},
+                            {
+                                'error': 'El rol indicado no es válido.'
+                            },
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
                     if nuevo_rol == 4:
                         return Response(
                             {
-                                'error':
+                                'error': (
                                     'No se puede asignar el rol '
                                     'Superadministrador desde esta operación.'
+                                )
                             },
                             status=status.HTTP_403_FORBIDDEN
                         )
 
         elif rol_actual == 1:
-            # El Administrador no puede modificar su propia
-            # configuración privilegiada ni gestionar otros roles.
-            if usuario_objetivo.id_usuario == usuario_actual.id_usuario:
+            # El Administrador no modifica su propia configuración
+            # privilegiada ni gestiona roles no autorizados.
+            if (
+                usuario_objetivo.id_usuario
+                == usuario_actual.id_usuario
+            ):
                 campos_permitidos = campos_personales
+
             elif rol_objetivo in (2, 3):
                 campos_permitidos = campos_personales | {
                     'estado',
@@ -852,42 +882,63 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                         nuevo_rol = int(request.data['id_rol'])
                     except (TypeError, ValueError):
                         return Response(
-                            {'error': 'El rol indicado no es válido.'},
+                            {
+                                'error': 'El rol indicado no es válido.'
+                            },
                             status=status.HTTP_400_BAD_REQUEST
                         )
 
                     if nuevo_rol not in (2, 3):
                         return Response(
                             {
-                                'error':
+                                'error': (
                                     'El Administrador solo puede asignar '
                                     'los roles operativos autorizados.'
+                                )
                             },
                             status=status.HTTP_403_FORBIDDEN
                         )
+
             else:
                 return Response(
-                    {'error': 'No tienes permiso para modificar este usuario.'},
+                    {
+                        'error': (
+                            'No tienes permiso para modificar '
+                            'este usuario.'
+                        )
+                    },
                     status=status.HTTP_403_FORBIDDEN
                 )
 
         else:
-            # Los demás usuarios únicamente modifican sus datos personales.
-            if usuario_objetivo.id_usuario != usuario_actual.id_usuario:
+            # Los demás usuarios solo modifican sus datos personales.
+            if (
+                usuario_objetivo.id_usuario
+                != usuario_actual.id_usuario
+            ):
                 return Response(
-                    {'error': 'No tienes permiso para modificar este usuario.'},
+                    {
+                        'error': (
+                            'No tienes permiso para modificar '
+                            'este usuario.'
+                        )
+                    },
                     status=status.HTTP_403_FORBIDDEN
                 )
 
             campos_permitidos = campos_personales
 
-        campos_no_permitidos = campos_recibidos - campos_permitidos
+        campos_no_permitidos = (
+            campos_recibidos - campos_permitidos
+        )
 
         if campos_no_permitidos:
             return Response(
                 {
-                    'error':
-                        'No tienes permiso para modificar estos campos.',
+                    'error': (
+                        'No tienes permiso para modificar '
+                        'estos campos.'
+                    ),
                     'campos': sorted(campos_no_permitidos),
                 },
                 status=status.HTTP_403_FORBIDDEN
@@ -895,13 +946,22 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         return super().update(request, *args, **kwargs)
 
+    # =====================================================
+    # ELIMINAR USUARIO
+    # =====================================================
+
     def destroy(self, request, *args, **kwargs):
-        """Restringe la eliminación de cuentas."""
+        """Solo el Superadministrador puede eliminar cuentas."""
         rol_actual = self._obtener_id_rol(request.user)
 
         if rol_actual != 4:
             return Response(
-                {'error': 'Solo el Superadministrador puede eliminar usuarios.'},
+                {
+                    'error': (
+                        'Solo el Superadministrador puede '
+                        'eliminar usuarios.'
+                    )
+                },
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -910,21 +970,26 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         if self._obtener_id_rol(usuario_objetivo) == 4:
             return Response(
                 {
-                    'error':
+                    'error': (
                         'No se puede eliminar la cuenta global '
                         'de Superadministrador desde esta operación.'
+                    )
                 },
                 status=status.HTTP_403_FORBIDDEN
             )
 
         return super().destroy(request, *args, **kwargs)
 
-    # Permite recibir datos normales y archivos mediante FormData
+
     parser_classes = [
         parsers.MultiPartParser,
         parsers.FormParser,
-        parsers.JSONParser
+        parsers.JSONParser,
     ]
+
+    # =====================================================
+    # ELIMINAR FOTO
+    # =====================================================
 
     @action(
         detail=True,
@@ -933,10 +998,9 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     )
     def eliminar_foto(self, request, pk=None):
         """
-        Elimina la foto del usuario en Cloudinary
-        y limpia el campo foto en Django.
+        Elimina la foto de Cloudinary y limpia el campo
+        foto del usuario en Django.
         """
-
         usuario = self.get_object()
         url_foto = usuario.foto
 
@@ -947,15 +1011,16 @@ class UsuariosViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Extraer la ruta del recurso desde la URL.
             ruta = urlparse(url_foto).path
             marcador = '/upload/'
 
             if marcador not in ruta:
                 return Response(
                     {
-                        'error':
-                        'No se pudo identificar la imagen en Cloudinary.'
+                        'error': (
+                            'No se pudo identificar la imagen '
+                            'en Cloudinary.'
+                        )
                     },
                     status=status.HTTP_400_BAD_REQUEST
                 )
@@ -969,9 +1034,9 @@ class UsuariosViewSet(viewsets.ModelViewSet):
             public_id = re.sub(r'\.[^/.]+$', '', public_id)
 
             # Eliminar el recurso remoto.
-            resultado = eliminar_imagen(public_id)
+            eliminar_imagen(public_id)
 
-            # Limpiar la URL únicamente tras confirmar el borrado.
+            # Limpiar la URL después de eliminar la imagen.
             usuario.foto = None
             usuario.save(update_fields=['foto'])
 
@@ -989,6 +1054,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
 
 
 

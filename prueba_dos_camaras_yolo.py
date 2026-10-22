@@ -11,6 +11,7 @@ from conexion_backend import (
     subir_imagen_cloudinary,
     registrar_evidencia_geriapp
 )
+from conexion_backend import obtener_camaras_activas
 
 # ============================================================
 # CONFIGURACIÓN GENERAL
@@ -26,20 +27,25 @@ DURACION_AVISO_LEVANTAMIENTO = 2
 
 # Cada cámara física está relacionada con su ID de GerIApp.
 # Los índices de OpenCV ya fueron comprobados.
-CAMARAS_CONFIG = {
-    "JALTECH 1": {
+# ============================================================
+# MAPEO LOCAL DE DISPOSITIVOS Y PACIENTES
+# ============================================================
+
+# Los índices de OpenCV fueron comprobados físicamente.
+# Los pacientes corresponden a las asignaciones confirmadas.
+MAPEO_LOCAL_CAMARAS = {
+    1: {
         "indice_opencv": 1,
-        "id_camara": 1,
-        "id_habitacion": 1,
         "id_paciente": 1
     },
-    "JALTECH 2": {
+    2: {
         "indice_opencv": 2,
-        "id_camara": 2,
-        "id_habitacion": 2,
         "id_paciente": 3
     }
 }
+
+# Esta configuración se construirá desde el backend al iniciar.
+CAMARAS_CONFIG = {}
 
 TIPO_PACIENTE_SENTADO = 2
 TIPO_LEVANTAMIENTO_COMPLETO = 4
@@ -84,11 +90,8 @@ def crear_estado():
     }
 
 
-estados = {
-    nombre: crear_estado()
-    for nombre in CAMARAS_CONFIG
-}
-
+# Se crean cuando se consultan las cámaras del backend.
+estados = {}
 # ============================================================
 # FUNCIÓN ORIGINAL PARA CALCULAR ÁNGULOS
 # ============================================================
@@ -350,6 +353,13 @@ def enviar_eventos_backend():
                 f"[{nombre}] Enviando evento "
                 f"{evento['id_tipo_evento']} a GerIApp..."
             )
+
+            print(
+                    f"[DIAGNÓSTICO] Cámara: {nombre} | "
+                    f"ID cámara: {evento['id_camara']} | "
+                    f"ID habitación: {evento['id_habitacion']} | "
+                    f"ID paciente: {evento['id_paciente']}"
+                )
 
             resultado = enviar_evento_geriapp(
                 id_camara=evento["id_camara"],
@@ -705,6 +715,70 @@ def main():
         print("=" * 55)
         print("GERIAPP - YOLO POSE CON DOS CÁMARAS JALTECH")
         print("=" * 55)
+
+                # Consultar las cámaras registradas en GerIApp.
+        print("\nConsultando cámaras activas en GerIApp...")
+        camaras_backend = obtener_camaras_activas()
+
+        if not camaras_backend:
+            raise RuntimeError(
+                "GerIApp no tiene cámaras activas para procesar."
+            )
+
+        # Construir la configuración combinando los datos del
+        # backend con el mapeo físico local ya comprobado.
+        CAMARAS_CONFIG.clear()
+
+        for camara_api in camaras_backend:
+            id_camara = camara_api.get("id_camara")
+            mapeo = MAPEO_LOCAL_CAMARAS.get(id_camara)
+
+            if mapeo is None:
+                print(
+                    f"[AVISO] Cámara ID {id_camara} "
+                    "sin mapeo local de dispositivo y paciente. "
+                    "Se omitirá."
+                )
+                continue
+
+            nombre = camara_api.get("nombre") or f"Cámara {id_camara}"
+            id_habitacion = camara_api.get("id_habitacion")
+
+            if id_habitacion is None:
+                print(
+                    f"[AVISO] {nombre} no tiene habitación asignada. "
+                    "Se omitirá."
+                )
+                continue
+
+            CAMARAS_CONFIG[nombre] = {
+                "indice_opencv": mapeo["indice_opencv"],
+                "id_camara": id_camara,
+                "id_habitacion": id_habitacion,
+                "id_paciente": mapeo["id_paciente"]
+            }
+
+        if not CAMARAS_CONFIG:
+            raise RuntimeError(
+                "No hay cámaras activas con un mapeo local válido."
+            )
+
+        # Crear un estado independiente para cada cámara configurada.
+        estados.clear()
+        estados.update({
+            nombre: crear_estado()
+            for nombre in CAMARAS_CONFIG
+        })
+
+        print("\nCámaras configuradas para YOLO:")
+        for nombre, config in CAMARAS_CONFIG.items():
+            print(
+                f"- {nombre} | "
+                f"GerIApp ID: {config['id_camara']} | "
+                f"Habitación: {config['id_habitacion']} | "
+                f"Paciente: {config['id_paciente']} | "
+                f"OpenCV: {config['indice_opencv']}"
+            )
 
         # Abrir las cámaras.
         for nombre, config in CAMARAS_CONFIG.items():

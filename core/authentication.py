@@ -7,7 +7,7 @@ from .models import Usuarios
 
 
 TOKEN_SALT = 'geriapp.auth'
-TOKEN_DURACION = 60 * 60 * 8  # 8 horas
+TOKEN_DURACION = 60 * 60 * 24 * 90  # 90 días
 
 
 def crear_token_usuario(usuario):

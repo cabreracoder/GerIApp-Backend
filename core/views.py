@@ -17,6 +17,10 @@ import sib_api_v3_sdk
 from django.db import transaction
 from django.conf import settings
 
+#WebSocket
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+
 # Notificaciones push firebase-admin
 from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
@@ -2306,6 +2310,63 @@ class RecomendacionesViewSet(viewsets.ModelViewSet):
 class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
     queryset = CuidadosEnfermeria.objects.all()
     serializer_class = CuidadosEnfermeriaSerializer
+
+    def notificar_cambio(self, id_paciente, accion):
+        if not id_paciente:
+            return
+
+        channel_layer = get_channel_layer()
+
+        if channel_layer is None:
+            return
+
+        async_to_sync(channel_layer.group_send)(
+            f"cuidados_paciente_{id_paciente}",
+            {
+                "type": "cuidados.actualizados",
+                "id_paciente": str(id_paciente),
+                "accion": accion,
+            },
+        )
+
+    def perform_create(self, serializer):
+        cuidado = serializer.save()
+        self.notificar_cambio(
+            cuidado.id_paciente_id,
+            "creado",
+        )
+
+    def perform_update(self, serializer):
+        id_paciente_anterior = getattr(
+            serializer.instance,
+            "id_paciente_id",
+            None,
+        )
+
+        cuidado = serializer.save()
+
+        self.notificar_cambio(
+            cuidado.id_paciente_id,
+            "actualizado",
+        )
+
+        if (
+            id_paciente_anterior is not None
+            and id_paciente_anterior != cuidado.id_paciente_id
+        ):
+            self.notificar_cambio(
+                id_paciente_anterior,
+                "actualizado",
+            )
+
+    def perform_destroy(self, instance):
+        id_paciente = instance.id_paciente_id
+        instance.delete()
+
+        self.notificar_cambio(
+            id_paciente,
+            "eliminado",
+        )
 
 class AsignacionHabitacionViewSet(viewsets.ModelViewSet):
     queryset = AsignacionHabitacion.objects.all()

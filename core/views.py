@@ -733,6 +733,100 @@ class PacientesViewSet(viewsets.ModelViewSet):
     queryset = Pacientes.objects.all()
     serializer_class = PacientesSerializer
 
+    def _obtener_id_rol(self, usuario):
+        rol = getattr(usuario, "id_rol", None)
+        return (
+            getattr(rol, "id_rol", None)
+            if rol is not None
+            else getattr(usuario, "id_rol_id", None)
+        )
+
+    def _validar_acceso_operativo(self, usuario):
+        from rest_framework.exceptions import PermissionDenied
+
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            raise PermissionDenied(
+                "No tienes permiso para gestionar pacientes."
+            )
+
+        if not getattr(usuario, "id_sede_id", None):
+            raise PermissionDenied(
+                "Tu usuario no tiene una sede asignada."
+            )
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not getattr(usuario, "is_authenticated", False):
+            return Pacientes.objects.none()
+
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return Pacientes.objects.none()
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return Pacientes.objects.none()
+
+        habitaciones_sede = Habitaciones.objects.filter(
+            id_sede_id=sede_id
+        ).values_list("id_habitacion", flat=True)
+
+        return Pacientes.objects.filter(
+            habitacion__in=habitaciones_sede
+        ).distinct()
+
+    def _validar_sede_habitacion(self, serializer):
+        from rest_framework.exceptions import ValidationError
+
+        sede_id = self.request.user.id_sede_id
+
+        habitacion_id = serializer.validated_data.get(
+            "habitacion",
+            getattr(serializer.instance, "habitacion", None)
+        )
+
+        habitacion = Habitaciones.objects.filter(
+            id_habitacion=habitacion_id,
+            id_sede_id=sede_id,
+            estado=True
+        ).select_related("id_sede").first()
+
+        if not habitacion:
+            raise ValidationError({
+                "habitacion": (
+                    "La habitación debe estar activa "
+                    "y pertenecer a tu sede."
+                )
+            })
+
+        serializer.validated_data["sede"] = habitacion.id_sede.nombre
+
+    def perform_create(self, serializer):
+        self._validar_acceso_operativo(self.request.user)
+        self._validar_sede_habitacion(serializer)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._validar_acceso_operativo(self.request.user)
+        self._validar_sede_habitacion(serializer)
+        serializer.save()
+
+    def create(self, request, *args, **kwargs):
+        self._validar_acceso_operativo(request.user)
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._validar_acceso_operativo(request.user)
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._validar_acceso_operativo(request.user)
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._validar_acceso_operativo(request.user)
+        return super().destroy(request, *args, **kwargs)
 
 class MedicamentosViewSet(viewsets.ModelViewSet):
     queryset = Medicamentos.objects.all()

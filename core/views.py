@@ -1079,28 +1079,34 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     # =====================================================
 
     def destroy(self, request, *args, **kwargs):
-        """Solo el Superadministrador puede eliminar usuarios."""
+        """Permite al administrador eliminar usuarios operativos de su sede."""
         rol_actual = self._obtener_id_rol(request.user)
 
-        if rol_actual != 4:
+        # Solo el Administrador de sede puede eliminar usuarios.
+        if rol_actual != 1:
             return Response(
                 {
                     "error": (
-                        "Solo el Superadministrador puede "
+                        "Solo el Administrador de sede puede "
                         "eliminar usuarios."
                     )
                 },
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # get_object() respeta el filtro de sede de get_queryset().
+        # Si el usuario objetivo es de otra sede, no se encontrará.
         usuario_objetivo = self.get_object()
+        rol_objetivo = self._obtener_id_rol(usuario_objetivo)
 
-        if self._obtener_id_rol(usuario_objetivo) == 4:
+        # El administrador no puede eliminarse a sí mismo,
+        # eliminar otro administrador ni eliminar al superadministrador.
+        if rol_objetivo not in (2, 3):
             return Response(
                 {
                     "error": (
-                        "No se puede eliminar la cuenta global "
-                        "de Superadministrador desde esta operación."
+                        "Solo puedes eliminar encargados y "
+                        "cuidadores autorizados de tu sede."
                     )
                 },
                 status=status.HTTP_403_FORBIDDEN,

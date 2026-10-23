@@ -11,7 +11,10 @@ from conexion_backend import (
     subir_imagen_cloudinary,
     registrar_evidencia_geriapp
 )
-from conexion_backend import obtener_camaras_activas
+from conexion_backend import (
+    obtener_camaras_activas,
+    obtener_pacientes_activos
+)
 
 # ============================================================
 # CONFIGURACIÓN GENERAL
@@ -24,25 +27,6 @@ CONFIANZA_MINIMA_PUNTO = 0.35
 FRAMES_ESTABILIDAD = 5
 MAX_SIN_PERSONA = 15
 DURACION_AVISO_LEVANTAMIENTO = 2
-
-# Cada cámara física está relacionada con su ID de GerIApp.
-# Los índices de OpenCV ya fueron comprobados.
-# ============================================================
-# MAPEO LOCAL DE DISPOSITIVOS Y PACIENTES
-# ============================================================
-
-# Los índices de OpenCV fueron comprobados físicamente.
-# Los pacientes corresponden a las asignaciones confirmadas.
-MAPEO_LOCAL_CAMARAS = {
-    1: {
-        "indice_opencv": 1,
-        "id_paciente": 1
-    },
-    2: {
-        "indice_opencv": 2,
-        "id_paciente": 3
-    }
-}
 
 # Esta configuración se construirá desde el backend al iniciar.
 CAMARAS_CONFIG = {}
@@ -316,7 +300,13 @@ def capturar_camara(nombre):
 
 def registrar_evento(nombre, tipo_evento, imagen):
     config = CAMARAS_CONFIG[nombre]
-
+    
+    if config["id_paciente"] is None:
+        print(
+            f"[{nombre}] Evento no registrado: "
+            "no hay un paciente identificado de forma segura."
+        )
+        return
     evento = {
         "nombre_camara": nombre,
         "id_camara": config["id_camara"],
@@ -725,42 +715,111 @@ def main():
                 "GerIApp no tiene cámaras activas para procesar."
             )
 
-        # Construir la configuración combinando los datos del
-        # backend con el mapeo físico local ya comprobado.
+            
+        # Consultar los pacientes activos de GerIApp.
+        pacientes_backend = obtener_pacientes_activos()
+
+        # Agrupar los pacientes por habitación.
+        pacientes_por_habitacion = {}
+
+        for paciente in pacientes_backend:
+            id_habitacion = (
+                paciente.get("id_habitacion")
+                or paciente.get("habitacion")
+            )
+            id_paciente = paciente.get("id_paciente") or paciente.get("id")
+
+            # Algunos serializadores devuelven la habitación como objeto.
+            if isinstance(id_habitacion, dict):
+                id_habitacion = (
+                    id_habitacion.get("id_habitacion")
+                    or id_habitacion.get("id")
+                )
+
+            if id_habitacion is not None and id_paciente is not None:
+                pacientes_por_habitacion.setdefault(
+                    int(id_habitacion), []
+                ).append(int(id_paciente))
+
         CAMARAS_CONFIG.clear()
 
-        for camara_api in camaras_backend:
+        # Buscar dispositivos de cámara disponibles.
+        # Se omite el índice 0 porque en este equipo corresponde
+        # a la cámara integrada del portátil.
+        indices_disponibles = []
+
+        for indice in range(1, 10):
+            prueba = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+
+            if prueba.isOpened():
+                correcto, frame = prueba.read()
+
+                if correcto and frame is not None:
+                    indices_disponibles.append(indice)
+
+            prueba.release()
+
+        print(
+            "\nÍndices de cámaras externas detectados:",
+            indices_disponibles
+        )
+
+        camaras_validas = [
+            camara for camara in camaras_backend
+            if camara.get("estado") is True
+            and camara.get("id_habitacion") is not None
+        ]
+
+        camaras_validas.sort(
+            key=lambda camara: camara.get("id_camara", 0)
+        )
+
+        if len(indices_disponibles) < len(camaras_validas):
+            print(
+                f"[AVISO] Hay {len(camaras_validas)} cámaras "
+                f"activas en GerIApp y solo "
+                f"{len(indices_disponibles)} cámaras externas "
+                "detectadas."
+            )
+
+        for camara_api, indice in zip(
+            camaras_validas, indices_disponibles
+        ):
             id_camara = camara_api.get("id_camara")
-            mapeo = MAPEO_LOCAL_CAMARAS.get(id_camara)
-
-            if mapeo is None:
-                print(
-                    f"[AVISO] Cámara ID {id_camara} "
-                    "sin mapeo local de dispositivo y paciente. "
-                    "Se omitirá."
-                )
-                continue
-
-            nombre = camara_api.get("nombre") or f"Cámara {id_camara}"
             id_habitacion = camara_api.get("id_habitacion")
+            nombre = camara_api.get("nombre") or f"Cámara {id_camara}"
 
-            if id_habitacion is None:
-                print(
-                    f"[AVISO] {nombre} no tiene habitación asignada. "
-                    "Se omitirá."
-                )
-                continue
+            pacientes_habitacion = pacientes_por_habitacion.get(
+                int(id_habitacion), []
+            )
+
+            # Solo asignar automáticamente si hay un único paciente
+            # activo en esa habitación.
+            id_paciente = (
+                pacientes_habitacion[0]
+                if len(pacientes_habitacion) == 1
+                else None
+            )
 
             CAMARAS_CONFIG[nombre] = {
-                "indice_opencv": mapeo["indice_opencv"],
+                "indice_opencv": indice,
                 "id_camara": id_camara,
                 "id_habitacion": id_habitacion,
-                "id_paciente": mapeo["id_paciente"]
+                "id_paciente": id_paciente,
             }
+
+            if id_paciente is None:
+                print(
+                    f"[AVISO] {nombre}: la habitación "
+                    f"{id_habitacion} tiene "
+                    f"{len(pacientes_habitacion)} pacientes activos. "
+                    "No se podrán registrar eventos hasta resolver "
+                    "la asociación con el paciente."
+                )
 
         if not CAMARAS_CONFIG:
             raise RuntimeError(
-                "No hay cámaras activas con un mapeo local válido."
+                "No se encontraron cámaras externas configurables."
             )
 
         # Crear un estado independiente para cada cámara configurada.

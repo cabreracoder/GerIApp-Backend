@@ -145,6 +145,50 @@ def obtener_camaras_activas():
 
 
 # ============================================================
+# CONSULTAR PACIENTES ACTIVOS DESDE GERIAPP
+# ============================================================
+
+def obtener_pacientes_activos():
+    """Consulta los pacientes activos registrados en GerIApp."""
+
+    asegurar_autenticacion()
+
+    try:
+        respuesta = sesion.get(
+            f"{BASE_URL}/pacientes/",
+            timeout=(5, 20)
+        )
+
+        if respuesta.status_code == 401:
+            autenticar_geriapp()
+            respuesta = sesion.get(
+                f"{BASE_URL}/pacientes/",
+                timeout=(5, 20)
+            )
+
+        respuesta.raise_for_status()
+        datos = respuesta.json()
+
+        if isinstance(datos, dict):
+            datos = datos.get("results", [])
+
+        if not isinstance(datos, list):
+            raise RuntimeError(
+                "La respuesta de pacientes no tiene el formato esperado."
+            )
+
+        return [
+            paciente for paciente in datos
+            if paciente.get("estado") is True
+        ]
+
+    except (requests.exceptions.RequestException, ValueError) as error:
+        raise RuntimeError(
+            f"No se pudieron consultar los pacientes: {error}"
+        ) from error
+
+
+# ============================================================
 # ENVIAR EVENTOS A GERIAPP
 # ============================================================
 

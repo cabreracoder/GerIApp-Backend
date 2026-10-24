@@ -57,6 +57,7 @@ from .models import (
     AsignacionHabitacion,
     GrupoMedicacion,
     FormulacionMedicamentos,
+    CierreTurno,
 )
 
 
@@ -669,6 +670,12 @@ class FormulacionMedicamentosSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = FormulacionMedicamentos
+        fields = '__all__'
+
+class CierreTurnoSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = CierreTurno
         fields = '__all__'
         
 class CitasSerializer(serializers.ModelSerializer):

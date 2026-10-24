@@ -31,6 +31,7 @@ from django.db.models import Q
 
 from .models import (
     AsignacionTurnoUsuario,
+    CierreTurno,
     Notificaciones,
 )
 
@@ -174,6 +175,7 @@ from .serializers import (
     AsignacionHabitacionSerializer,
     GrupoMedicacionSerializer,
     FormulacionMedicamentosSerializer,
+    CierreTurnoSerializer,
 )
 
 
@@ -2323,6 +2325,10 @@ class TurnosViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_204_NO_CONTENT
         )
+
+class CierreTurnoViewSet(viewsets.ModelViewSet):
+    queryset = CierreTurno.objects.all()
+    serializer_class = CierreTurnoSerializer
 
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):

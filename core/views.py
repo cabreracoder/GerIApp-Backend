@@ -2330,6 +2330,89 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
     queryset = CierreTurno.objects.all()
     serializer_class = CierreTurnoSerializer
 
+    def create(self, request, *args, **kwargs):
+        """
+        Registra el cierre y finaliza la asignación correspondiente.
+        La asignación solo cambia a Finalizado si el cierre se guarda.
+        """
+
+        id_asignacion = request.data.get(
+            "id_asignacion_turno_usuario"
+        )
+
+        if not id_asignacion:
+            return Response(
+                {
+                    "error": (
+                        "Debes indicar la asignación "
+                        "del turno que deseas cerrar."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            id_asignacion = int(id_asignacion)
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "El ID de la asignación no es válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            with transaction.atomic():
+                # Bloquea la asignación durante esta operación.
+                asignacion = (
+                    AsignacionTurnoUsuario.objects
+                    .select_for_update()
+                    .get(
+                        id_asignacion_turno_usuario=id_asignacion
+                    )
+                )
+
+                # Impide registrar otro cierre para la misma asignación.
+                if CierreTurno.objects.filter(
+                    id_asignacion_turno_usuario_id=id_asignacion
+                ).exists():
+                    return Response(
+                        {
+                            "error": (
+                                "Esta asignación ya tiene "
+                                "un cierre registrado."
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT
+                    )
+
+                datos = request.data.copy()
+
+                # Estos valores los establece el servidor.
+                datos["id_asignacion_turno_usuario"] = id_asignacion
+                datos["fecha_hora"] = timezone.now().isoformat()
+                datos["confirmo_revision"] = "Sí"
+                datos["estado"] = "Finalizado"
+
+                serializer = self.get_serializer(data=datos)
+                serializer.is_valid(raise_exception=True)
+
+                # Si falla el guardado, la transacción se revierte.
+                cierre = serializer.save()
+
+                # Se actualiza únicamente la asignación cerrada.
+                asignacion.estado = "Finalizado"
+                asignacion.save(update_fields=["estado"])
+
+            return Response(
+                self.get_serializer(cierre).data,
+                status=status.HTTP_201_CREATED
+            )
+
+        except AsignacionTurnoUsuario.DoesNotExist:
+            return Response(
+                {"error": "No se encontró la asignación indicada."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
     queryset = AsignacionTurnoUsuario.objects.all()

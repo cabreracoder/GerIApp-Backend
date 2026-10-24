@@ -16,6 +16,10 @@ from conexion_backend import (
     obtener_pacientes_activos
 )
 
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+
+
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
@@ -52,6 +56,7 @@ def crear_estado():
     return {
         "camara": None,
         "frame": None,
+        "frame_mostrar": None,
         "frame_lock": threading.Lock(),
         "activa": False,
 
@@ -76,6 +81,85 @@ def crear_estado():
 
 # Se crean cuando se consultan las cámaras del backend.
 estados = {}
+
+
+# ============================================================
+# SERVIDOR LOCAL PARA TRANSMITIR LAS CÁMARAS
+# ============================================================
+
+HOST_VIDEO = "127.0.0.1"
+PUERTO_VIDEO = 8081
+
+
+class ServidorVideoHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        ruta = urlparse(self.path)
+
+        if ruta.path != "/video":
+            self.send_error(404, "Ruta no encontrada")
+            return
+
+        parametros = parse_qs(ruta.query)
+        nombre = parametros.get("camara", [None])[0]
+
+        if nombre not in estados:
+            self.send_error(404, "Cámara no encontrada")
+            return
+
+        self.send_response(200)
+        self.send_header(
+            "Content-Type",
+            "multipart/x-mixed-replace; boundary=fotograma"
+        )
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        try:
+            while ejecutando.is_set():
+                estado = estados.get(nombre)
+
+                if estado is None:
+                    break
+
+                with estado["frame_lock"]:
+                    frame = estado["frame_mostrar"]
+
+                    if frame is not None:
+                        frame = frame.copy()
+
+                if frame is None:
+                    time.sleep(0.1)
+                    continue
+
+                correcto, imagen_jpg = cv2.imencode(
+                    ".jpg",
+                    frame,
+                    [cv2.IMWRITE_JPEG_QUALITY, 75]
+                )
+
+                if not correcto:
+                    time.sleep(0.05)
+                    continue
+
+                self.wfile.write(b"--fotograma\r\n")
+                self.wfile.write(
+                    b"Content-Type: image/jpeg\r\n\r\n"
+                )
+                self.wfile.write(imagen_jpg.tobytes())
+                self.wfile.write(b"\r\n")
+
+                time.sleep(0.05)
+
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # El navegador cerró la conexión.
+            pass
+
+    def log_message(self, formato, *argumentos):
+        # Evitar mensajes repetitivos por cada conexión.
+        pass
+
+
 # ============================================================
 # FUNCIÓN ORIGINAL PARA CALCULAR ÁNGULOS
 # ============================================================
@@ -690,6 +774,11 @@ def procesar_camara(nombre, modelo):
         cv2.LINE_AA
     )
 
+    # Guardar el fotograma procesado para la futura transmisión.
+    with estado["frame_lock"]:
+        estado["frame_mostrar"] = frame_mostrar.copy()
+
+    # Mantener la ventana local de OpenCV.
     cv2.imshow(nombre, frame_mostrar)
 
 
@@ -829,6 +918,23 @@ def main():
             for nombre in CAMARAS_CONFIG
         })
 
+        # Iniciar el servidor local de video.
+        servidor_video = ThreadingHTTPServer(
+            (HOST_VIDEO, PUERTO_VIDEO),
+            ServidorVideoHandler
+        )
+
+        hilo_video = threading.Thread(
+            target=servidor_video.serve_forever,
+            daemon=True
+        )
+        hilo_video.start()
+
+        print(
+            f"\nServidor de video local iniciado en "
+            f"http://{HOST_VIDEO}:{PUERTO_VIDEO}"
+        )
+
         print("\nCámaras configuradas para YOLO:")
         for nombre, config in CAMARAS_CONFIG.items():
             print(
@@ -909,6 +1015,15 @@ def main():
 
     finally:
         ejecutando.clear()
+
+            # Cerrar el servidor local de video.
+        if "servidor_video" in locals():
+            servidor_video.shutdown()
+            servidor_video.server_close()
+
+        if "hilo_video" in locals():
+            hilo_video.join(timeout=3)
+
 
         for estado in estados.values():
             camara = estado["camara"]

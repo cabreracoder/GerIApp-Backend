@@ -2887,3 +2887,12 @@ def obtener_token_livekit(request):
         )
         .to_jwt()
     )
+    return Response(
+        {
+            'token': token,
+            'url': livekit_url,
+            'room': nombre_sala,
+            'id_habitacion': id_habitacion,
+        },
+        status=status.HTTP_200_OK
+    )

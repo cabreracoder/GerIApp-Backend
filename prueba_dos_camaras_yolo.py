@@ -642,11 +642,19 @@ def procesar_camara(nombre, modelo):
             return
         frame = estado["frame"].copy()
 
+    inicio_yolo = time.perf_counter()
+
     resultados = modelo(
         frame,
         verbose=False,
         conf=0.5,
         imgsz=TAMANO_YOLO
+    )
+    tiempo_yolo = time.perf_counter() - inicio_yolo
+
+    print(
+        f"[DIAGNOSTICO] {nombre} | "
+        f"YOLO: {tiempo_yolo:.3f} segundos"
     )
 
     resultado = resultados[0]

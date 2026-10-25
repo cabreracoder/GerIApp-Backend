@@ -87,7 +87,7 @@ estados = {}
 # SERVIDOR LOCAL PARA TRANSMITIR LAS CÁMARAS
 # ============================================================
 
-HOST_VIDEO = "127.0.0.1"
+HOST_VIDEO = "0.0.0.0"
 PUERTO_VIDEO = 8081
 
 
@@ -135,11 +135,11 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
                 correcto, imagen_jpg = cv2.imencode(
                     ".jpg",
                     frame,
-                    [cv2.IMWRITE_JPEG_QUALITY, 75]
+                    [cv2.IMWRITE_JPEG_QUALITY, 55]
                 )
 
                 if not correcto:
-                    time.sleep(0.05)
+                    time.sleep(0.1)
                     continue
 
                 self.wfile.write(b"--fotograma\r\n")
@@ -149,7 +149,7 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
                 self.wfile.write(imagen_jpg.tobytes())
                 self.wfile.write(b"\r\n")
 
-                time.sleep(0.05)
+                time.sleep(0.1)
 
         except (BrokenPipeError, ConnectionResetError, OSError):
             # El navegador cerró la conexión.

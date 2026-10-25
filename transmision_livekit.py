@@ -36,6 +36,10 @@ class TransmisionLiveKit:
         self.conexiones = {}
         self.lock = threading.Lock()
 
+        # Conservar solamente el último fotograma pendiente por cámara.
+        self.frames_pendientes = {}
+        self.publicacion_programada = set()
+
         self.hilo.start()
 
         if not self.iniciado.wait(timeout=10):
@@ -117,12 +121,18 @@ class TransmisionLiveKit:
         )
         futuro.result(timeout=30)
 
+    
     def publicar_frame(self, id_camara, frame):
-        """Envía un fotograma BGR procesado por YOLO a LiveKit."""
-        with self.lock:
-            conexion = self.conexiones.get(int(id_camara))
+        """Publica el fotograma más reciente sin acumular imágenes antiguas."""
+        id_camara = int(id_camara)
 
-        if conexion is None or frame is None:
+        if frame is None:
+            return
+
+        with self.lock:
+            conexion = self.conexiones.get(id_camara)
+
+        if conexion is None:
             return
 
         imagen = cv2.resize(
@@ -142,11 +152,43 @@ class TransmisionLiveKit:
             imagen_rgba.tobytes(),
         )
 
-        fuente = conexion["fuente"]
-        self.loop.call_soon_threadsafe(
-            fuente.capture_frame,
-            fotograma,
-        )
+        # Guardar el último fotograma, reemplazando cualquier pendiente.
+        with self.lock:
+            self.frames_pendientes[id_camara] = fotograma
+
+            # Solo programar una llamada pendiente por cámara.
+            if id_camara in self.publicacion_programada:
+                return
+
+            self.publicacion_programada.add(id_camara)
+
+        try:
+            self.loop.call_soon_threadsafe(
+                self._publicar_fotograma_pendiente,
+                id_camara,
+            )
+        except RuntimeError:
+            with self.lock:
+                self.publicacion_programada.discard(id_camara)
+                self.frames_pendientes.pop(id_camara, None)
+
+    def _publicar_fotograma_pendiente(self, id_camara):
+        """Entrega a LiveKit el último fotograma pendiente de la cámara."""
+        with self.lock:
+            conexion = self.conexiones.get(id_camara)
+            fotograma = self.frames_pendientes.pop(id_camara, None)
+            self.publicacion_programada.discard(id_camara)
+
+        if conexion is None or fotograma is None:
+            return
+
+        try:
+            conexion["fuente"].capture_frame(fotograma)
+        except Exception as error:
+            print(
+                f"[LiveKit] Error publicando cámara "
+                f"{id_camara}: {error}"
+            )
 
     async def _cerrar_conexiones(self):
         for conexion in list(self.conexiones.values()):

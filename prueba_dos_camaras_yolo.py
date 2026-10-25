@@ -18,6 +18,7 @@ from conexion_backend import (
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
+from transmision_livekit import TransmisionLiveKit
 
 
 # ============================================================
@@ -626,7 +627,7 @@ def actualizar_postura(nombre, postura_detectada, imagen):
 # ============================================================
 # PROCESAR UNA IMAGEN CON YOLO POSE
 # ============================================================
-
+transmisor_livekit = None
 def procesar_camara(nombre, modelo):
     estado = estados[nombre]
 
@@ -778,6 +779,12 @@ def procesar_camara(nombre, modelo):
     with estado["frame_lock"]:
         estado["frame_mostrar"] = frame_mostrar.copy()
 
+
+    if transmisor_livekit is not None:
+        transmisor_livekit.publicar_frame(
+            CAMARAS_CONFIG[nombre]["id_camara"],
+            frame_mostrar,
+        )
     # Mantener la ventana local de OpenCV.
     cv2.imshow(nombre, frame_mostrar)
 
@@ -981,6 +988,20 @@ def main():
         modelo = YOLO(MODELO_YOLO)
         print("YOLO Pose cargado correctamente.")
 
+                # Iniciar las transmisiones de video a LiveKit.
+        global transmisor_livekit
+        transmisor_livekit = TransmisionLiveKit()
+
+        for nombre in activas:
+            config = CAMARAS_CONFIG[nombre]
+
+            transmisor_livekit.iniciar_camara(
+                config["id_camara"],
+                config["id_habitacion"],
+            )
+
+        print("[LiveKit] Todas las cámaras activas están conectadas.")
+
         # Captura independiente para cada cámara.
         for nombre in activas:
             hilo = threading.Thread(
@@ -1015,6 +1036,15 @@ def main():
 
     finally:
         ejecutando.clear()
+
+        # Cerrar las transmisiones de LiveKit.
+        if transmisor_livekit is not None:
+            try:
+                transmisor_livekit.cerrar()
+            except Exception as error:
+                print(f"[LiveKit] Error al cerrar: {error}")
+
+        # Cerrar el servidor local de video.
 
             # Cerrar el servidor local de video.
         if "servidor_video" in locals():

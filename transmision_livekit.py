@@ -184,23 +184,8 @@ class TransmisionLiveKit:
             return
 
         try:
-            inicio_publicacion = time.perf_counter()
+            conexion["fuente"].capture_frame(fotograma)
 
-            try:
-                conexion["fuente"].capture_frame(fotograma)
-
-                tiempo_publicacion = time.perf_counter() - inicio_publicacion
-
-                print(
-                    f"[LIVEKIT] Cámara {id_camara} | "
-                    f"Publicación: {tiempo_publicacion * 1000:.2f} ms"
-                )
-
-            except Exception as error:
-                print(
-                    f"[LiveKit] Error publicando cámara "
-                    f"{id_camara}: {error}"
-                )
         except Exception as error:
             print(
                 f"[LiveKit] Error publicando cámara "

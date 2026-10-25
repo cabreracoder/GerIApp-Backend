@@ -9,11 +9,9 @@ from ultralytics import YOLO
 from conexion_backend import (
     enviar_evento_geriapp,
     subir_imagen_cloudinary,
-    registrar_evidencia_geriapp
-)
-from conexion_backend import (
+    registrar_evidencia_geriapp,
     obtener_camaras_activas,
-    obtener_pacientes_activos
+    obtener_pacientes_activos,
 )
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +38,7 @@ TIPO_PACIENTE_SENTADO = 2
 TIPO_LEVANTAMIENTO_COMPLETO = 4
 CONFIANZA_EVENTO = 95.00
 
+
 # ============================================================
 # CONTROL GLOBAL Y COLA DE EVENTOS
 # ============================================================
@@ -48,6 +47,7 @@ ejecutando = threading.Event()
 ejecutando.set()
 
 cola_eventos = queue.Queue()
+
 
 # ============================================================
 # ESTADO INDEPENDIENTE PARA CADA CÁMARA
@@ -76,7 +76,7 @@ def crear_estado():
         "contador_levantamientos": 0,
         "tiempo_levantamiento": 0,
 
-        "ultimo_procesamiento": 0
+        "ultimo_procesamiento": 0,
     }
 
 
@@ -93,6 +93,7 @@ PUERTO_VIDEO = 8081
 
 
 class ServidorVideoHandler(BaseHTTPRequestHandler):
+
     def do_GET(self):
         ruta = urlparse(self.path)
 
@@ -110,7 +111,7 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header(
             "Content-Type",
-            "multipart/x-mixed-replace; boundary=fotograma"
+            "multipart/x-mixed-replace; boundary=fotograma",
         )
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
@@ -136,7 +137,7 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
                 correcto, imagen_jpg = cv2.imencode(
                     ".jpg",
                     frame,
-                    [cv2.IMWRITE_JPEG_QUALITY, 55]
+                    [cv2.IMWRITE_JPEG_QUALITY, 55],
                 )
 
                 if not correcto:
@@ -228,7 +229,11 @@ def cuerpo_valido(keypoints, confianzas):
 
     piernas_validas = pierna_izquierda or pierna_derecha
 
-    return hombros_validos and caderas_validas and piernas_validas
+    return (
+        hombros_validos
+        and caderas_validas
+        and piernas_validas
+    )
 
 
 # ============================================================
@@ -250,12 +255,12 @@ def detectar_postura(puntos):
 
     hombros = (
         (hombro_izq[0] + hombro_der[0]) / 2,
-        (hombro_izq[1] + hombro_der[1]) / 2
+        (hombro_izq[1] + hombro_der[1]) / 2,
     )
 
     caderas = (
         (cadera_izq[0] + cadera_der[0]) / 2,
-        (cadera_izq[1] + cadera_der[1]) / 2
+        (cadera_izq[1] + cadera_der[1]) / 2,
     )
 
     puntos_validos = np.array(puntos)
@@ -301,11 +306,15 @@ def detectar_postura(puntos):
     dy_pierna_der = tobillo_der[1] - cadera_der[1]
 
     angulo_pierna_izq = abs(
-        np.degrees(np.arctan2(dx_pierna_izq, dy_pierna_izq))
+        np.degrees(
+            np.arctan2(dx_pierna_izq, dy_pierna_izq)
+        )
     )
 
     angulo_pierna_der = abs(
-        np.degrees(np.arctan2(dx_pierna_der, dy_pierna_der))
+        np.degrees(
+            np.arctan2(dx_pierna_der, dy_pierna_der)
+        )
     )
 
     angulo_piernas = (
@@ -385,13 +394,14 @@ def capturar_camara(nombre):
 
 def registrar_evento(nombre, tipo_evento, imagen):
     config = CAMARAS_CONFIG[nombre]
-    
+
     if config["id_paciente"] is None:
         print(
             f"[{nombre}] Evento no registrado: "
             "no hay un paciente identificado de forma segura."
         )
         return
+
     evento = {
         "nombre_camara": nombre,
         "id_camara": config["id_camara"],
@@ -399,7 +409,7 @@ def registrar_evento(nombre, tipo_evento, imagen):
         "id_paciente": config["id_paciente"],
         "id_tipo_evento": tipo_evento,
         "confianza": CONFIANZA_EVENTO,
-        "imagen": imagen.copy()
+        "imagen": imagen.copy(),
     }
 
     cola_eventos.put(evento)
@@ -429,19 +439,12 @@ def enviar_eventos_backend():
                 f"{evento['id_tipo_evento']} a GerIApp..."
             )
 
-            print(
-                    f"[DIAGNÓSTICO] Cámara: {nombre} | "
-                    f"ID cámara: {evento['id_camara']} | "
-                    f"ID habitación: {evento['id_habitacion']} | "
-                    f"ID paciente: {evento['id_paciente']}"
-                )
-
             resultado = enviar_evento_geriapp(
                 id_camara=evento["id_camara"],
                 id_habitacion=evento["id_habitacion"],
                 id_paciente=evento["id_paciente"],
                 id_tipo_evento=evento["id_tipo_evento"],
-                confianza=evento["confianza"]
+                confianza=evento["confianza"],
             )
 
             if not resultado:
@@ -473,11 +476,13 @@ def enviar_eventos_backend():
             correcto, imagen_codificada = cv2.imencode(
                 ".jpg",
                 imagen_evento,
-                [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+                [int(cv2.IMWRITE_JPEG_QUALITY), 85],
             )
 
             if not correcto:
-                print(f"[{nombre}] No se pudo codificar la imagen.")
+                print(
+                    f"[{nombre}] No se pudo codificar la imagen."
+                )
                 continue
 
             resultado_imagen = subir_imagen_cloudinary(
@@ -504,7 +509,7 @@ def enviar_eventos_backend():
             evidencia = registrar_evidencia_geriapp(
                 id_evento=id_evento,
                 url=url_imagen,
-                public_id=public_id
+                public_id=public_id,
             )
 
             if evidencia:
@@ -593,7 +598,7 @@ def actualizar_postura(nombre, postura_detectada, imagen):
         registrar_evento(
             nombre,
             TIPO_PACIENTE_SENTADO,
-            imagen
+            imagen,
         )
 
         print(f"[{nombre}] INICIO DE LEVANTAMIENTO")
@@ -614,7 +619,7 @@ def actualizar_postura(nombre, postura_detectada, imagen):
         registrar_evento(
             nombre,
             TIPO_LEVANTAMIENTO_COMPLETO,
-            imagen
+            imagen,
         )
 
         print(f"[{nombre}] LEVANTAMIENTO COMPLETO")
@@ -627,34 +632,33 @@ def actualizar_postura(nombre, postura_detectada, imagen):
 # ============================================================
 # PROCESAR UNA IMAGEN CON YOLO POSE
 # ============================================================
+
 transmisor_livekit = None
+
+
 def procesar_camara(nombre, modelo):
     estado = estados[nombre]
 
     ahora = time.time()
+
     if ahora - estado["ultimo_procesamiento"] < 1 / FPS_YOLO:
         return
 
     estado["ultimo_procesamiento"] = ahora
 
+    # Copiar el fotograma y liberar el bloqueo antes de YOLO.
     with estado["frame_lock"]:
         if estado["frame"] is None:
             return
+
         frame = estado["frame"].copy()
 
-    inicio_yolo = time.perf_counter()
-
+    # Inferencia de YOLO fuera del bloqueo de captura.
     resultados = modelo(
         frame,
         verbose=False,
         conf=0.5,
-        imgsz=TAMANO_YOLO
-    )
-    tiempo_yolo = time.perf_counter() - inicio_yolo
-
-    print(
-        f"[DIAGNOSTICO] {nombre} | "
-        f"YOLO: {tiempo_yolo:.3f} segundos"
+        imgsz=TAMANO_YOLO,
     )
 
     resultado = resultados[0]
@@ -689,7 +693,7 @@ def procesar_camara(nombre, modelo):
     actualizar_postura(
         nombre,
         postura_detectada,
-        frame
+        frame,
     )
 
     # Limpiar la alerta visual después de dos segundos.
@@ -725,7 +729,7 @@ def procesar_camara(nombre, modelo):
         0.8,
         (0, 255, 0),
         2,
-        cv2.LINE_AA
+        cv2.LINE_AA,
     )
 
     cv2.putText(
@@ -736,7 +740,7 @@ def procesar_camara(nombre, modelo):
         1.0,
         (0, 255, 0),
         2,
-        cv2.LINE_AA
+        cv2.LINE_AA,
     )
 
     cv2.putText(
@@ -747,7 +751,7 @@ def procesar_camara(nombre, modelo):
         0.7,
         (255, 255, 0),
         2,
-        cv2.LINE_AA
+        cv2.LINE_AA,
     )
 
     cv2.putText(
@@ -758,7 +762,7 @@ def procesar_camara(nombre, modelo):
         0.7,
         (255, 255, 255),
         2,
-        cv2.LINE_AA
+        cv2.LINE_AA,
     )
 
     cv2.putText(
@@ -769,7 +773,7 @@ def procesar_camara(nombre, modelo):
         0.7,
         color_alerta,
         2,
-        cv2.LINE_AA
+        cv2.LINE_AA,
     )
 
     cv2.putText(
@@ -780,19 +784,20 @@ def procesar_camara(nombre, modelo):
         0.7,
         (0, 165, 255),
         2,
-        cv2.LINE_AA
+        cv2.LINE_AA,
     )
 
-    # Guardar el fotograma procesado para la futura transmisión.
+    # Guardar el fotograma procesado para la transmisión.
     with estado["frame_lock"]:
         estado["frame_mostrar"] = frame_mostrar.copy()
 
-
+    # Publicar el fotograma en LiveKit.
     if transmisor_livekit is not None:
         transmisor_livekit.publicar_frame(
             CAMARAS_CONFIG[nombre]["id_camara"],
             frame_mostrar,
         )
+
     # Mantener la ventana local de OpenCV.
     cv2.imshow(nombre, frame_mostrar)
 
@@ -810,7 +815,7 @@ def main():
         print("GERIAPP - YOLO POSE CON DOS CÁMARAS JALTECH")
         print("=" * 55)
 
-                # Consultar las cámaras registradas en GerIApp.
+        # Consultar las cámaras registradas en GerIApp.
         print("\nConsultando cámaras activas en GerIApp...")
         camaras_backend = obtener_camaras_activas()
 
@@ -819,7 +824,6 @@ def main():
                 "GerIApp no tiene cámaras activas para procesar."
             )
 
-            
         # Consultar los pacientes activos de GerIApp.
         pacientes_backend = obtener_pacientes_activos()
 
@@ -831,7 +835,10 @@ def main():
                 paciente.get("id_habitacion")
                 or paciente.get("habitacion")
             )
-            id_paciente = paciente.get("id_paciente") or paciente.get("id")
+            id_paciente = (
+                paciente.get("id_paciente")
+                or paciente.get("id")
+            )
 
             # Algunos serializadores devuelven la habitación como objeto.
             if isinstance(id_habitacion, dict):
@@ -853,7 +860,10 @@ def main():
         indices_disponibles = []
 
         for indice in range(1, 10):
-            prueba = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+            prueba = cv2.VideoCapture(
+                indice,
+                cv2.CAP_DSHOW,
+            )
 
             if prueba.isOpened():
                 correcto, frame = prueba.read()
@@ -865,7 +875,7 @@ def main():
 
         print(
             "\nÍndices de cámaras externas detectados:",
-            indices_disponibles
+            indices_disponibles,
         )
 
         camaras_validas = [
@@ -887,11 +897,15 @@ def main():
             )
 
         for camara_api, indice in zip(
-            camaras_validas, indices_disponibles
+            camaras_validas,
+            indices_disponibles,
         ):
             id_camara = camara_api.get("id_camara")
             id_habitacion = camara_api.get("id_habitacion")
-            nombre = camara_api.get("nombre") or f"Cámara {id_camara}"
+            nombre = (
+                camara_api.get("nombre")
+                or f"Cámara {id_camara}"
+            )
 
             pacientes_habitacion = pacientes_por_habitacion.get(
                 int(id_habitacion), []
@@ -936,12 +950,12 @@ def main():
         # Iniciar el servidor local de video.
         servidor_video = ThreadingHTTPServer(
             (HOST_VIDEO, PUERTO_VIDEO),
-            ServidorVideoHandler
+            ServidorVideoHandler,
         )
 
         hilo_video = threading.Thread(
             target=servidor_video.serve_forever,
-            daemon=True
+            daemon=True,
         )
         hilo_video.start()
 
@@ -964,7 +978,7 @@ def main():
         for nombre, config in CAMARAS_CONFIG.items():
             camara = cv2.VideoCapture(
                 config["indice_opencv"],
-                cv2.CAP_DSHOW
+                cv2.CAP_DSHOW,
             )
 
             if not camara.isOpened():
@@ -990,13 +1004,15 @@ def main():
         ]
 
         if not activas:
-            raise RuntimeError("No se pudo abrir ninguna cámara.")
+            raise RuntimeError(
+                "No se pudo abrir ninguna cámara."
+            )
 
         print("\nCargando YOLO Pose...")
         modelo = YOLO(MODELO_YOLO)
         print("YOLO Pose cargado correctamente.")
 
-                # Iniciar las transmisiones de video a LiveKit.
+        # Iniciar las transmisiones de video a LiveKit.
         global transmisor_livekit
         transmisor_livekit = TransmisionLiveKit()
 
@@ -1008,14 +1024,16 @@ def main():
                 config["id_habitacion"],
             )
 
-        print("[LiveKit] Todas las cámaras activas están conectadas.")
+        print(
+            "[LiveKit] Todas las cámaras activas están conectadas."
+        )
 
         # Captura independiente para cada cámara.
         for nombre in activas:
             hilo = threading.Thread(
                 target=capturar_camara,
                 args=(nombre,),
-                daemon=True
+                daemon=True,
             )
             hilo.start()
             hilos_captura.append(hilo)
@@ -1023,7 +1041,7 @@ def main():
         # Hilo para Render y Cloudinary.
         hilo_backend = threading.Thread(
             target=enviar_eventos_backend,
-            daemon=True
+            daemon=True,
         )
         hilo_backend.start()
 
@@ -1053,8 +1071,6 @@ def main():
                 print(f"[LiveKit] Error al cerrar: {error}")
 
         # Cerrar el servidor local de video.
-
-            # Cerrar el servidor local de video.
         if "servidor_video" in locals():
             servidor_video.shutdown()
             servidor_video.server_close()
@@ -1062,9 +1078,9 @@ def main():
         if "hilo_video" in locals():
             hilo_video.join(timeout=3)
 
-
         for estado in estados.values():
             camara = estado["camara"]
+
             if camara is not None:
                 camara.release()
 

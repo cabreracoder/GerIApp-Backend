@@ -867,6 +867,7 @@ class Camaras(models.Model):
     estado = models.BooleanField(blank=True, null=True)
     fecha_registro = models.DateTimeField(blank=True, null=True)
     id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+    identificador_dispositivo = models.TextField(blank=True, null=True)
 
     class Meta:
         managed = False

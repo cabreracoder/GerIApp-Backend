@@ -854,29 +854,16 @@ def main():
 
         CAMARAS_CONFIG.clear()
 
-        # Buscar dispositivos de cámara disponibles.
-        # Se omite el índice 0 porque en este equipo corresponde
-        # a la cámara integrada del portátil.
-        indices_disponibles = []
 
-        for indice in range(1, 10):
-            prueba = cv2.VideoCapture(
-                indice,
-                cv2.CAP_DSHOW,
-            )
-
-            if prueba.isOpened():
-                correcto, frame = prueba.read()
-
-                if correcto and frame is not None:
-                    indices_disponibles.append(indice)
-
-            prueba.release()
-
-        print(
-            "\nÍndices de cámaras externas detectados:",
-            indices_disponibles,
-        )
+        # Asignación explícita de cámaras físicas a GerIApp.
+        # En este equipo:
+        # OpenCV 0 = cámara integrada del portátil (no se usa).
+        # OpenCV 1 = JALTECH de la habitación 1.
+        # OpenCV 2 = JALTECH de la habitación 2.
+        INDICES_POR_ID_CAMARA = {
+            1: 1,
+            2: 2,
+        }
 
         camaras_validas = [
             camara for camara in camaras_backend
@@ -884,24 +871,36 @@ def main():
             and camara.get("id_habitacion") is not None
         ]
 
-        camaras_validas.sort(
-            key=lambda camara: camara.get("id_camara", 0)
-        )
-
-        if len(indices_disponibles) < len(camaras_validas):
-            print(
-                f"[AVISO] Hay {len(camaras_validas)} cámaras "
-                f"activas en GerIApp y solo "
-                f"{len(indices_disponibles)} cámaras externas "
-                "detectadas."
-            )
-
-        for camara_api, indice in zip(
-            camaras_validas,
-            indices_disponibles,
-        ):
+        for camara_api in camaras_validas:
             id_camara = camara_api.get("id_camara")
             id_habitacion = camara_api.get("id_habitacion")
+
+            if id_camara not in INDICES_POR_ID_CAMARA:
+                print(
+                    f"[AVISO] Cámara GerIApp {id_camara} "
+                    "sin índice OpenCV configurado. Se omite."
+                )
+                continue
+
+            indice = INDICES_POR_ID_CAMARA[id_camara]
+
+            # Comprobar que el índice asignado entrega una imagen.
+            prueba = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+            disponible = False
+
+            if prueba.isOpened():
+                correcto, frame = prueba.read()
+                disponible = correcto and frame is not None
+
+            prueba.release()
+
+            if not disponible:
+                print(
+                    f"[AVISO] Cámara GerIApp {id_camara}: "
+                    f"OpenCV {indice} no entrega imagen. Se omite."
+                )
+                continue
+
             nombre = (
                 camara_api.get("nombre")
                 or f"Cámara {id_camara}"
@@ -911,8 +910,7 @@ def main():
                 int(id_habitacion), []
             )
 
-            # Solo asignar automáticamente si hay un único paciente
-            # activo en esa habitación.
+            # Asignar paciente solo si hay exactamente uno activo.
             id_paciente = (
                 pacientes_habitacion[0]
                 if len(pacientes_habitacion) == 1
@@ -926,6 +924,12 @@ def main():
                 "id_paciente": id_paciente,
             }
 
+            print(
+                f"[CONFIG] {nombre} | GerIApp ID: {id_camara} "
+                f"| Habitación: {id_habitacion} "
+                f"| OpenCV: {indice}"
+            )
+
             if id_paciente is None:
                 print(
                     f"[AVISO] {nombre}: la habitación "
@@ -934,6 +938,7 @@ def main():
                     "No se podrán registrar eventos hasta resolver "
                     "la asociación con el paciente."
                 )
+
 
         if not CAMARAS_CONFIG:
             raise RuntimeError(

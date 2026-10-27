@@ -5,6 +5,11 @@ import threading
 import time
 import queue
 from ultralytics import YOLO
+import os
+from dotenv import load_dotenv
+load_dotenv()
+import re
+import subprocess
 
 from conexion_backend import (
     enviar_evento_geriapp,
@@ -17,6 +22,160 @@ from conexion_backend import (
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 from transmision_livekit import TransmisionLiveKit
+
+
+# ============================================================
+# CAPTURA POR IDENTIFICADOR DEL DISPOSITIVO USB
+# ============================================================
+
+ANCHO_CAMARA = 640
+ALTO_CAMARA = 480
+FPS_CAMARA = 30
+
+
+def normalizar_identificador(valor):
+    """Normaliza el identificador USB para compararlo con FFmpeg."""
+    return re.sub(r"[^a-z0-9]", "", str(valor).lower())
+
+
+def obtener_dispositivos_dshow():
+    """Obtiene los nombres alternativos de las cámaras de Windows."""
+    resultado = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-list_devices", "true",
+            "-f", "dshow",
+            "-i", "dummy",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+
+    lineas = resultado.stderr.splitlines()
+    dispositivos = []
+
+    for i, linea in enumerate(lineas):
+        nombre = re.search(r'"([^"]+)"\s+\(video\)', linea)
+
+        if not nombre:
+            continue
+
+        for siguiente in lineas[i + 1:i + 4]:
+            alternativa = re.search(
+                r'Alternative name "([^"]+)"',
+                siguiente,
+            )
+
+            if alternativa:
+                dispositivos.append({
+                    "nombre": nombre.group(1),
+                    "alternativa": alternativa.group(1),
+                })
+                break
+
+            if "(video)" in siguiente:
+                break
+
+    return dispositivos
+
+
+def buscar_dispositivo_usb(identificador, dispositivos):
+    """Relaciona el identificador del backend con el dispositivo físico."""
+    if not identificador:
+        return None
+
+    objetivo = normalizar_identificador(identificador)
+
+    for dispositivo in dispositivos:
+        alternativa = normalizar_identificador(
+            dispositivo["alternativa"]
+        )
+
+        if objetivo in alternativa:
+            return dispositivo["alternativa"]
+
+    return None
+
+
+class CapturaFFmpeg:
+    """Interfaz compatible con read(), isOpened() y release()."""
+
+    def __init__(self, dispositivo):
+        self.bytes_frame = ANCHO_CAMARA * ALTO_CAMARA * 3
+
+        comando = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel", "error",
+            "-f", "dshow",
+            "-video_size", f"{ANCHO_CAMARA}x{ALTO_CAMARA}",
+            "-framerate", str(FPS_CAMARA),
+            "-i", f"video={dispositivo}",
+            "-vf", "fps=15",
+            "-an",
+            "-f", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "pipe:1",
+        ]
+        self.proceso = subprocess.Popen(
+            comando,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            bufsize=self.bytes_frame * 2,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+    def isOpened(self):
+        return (
+            self.proceso is not None
+            and self.proceso.poll() is None
+        )
+
+    def read(self):
+        if not self.isOpened():
+            return False, None
+
+        datos = bytearray()
+
+        while len(datos) < self.bytes_frame:
+            bloque = self.proceso.stdout.read(
+                self.bytes_frame - len(datos)
+            )
+
+            if not bloque:
+                return False, None
+
+            datos.extend(bloque)
+
+        imagen = np.frombuffer(
+            datos,
+            dtype=np.uint8,
+        ).reshape(
+            (ALTO_CAMARA, ANCHO_CAMARA, 3)
+        ).copy()
+
+        return True, imagen
+
+    def release(self):
+        if self.proceso is None:
+            return
+
+        if self.proceso.poll() is None:
+            self.proceso.terminate()
+
+            try:
+                self.proceso.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.proceso.kill()
+                self.proceso.wait()
+
+        if self.proceso.stdout:
+            self.proceso.stdout.close()
+
+        self.proceso = None
 
 
 # ============================================================
@@ -855,15 +1014,15 @@ def main():
         CAMARAS_CONFIG.clear()
 
 
-        # Asignación explícita de cámaras físicas a GerIApp.
-        # En este equipo:
-        # OpenCV 0 = cámara integrada del portátil (no se usa).
-        # OpenCV 1 = JALTECH de la habitación 1.
-        # OpenCV 2 = JALTECH de la habitación 2.
-        INDICES_POR_ID_CAMARA = {
-            1: 1,
-            2: 2,
-        }
+        
+        # Consultar dispositivos físicos y relacionarlos por identificador.
+        dispositivos_dshow = obtener_dispositivos_dshow()
+
+        print("\nDispositivos físicos encontrados por FFmpeg:")
+        for dispositivo in dispositivos_dshow:
+            print(f"- {dispositivo['nombre']}")
+
+        CAMARAS_CONFIG.clear()
 
         camaras_validas = [
             camara for camara in camaras_backend
@@ -874,30 +1033,35 @@ def main():
         for camara_api in camaras_validas:
             id_camara = camara_api.get("id_camara")
             id_habitacion = camara_api.get("id_habitacion")
+            identificador = camara_api.get("identificador_dispositivo")
 
-            if id_camara not in INDICES_POR_ID_CAMARA:
+            dispositivo = buscar_dispositivo_usb(
+                identificador,
+                dispositivos_dshow,
+            )
+
+            if not dispositivo:
                 print(
-                    f"[AVISO] Cámara GerIApp {id_camara} "
-                    "sin índice OpenCV configurado. Se omite."
+                    f"[AVISO] Cámara GerIApp {id_camara}: "
+                    "no se encontró su identificador USB en Windows."
                 )
                 continue
 
-            indice = INDICES_POR_ID_CAMARA[id_camara]
-
-            # Comprobar que el índice asignado entrega una imagen.
-            prueba = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+            # Comprobar que el dispositivo puede entregar imágenes.
+            prueba = CapturaFFmpeg(dispositivo)
             disponible = False
 
-            if prueba.isOpened():
-                correcto, frame = prueba.read()
-                disponible = correcto and frame is not None
-
-            prueba.release()
+            try:
+                if prueba.isOpened():
+                    correcto, frame = prueba.read()
+                    disponible = correcto and frame is not None
+            finally:
+                prueba.release()
 
             if not disponible:
                 print(
                     f"[AVISO] Cámara GerIApp {id_camara}: "
-                    f"OpenCV {indice} no entrega imagen. Se omite."
+                    "no se pudo obtener una imagen."
                 )
                 continue
 
@@ -910,7 +1074,6 @@ def main():
                 int(id_habitacion), []
             )
 
-            # Asignar paciente solo si hay exactamente uno activo.
             id_paciente = (
                 pacientes_habitacion[0]
                 if len(pacientes_habitacion) == 1
@@ -918,7 +1081,7 @@ def main():
             )
 
             CAMARAS_CONFIG[nombre] = {
-                "indice_opencv": indice,
+                "dispositivo_dshow": dispositivo,
                 "id_camara": id_camara,
                 "id_habitacion": id_habitacion,
                 "id_paciente": id_paciente,
@@ -927,16 +1090,15 @@ def main():
             print(
                 f"[CONFIG] {nombre} | GerIApp ID: {id_camara} "
                 f"| Habitación: {id_habitacion} "
-                f"| OpenCV: {indice}"
+                f"| Dispositivo USB: {identificador}"
             )
 
             if id_paciente is None:
                 print(
-                    f"[AVISO] {nombre}: la habitación "
-                    f"{id_habitacion} tiene "
-                    f"{len(pacientes_habitacion)} pacientes activos. "
-                    "No se podrán registrar eventos hasta resolver "
-                    "la asociación con el paciente."
+                    f"[AVISO] {nombre}: hay "
+                    f"{len(pacientes_habitacion)} pacientes activos "
+                    "en la habitación. No se registrarán eventos "
+                    "hasta resolver su asociación."
                 )
 
 
@@ -976,30 +1138,23 @@ def main():
                 f"GerIApp ID: {config['id_camara']} | "
                 f"Habitación: {config['id_habitacion']} | "
                 f"Paciente: {config['id_paciente']} | "
-                f"OpenCV: {config['indice_opencv']}"
+                f"Dispositivo USB: {config['dispositivo_dshow']}"
             )
 
-        # Abrir las cámaras.
+        
+        # Abrir cada cámara usando su dispositivo físico identificado.
         for nombre, config in CAMARAS_CONFIG.items():
-            camara = cv2.VideoCapture(
-                config["indice_opencv"],
-                cv2.CAP_DSHOW,
-            )
+            camara = CapturaFFmpeg(config["dispositivo_dshow"])
 
             if not camara.isOpened():
                 camara.release()
-                print(f"[{nombre}] No se pudo abrir.")
+                print(f"[{nombre}] No se pudo abrir el dispositivo.")
                 continue
-
-            camara.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            camara.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            camara.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             estados[nombre]["camara"] = camara
 
             print(
-                f"[{nombre}] Conectada | "
-                f"OpenCV {config['indice_opencv']} | "
+                f"[{nombre}] Conectada por identificador USB | "
                 f"GerIApp ID {config['id_camara']}"
             )
 

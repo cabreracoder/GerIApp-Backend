@@ -961,38 +961,69 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         # Superadministrador.
         if rol_actual == 4:
+
+            # Puede actualizar sus propios datos personales,
+            # pero no modificar los privilegios de su cuenta.
             if rol_objetivo == 4:
-                # No permite modificar privilegios de la cuenta global.
+                if (
+                    usuario_objetivo.id_usuario
+                    != usuario_actual.id_usuario
+                ):
+                    return Response(
+                        {
+                            "error": (
+                                "No puedes modificar otra cuenta "
+                                "de superadministrador."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
                 campos_permitidos = campos_personales
-            else:
+
+            # Puede gestionar cuentas de administradores.
+            elif rol_objetivo == 1:
                 campos_permitidos = campos_personales | {
                     "estado",
+                    "id_sede",
+                }
+
+            # Puede convertir otros usuarios en administradores.
+            else:
+                campos_permitidos = {
                     "id_rol",
                     "id_sede",
                 }
 
-                if "id_rol" in campos_recibidos:
-                    try:
-                        nuevo_rol = int(request.data["id_rol"])
-                    except (TypeError, ValueError):
-                        return Response(
-                            {
-                                "error": "El rol indicado no es válido."
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                if "id_rol" not in campos_recibidos:
+                    return Response(
+                        {
+                            "error": (
+                                "Solo puedes modificar este usuario "
+                                "para convertirlo en administrador."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
-                    if nuevo_rol == 4:
-                        return Response(
-                            {
-                                "error": (
-                                    "No se puede asignar el rol "
-                                    "Superadministrador desde "
-                                    "esta operación."
-                                )
-                            },
-                            status=status.HTTP_403_FORBIDDEN,
-                        )
+                try:
+                    nuevo_rol = int(request.data["id_rol"])
+                except (TypeError, ValueError):
+                    return Response(
+                        {"error": "El rol indicado no es válido."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if nuevo_rol != 1:
+                    return Response(
+                        {
+                            "error": (
+                                "El superadministrador solo puede "
+                                "asignar el rol Administrador."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
         # Administrador.
         elif rol_actual == 1:
@@ -1133,6 +1164,37 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         """Elimina la foto de Cloudinary y limpia el campo foto."""
         usuario = self.get_object()
         url_foto = usuario.foto
+
+        usuario_actual = request.user
+        rol_actual = self._obtener_id_rol(usuario_actual)
+        rol_objetivo = self._obtener_id_rol(usuario)
+
+        es_su_propia_cuenta = (
+            usuario.id_usuario == usuario_actual.id_usuario
+        )
+
+        if rol_actual == 4:
+            permitido = es_su_propia_cuenta or rol_objetivo == 1
+
+        elif rol_actual == 1:
+            permitido = (
+                es_su_propia_cuenta
+                or rol_objetivo in (2, 3)
+            )
+
+        else:
+            permitido = es_su_propia_cuenta
+
+        if not permitido:
+            return Response(
+                {
+                    "error": (
+                        "No tienes permiso para eliminar "
+                        "la fotografía de este usuario."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if not url_foto:
             return Response(
@@ -1296,10 +1358,13 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Obtener el ID del inventario enviado desde la aplicación
-        inventario_id = request.data.get('id_inventario') or serializer.validated_data.get('id_inventario')
+        # Obtener el ID del inventario enviado desde Android.
+        inventario_id = (
+            request.data.get('id_inventario')
+            or serializer.validated_data.get('id_inventario')
+        )
 
-        # Convertir a entero si el objeto viene completo como Foreign Key
+        # Convertir a ID si se recibió una Foreign Key.
         if hasattr(inventario_id, 'id_inventario'):
             inventario_id = inventario_id.id_inventario
 
@@ -1310,30 +1375,36 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Buscar el inventario y bloquear la fila durante la transacción
-            item_inventario = Inventario.objects.select_for_update().get(
-                pk=inventario_id
+            # Bloquear el inventario mientras se procesa
+            # la administración del medicamento.
+            item_inventario = (
+                Inventario.objects
+                .select_for_update()
+                .get(pk=inventario_id)
             )
 
-            # Obtener la cantidad de unidades que se van a aplicar
+            # Cantidad que se va a administrar.
             cantidad_aplicada = serializer.validated_data.get(
                 'cantidad_aplicada',
                 1
             )
 
-            # Validar que la cantidad sea mayor que cero
+            # Validar la cantidad.
             if cantidad_aplicada <= 0:
                 return Response(
-                    {"error": "La cantidad aplicada debe ser mayor que cero."},
+                    {
+                        "error":
+                            "La cantidad aplicada debe ser mayor que cero."
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Validar que exista suficiente stock
+            # Validar las existencias reales.
             if item_inventario.cantidad_actual < cantidad_aplicada:
                 return Response(
                     {
                         "error": (
-                            f"Stock insuficiente en inventario. "
+                            "Stock insuficiente en inventario. "
                             f"Disponible: {item_inventario.cantidad_actual}. "
                             f"Solicitado: {cantidad_aplicada}."
                         )
@@ -1341,24 +1412,53 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Descontar del inventario la cantidad realmente aplicada
+            # 1. Descontar el inventario.
             item_inventario.cantidad_actual -= cantidad_aplicada
-            item_inventario.save(update_fields=['cantidad_actual'])
 
-            # Guardar el registro de la aplicación
+            item_inventario.save(
+                update_fields=['cantidad_actual']
+            )
+
+            # 2. Sincronizar el elemento asociado al paciente.
+            if item_inventario.id_elemento_id is not None:
+                elemento = (
+                    ElementosPaciente.objects
+                    .select_for_update()
+                    .get(pk=item_inventario.id_elemento_id)
+                )
+
+                elemento.cantidad = item_inventario.cantidad_actual
+
+                elemento.save(
+                    update_fields=['cantidad']
+                )
+
+            # 3. Registrar la administración del medicamento.
             self.perform_create(serializer)
 
             headers = self.get_success_headers(serializer.data)
 
+            # Devolver también las existencias confirmadas por Django.
+            respuesta = serializer.data
+            respuesta['cantidad_actual'] = (
+                item_inventario.cantidad_actual
+            )
+            respuesta['cantidad_minima'] = (
+                item_inventario.cantidad_minima
+            )
+
             return Response(
-                serializer.data,
+                respuesta,
                 status=status.HTTP_201_CREATED,
                 headers=headers
             )
 
         except Inventario.DoesNotExist:
             return Response(
-                {"error": "El registro de inventario especificado no existe."},
+                {
+                    "error":
+                        "El registro de inventario especificado no existe."
+                },
                 status=status.HTTP_404_NOT_FOUND
             )
 

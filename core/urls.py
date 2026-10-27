@@ -4,7 +4,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from rest_framework.routers import DefaultRouter
-
+from .views import obtener_token_livekit
 # ==============================
 # ViewSets principales
 # ==============================
@@ -26,6 +26,7 @@ from .views import (
     AplicacionMedicamentoViewSet,
     GrupoMedicacionViewSet,
     FormulacionMedicamentosViewSet,
+    CierreTurnoViewSet,
 )
 
 # ==============================
@@ -271,6 +272,8 @@ router.register(r'grupo_medicacion', GrupoMedicacionViewSet)
 
 router.register(r'formulacion_medicamentos', FormulacionMedicamentosViewSet)
 
+router.register(r'cierre_turno', CierreTurnoViewSet)
+
 urlpatterns = [
 
 path(
@@ -327,6 +330,11 @@ path(
     'subir-imagen/',
     SubirImagenCloudinaryView.as_view(),
     name='subir_imagen_cloudinary'
+),
+path(
+    'livekit/token/',
+    obtener_token_livekit,
+    name='livekit-token'
 ),
 
 

@@ -639,6 +639,18 @@ class TipoEmergencia(models.Model):
         managed = False
         db_table = 'tipo_emergencia'
 
+class CierreTurno(models.Model):
+    id_cierre_turno = models.AutoField(primary_key=True)
+    fecha_hora = models.DateTimeField()
+    observaciones = models.CharField(blank=True, null=True)
+    confirmo_revision = models.CharField()
+    estado = models.CharField()
+    id_asignacion_turno_usuario = models.ForeignKey('AsignacionTurnoUsuario', models.DO_NOTHING, db_column='id_asignacion_turno_usuario', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'cierre_turno'
+
 
 class TipoEvento(models.Model):
     id_tipo_evento = models.AutoField(primary_key=True)
@@ -855,6 +867,7 @@ class Camaras(models.Model):
     estado = models.BooleanField(blank=True, null=True)
     fecha_registro = models.DateTimeField(blank=True, null=True)
     id_habitacion = models.ForeignKey('Habitaciones', models.DO_NOTHING, db_column='id_habitacion', blank=True, null=True)
+    identificador_dispositivo = models.TextField(blank=True, null=True)
 
     class Meta:
         managed = False

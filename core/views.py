@@ -4,61 +4,66 @@ from rest_framework.decorators import (
     api_view,
     parser_classes,
     permission_classes,
+    action,
 )
-from rest_framework.permissions import AllowAny
-from django.views.decorators.csrf import csrf_exempt
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+
+from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
-# IMPORTO PARA UTILIZAR LOS SERVICIOS DE CLOUDINARY
-from servicios.cloudinary_service import subir_imagen
+from django.db import transaction
+from django.db.models import Q
+from django.conf import settings
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
-import sib_api_v3_sdk
-from django.db import transaction
-from django.conf import settings
 
-#WebSocket
+from servicios.cloudinary_service import (
+    subir_imagen,
+    eliminar_imagen,
+)
+
+import sib_api_v3_sdk
+import logging
+import os
+import random
+import re
+
+from urllib.parse import urlparse
+from datetime import timedelta
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 
-# Notificaciones push firebase-admin
 from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
-from django.db.models import Q
 
-#notificacion de Turnos
+from google.oauth2 import id_token
+from google.auth.transport import requests
+
+from .authentication import crear_token_usuario
+from .permissions import EsSuperadministradorOMetodoLectura
 
 from .models import (
     AsignacionTurnoUsuario,
+    CierreTurno,
     Notificaciones,
+    Usuarios,
+    Camaras,
+    Habitaciones,
+    Pacientes,
+    AsignacionPacienteCuidador,
 )
 
 from .serializers import (
     AsignacionTurnoUsuarioSerializer,
 )
 
-from .notificaciones_utils import enviar_notificacion_fcm
-
-import logging
-from django.utils import timezone
+from livekit import api
 
 logger = logging.getLogger(__name__)
-
-from servicios.cloudinary_service import eliminar_imagen
-from urllib.parse import urlparse
-import re
-
-from google.oauth2 import id_token
-from google.auth.transport import requests
-import random
-from datetime import timedelta
-from django.utils import timezone
-from rest_framework.decorators import action
-from .authentication import crear_token_usuario
-from .permissions import EsSuperadministradorOMetodoLectura
-
-
 
 from .models import (
     HistoriaClinicas,
@@ -174,6 +179,7 @@ from .serializers import (
     AsignacionHabitacionSerializer,
     GrupoMedicacionSerializer,
     FormulacionMedicamentosSerializer,
+    CierreTurnoSerializer,
 )
 
 
@@ -2362,6 +2368,93 @@ class TurnosViewSet(viewsets.ModelViewSet):
             status=status.HTTP_204_NO_CONTENT
         )
 
+class CierreTurnoViewSet(viewsets.ModelViewSet):
+    queryset = CierreTurno.objects.all()
+    serializer_class = CierreTurnoSerializer
+
+    def create(self, request, *args, **kwargs):
+        """
+        Registra el cierre y finaliza la asignación correspondiente.
+        La asignación solo cambia a Finalizado si el cierre se guarda.
+        """
+
+        id_asignacion = request.data.get(
+            "id_asignacion_turno_usuario"
+        )
+
+        if not id_asignacion:
+            return Response(
+                {
+                    "error": (
+                        "Debes indicar la asignación "
+                        "del turno que deseas cerrar."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            id_asignacion = int(id_asignacion)
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "El ID de la asignación no es válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            with transaction.atomic():
+                # Bloquea la asignación durante esta operación.
+                asignacion = (
+                    AsignacionTurnoUsuario.objects
+                    .select_for_update()
+                    .get(
+                        id_asignacion_turno_usuario=id_asignacion
+                    )
+                )
+
+                # Impide registrar otro cierre para la misma asignación.
+                if CierreTurno.objects.filter(
+                    id_asignacion_turno_usuario_id=id_asignacion
+                ).exists():
+                    return Response(
+                        {
+                            "error": (
+                                "Esta asignación ya tiene "
+                                "un cierre registrado."
+                            )
+                        },
+                        status=status.HTTP_409_CONFLICT
+                    )
+
+                datos = request.data.copy()
+
+                # Estos valores los establece el servidor.
+                datos["id_asignacion_turno_usuario"] = id_asignacion
+                datos["fecha_hora"] = timezone.now().isoformat()
+                datos["confirmo_revision"] = "Sí"
+                datos["estado"] = "Finalizado"
+
+                serializer = self.get_serializer(data=datos)
+                serializer.is_valid(raise_exception=True)
+
+                # Si falla el guardado, la transacción se revierte.
+                cierre = serializer.save()
+
+                # Se actualiza únicamente la asignación cerrada.
+                asignacion.estado = "Finalizado"
+                asignacion.save(update_fields=["estado"])
+
+            return Response(
+                self.get_serializer(cierre).data,
+                status=status.HTTP_201_CREATED
+            )
+
+        except AsignacionTurnoUsuario.DoesNotExist:
+            return Response(
+                {"error": "No se encontró la asignación indicada."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
     queryset = AsignacionTurnoUsuario.objects.all()
@@ -2736,3 +2829,108 @@ class SubirImagenCloudinaryView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def obtener_token_livekit(request):
+    """Genera un token temporal para ver una habitación autorizada."""
+
+    usuario = getattr(request.user, 'usuario', request.user)
+
+    if not usuario.estado or usuario.id_rol_id != 3:
+        return Response(
+            {'error': 'Solo los cuidadores activos pueden ver las cámaras.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    try:
+        id_habitacion = int(request.data.get('id_habitacion'))
+    except (TypeError, ValueError):
+        return Response(
+            {'error': 'Debes indicar un id_habitacion válido.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    habitacion = Habitaciones.objects.filter(
+        id_habitacion=id_habitacion,
+        estado=True
+    ).first()
+
+    if not habitacion:
+        return Response(
+            {'error': 'La habitación no existe o está inactiva.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    camara = Camaras.objects.filter(
+        id_habitacion_id=id_habitacion,
+        estado=True
+    ).first()
+
+    if not camara:
+        return Response(
+            {'error': 'La habitación no tiene una cámara activa.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    # Comprobar que el cuidador tenga asignado un paciente activo
+    # que figure actualmente en la habitación solicitada.
+    paciente_autorizado = AsignacionPacienteCuidador.objects.filter(
+    id_usuario_id=usuario.id_usuario,
+    id_paciente__habitacion=id_habitacion,
+    id_paciente__estado=True,
+    estado__iexact='Activo'
+    ).exists()
+
+    if not paciente_autorizado:
+        return Response(
+            {'error': 'No tienes pacientes activos asignados en esta habitación.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    livekit_url = os.getenv('LIVEKIT_RTC_URL')
+    livekit_api_key = os.getenv('LIVEKIT_API_KEY')
+    livekit_api_secret = os.getenv('LIVEKIT_API_SECRET')
+
+    if not all([livekit_url, livekit_api_key, livekit_api_secret]):
+        return Response(
+            {'error': 'La configuración de LiveKit está incompleta.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    if not livekit_url.startswith('wss://'):
+        return Response(
+            {'error': 'LIVEKIT_URL debe ser la dirección segura wss:// de LiveKit.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    nombre_sala = f'geriapp-habitacion-{id_habitacion}'
+
+    token = (
+        api.AccessToken(livekit_api_key, livekit_api_secret)
+        .with_identity(f'cuidador-{usuario.id_usuario}')
+        .with_name(
+            f'{getattr(usuario, "nombres", "")} '
+            f'{getattr(usuario, "apellidos", "")}'.strip()
+        )
+        .with_ttl(timedelta(minutes=10))
+        .with_grants(
+            api.VideoGrants(
+                room_join=True,
+                room=nombre_sala,
+                can_subscribe=True,
+                can_publish=False,
+                can_publish_data=False
+            )
+        )
+        .to_jwt()
+    )
+    return Response(
+        {
+            'token': token,
+            'url': livekit_url,
+            'room': nombre_sala,
+            'id_habitacion': id_habitacion,
+        },
+        status=status.HTTP_200_OK
+    )

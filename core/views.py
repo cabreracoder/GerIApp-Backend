@@ -961,38 +961,69 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         # Superadministrador.
         if rol_actual == 4:
+
+            # Puede actualizar sus propios datos personales,
+            # pero no modificar los privilegios de su cuenta.
             if rol_objetivo == 4:
-                # No permite modificar privilegios de la cuenta global.
+                if (
+                    usuario_objetivo.id_usuario
+                    != usuario_actual.id_usuario
+                ):
+                    return Response(
+                        {
+                            "error": (
+                                "No puedes modificar otra cuenta "
+                                "de superadministrador."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
                 campos_permitidos = campos_personales
-            else:
+
+            # Puede gestionar cuentas de administradores.
+            elif rol_objetivo == 1:
                 campos_permitidos = campos_personales | {
                     "estado",
+                    "id_sede",
+                }
+
+            # Puede convertir otros usuarios en administradores.
+            else:
+                campos_permitidos = {
                     "id_rol",
                     "id_sede",
                 }
 
-                if "id_rol" in campos_recibidos:
-                    try:
-                        nuevo_rol = int(request.data["id_rol"])
-                    except (TypeError, ValueError):
-                        return Response(
-                            {
-                                "error": "El rol indicado no es válido."
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                if "id_rol" not in campos_recibidos:
+                    return Response(
+                        {
+                            "error": (
+                                "Solo puedes modificar este usuario "
+                                "para convertirlo en administrador."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
-                    if nuevo_rol == 4:
-                        return Response(
-                            {
-                                "error": (
-                                    "No se puede asignar el rol "
-                                    "Superadministrador desde "
-                                    "esta operación."
-                                )
-                            },
-                            status=status.HTTP_403_FORBIDDEN,
-                        )
+                try:
+                    nuevo_rol = int(request.data["id_rol"])
+                except (TypeError, ValueError):
+                    return Response(
+                        {"error": "El rol indicado no es válido."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if nuevo_rol != 1:
+                    return Response(
+                        {
+                            "error": (
+                                "El superadministrador solo puede "
+                                "asignar el rol Administrador."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
         # Administrador.
         elif rol_actual == 1:
@@ -1133,6 +1164,37 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         """Elimina la foto de Cloudinary y limpia el campo foto."""
         usuario = self.get_object()
         url_foto = usuario.foto
+
+        usuario_actual = request.user
+        rol_actual = self._obtener_id_rol(usuario_actual)
+        rol_objetivo = self._obtener_id_rol(usuario)
+
+        es_su_propia_cuenta = (
+            usuario.id_usuario == usuario_actual.id_usuario
+        )
+
+        if rol_actual == 4:
+            permitido = es_su_propia_cuenta or rol_objetivo == 1
+
+        elif rol_actual == 1:
+            permitido = (
+                es_su_propia_cuenta
+                or rol_objetivo in (2, 3)
+            )
+
+        else:
+            permitido = es_su_propia_cuenta
+
+        if not permitido:
+            return Response(
+                {
+                    "error": (
+                        "No tienes permiso para eliminar "
+                        "la fotografía de este usuario."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         if not url_foto:
             return Response(

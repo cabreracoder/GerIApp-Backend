@@ -1296,10 +1296,13 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # Obtener el ID del inventario enviado desde la aplicación
-        inventario_id = request.data.get('id_inventario') or serializer.validated_data.get('id_inventario')
+        # Obtener el ID del inventario enviado desde Android.
+        inventario_id = (
+            request.data.get('id_inventario')
+            or serializer.validated_data.get('id_inventario')
+        )
 
-        # Convertir a entero si el objeto viene completo como Foreign Key
+        # Convertir a ID si se recibió una Foreign Key.
         if hasattr(inventario_id, 'id_inventario'):
             inventario_id = inventario_id.id_inventario
 
@@ -1310,30 +1313,36 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            # Buscar el inventario y bloquear la fila durante la transacción
-            item_inventario = Inventario.objects.select_for_update().get(
-                pk=inventario_id
+            # Bloquear el inventario mientras se procesa
+            # la administración del medicamento.
+            item_inventario = (
+                Inventario.objects
+                .select_for_update()
+                .get(pk=inventario_id)
             )
 
-            # Obtener la cantidad de unidades que se van a aplicar
+            # Cantidad que se va a administrar.
             cantidad_aplicada = serializer.validated_data.get(
                 'cantidad_aplicada',
                 1
             )
 
-            # Validar que la cantidad sea mayor que cero
+            # Validar la cantidad.
             if cantidad_aplicada <= 0:
                 return Response(
-                    {"error": "La cantidad aplicada debe ser mayor que cero."},
+                    {
+                        "error":
+                            "La cantidad aplicada debe ser mayor que cero."
+                    },
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Validar que exista suficiente stock
+            # Validar las existencias reales.
             if item_inventario.cantidad_actual < cantidad_aplicada:
                 return Response(
                     {
                         "error": (
-                            f"Stock insuficiente en inventario. "
+                            "Stock insuficiente en inventario. "
                             f"Disponible: {item_inventario.cantidad_actual}. "
                             f"Solicitado: {cantidad_aplicada}."
                         )
@@ -1341,24 +1350,53 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Descontar del inventario la cantidad realmente aplicada
+            # 1. Descontar el inventario.
             item_inventario.cantidad_actual -= cantidad_aplicada
-            item_inventario.save(update_fields=['cantidad_actual'])
 
-            # Guardar el registro de la aplicación
+            item_inventario.save(
+                update_fields=['cantidad_actual']
+            )
+
+            # 2. Sincronizar el elemento asociado al paciente.
+            if item_inventario.id_elemento_id is not None:
+                elemento = (
+                    ElementosPaciente.objects
+                    .select_for_update()
+                    .get(pk=item_inventario.id_elemento_id)
+                )
+
+                elemento.cantidad = item_inventario.cantidad_actual
+
+                elemento.save(
+                    update_fields=['cantidad']
+                )
+
+            # 3. Registrar la administración del medicamento.
             self.perform_create(serializer)
 
             headers = self.get_success_headers(serializer.data)
 
+            # Devolver también las existencias confirmadas por Django.
+            respuesta = serializer.data
+            respuesta['cantidad_actual'] = (
+                item_inventario.cantidad_actual
+            )
+            respuesta['cantidad_minima'] = (
+                item_inventario.cantidad_minima
+            )
+
             return Response(
-                serializer.data,
+                respuesta,
                 status=status.HTTP_201_CREATED,
                 headers=headers
             )
 
         except Inventario.DoesNotExist:
             return Response(
-                {"error": "El registro de inventario especificado no existe."},
+                {
+                    "error":
+                        "El registro de inventario especificado no existe."
+                },
                 status=status.HTTP_404_NOT_FOUND
             )
 

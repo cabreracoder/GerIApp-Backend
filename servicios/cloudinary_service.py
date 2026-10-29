@@ -1,3 +1,4 @@
+
 import cloudinary
 import cloudinary.uploader
 
@@ -9,6 +10,20 @@ def subir_imagen(imagen, carpeta="geriapp/imagenes"):
     resultado = cloudinary.uploader.upload(
         imagen,
         folder=carpeta
+    )
+
+    return resultado
+
+
+# NUEVA FUNCIÓN: subida de documentos
+def subir_documento(archivo, carpeta="geriapp/documentos"):
+    """
+    Sube documentos a Cloudinary.
+    """
+    resultado = cloudinary.uploader.upload(
+        archivo,
+        folder=carpeta,
+        resource_type="raw"
     )
 
     return resultado

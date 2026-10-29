@@ -98,9 +98,37 @@ class PacientesSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
 
-        from .models import Habitaciones, Camas, Pacientes
+        from .models import Habitaciones, Camas, Pacientes, Sedes
 
-        # Mantener los valores actuales al editar
+        # Obtener la sede seleccionada
+        sede = attrs.get(
+            'id_sede',
+            self.instance.id_sede if self.instance else None
+        )
+
+        # Validar sede obligatoria
+        if sede is None:
+            raise serializers.ValidationError({
+                'id_sede': 'Debes seleccionar una sede.'
+            })
+
+        # Validar que la sede exista
+        sede_actual = Sedes.objects.filter(
+            id_sede=sede.pk
+        ).first()
+
+        if not sede_actual:
+            raise serializers.ValidationError({
+                'id_sede': 'La sede seleccionada no existe.'
+            })
+
+        # Validar que esté activa
+        if not sede_actual.estado:
+            raise serializers.ValidationError({
+                'id_sede': 'La sede seleccionada está inactiva.'
+            })
+
+        # Mantener habitación y cama actuales al editar
         habitacion_id = attrs.get(
             'habitacion',
             self.instance.habitacion if self.instance else None
@@ -111,13 +139,13 @@ class PacientesSerializer(serializers.ModelSerializer):
             self.instance.cama if self.instance else None
         )
 
-        # Comprobar que haya habitación y cama
+        # Validar que se seleccionen habitación y cama
         if habitacion_id is None or cama_id is None:
             raise serializers.ValidationError({
                 'ubicacion': 'Debes seleccionar una habitación y una cama.'
             })
 
-        # Verificar habitación
+        # Buscar habitación
         habitacion = Habitaciones.objects.filter(
             id_habitacion=habitacion_id
         ).first()
@@ -127,12 +155,19 @@ class PacientesSerializer(serializers.ModelSerializer):
                 'habitacion': 'La habitación seleccionada no existe.'
             })
 
+        # Validar habitación activa
         if not habitacion.estado:
             raise serializers.ValidationError({
                 'habitacion': 'Esta habitación está inactiva.'
             })
 
-        # Verificar cama
+        # Validar que la habitación pertenezca a la sede
+        if habitacion.id_sede_id != sede_actual.id_sede:
+            raise serializers.ValidationError({
+                'habitacion': 'La habitación no pertenece a la sede seleccionada.'
+            })
+
+        # Buscar cama
         cama = Camas.objects.filter(
             id_cama=cama_id
         ).first()
@@ -142,24 +177,25 @@ class PacientesSerializer(serializers.ModelSerializer):
                 'cama': 'La cama seleccionada no existe.'
             })
 
+        # Validar cama activa
         if not cama.estado:
             raise serializers.ValidationError({
                 'cama': 'Esta cama está inactiva.'
             })
 
-        # Verificar que pertenezca a la habitación
+        # Validar que la cama pertenezca a la habitación
         if cama.id_habitacion_id != habitacion.id_habitacion:
             raise serializers.ValidationError({
                 'cama': 'La cama no pertenece a la habitación seleccionada.'
             })
 
-        # Buscar pacientes que ya ocupan esa cama
+        # Verificar que la cama no esté ocupada
         ocupantes = Pacientes.objects.filter(
             habitacion=habitacion_id,
             cama=cama_id
         )
 
-        # Al editar, excluir al mismo paciente
+        # Excluir al mismo paciente cuando se edita
         if self.instance:
             ocupantes = ocupantes.exclude(
                 id_paciente=self.instance.id_paciente
@@ -282,10 +318,84 @@ class UsuariosSerializer(serializers.ModelSerializer):
 
         return instance
     
+
 class DocumentosSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = Documentos
         fields = '__all__'
+
+    # Campos que pueden recibir archivos
+    CAMPOS_ARCHIVOS = (
+        'cedula',
+        'tarjeta_profesional',
+        'antecedentes',
+        'hoja_de_vida',
+    )
+
+    def to_internal_value(self, data):
+        # Copiar los datos recibidos desde FormData
+        data = data.copy()
+
+        archivos = {}
+
+        # Separar los archivos para procesarlos antes de guardarlos
+        for campo in self.CAMPOS_ARCHIVOS:
+            archivo = data.get(campo)
+
+            if archivo and hasattr(archivo, 'read'):
+                archivos[campo] = archivo
+                data.pop(campo)
+
+        # Validar los demás campos normalmente
+        datos_validados = super().to_internal_value(data)
+
+        # Agregar nuevamente los archivos validados
+        datos_validados.update(archivos)
+
+        return datos_validados
+
+    def create(self, validated_data):
+        from servicios.cloudinary_service import subir_documento
+
+        # Subir los archivos seleccionados a Cloudinary
+        for campo in self.CAMPOS_ARCHIVOS:
+            archivo = validated_data.get(campo)
+
+            if archivo and hasattr(archivo, 'read'):
+                resultado = subir_documento(
+                    archivo,
+                    'geriapp/documentos'
+                )
+
+                # Guardar la URL, no el archivo temporal
+                validated_data[campo] = resultado['secure_url']
+
+        return Documentos.objects.create(**validated_data)
+
+    def update(self, instance, validated_data):
+        from servicios.cloudinary_service import subir_documento
+
+        # Actualizar únicamente los documentos que se envíen
+        for campo in self.CAMPOS_ARCHIVOS:
+            archivo = validated_data.get(campo)
+
+            if archivo and hasattr(archivo, 'read'):
+                resultado = subir_documento(
+                    archivo,
+                    'geriapp/documentos'
+                )
+
+                validated_data[campo] = resultado['secure_url']
+
+        # Guardar los cambios sin borrar documentos omitidos
+        for campo, valor in validated_data.items():
+            setattr(instance, campo, valor)
+
+        instance.save()
+
+        return instance
+
 
 
 class HistoriaClinicasSerializer(serializers.ModelSerializer):

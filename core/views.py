@@ -120,6 +120,8 @@ from .models import (
     AsignacionHabitacion,
     GrupoMedicacion,
     FormulacionMedicamentos,
+    ConfiguracionControlesPeriodicos,
+    ControlesPeriodicosBitacora,
 )
 
 from .serializers import (
@@ -180,6 +182,8 @@ from .serializers import (
     GrupoMedicacionSerializer,
     FormulacionMedicamentosSerializer,
     CierreTurnoSerializer,
+    ConfiguracionControlesPeriodicosSerializer,
+    ControlesPeriodicosBitacoraSerializer,  
 )
 
 
@@ -2689,6 +2693,14 @@ class EventosIaViewSet(viewsets.ModelViewSet):
 class EvidenciasIaViewSet(viewsets.ModelViewSet):
     queryset = EvidenciasIa.objects.all()
     serializer_class = EvidenciasIaSerializer
+
+class ConfiguracionControlesPeriodicosViewSet(viewsets.ModelViewSet):
+    queryset = ConfiguracionControlesPeriodicos.objects.all()
+    serializer_class = ConfiguracionControlesPeriodicosSerializer
+
+class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
+    queryset = ControlesPeriodicosBitacora.objects.all()
+    serializer_class = ControlesPeriodicosBitacoraSerializer
 
 
 # ============================================================

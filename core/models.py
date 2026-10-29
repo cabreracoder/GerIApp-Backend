@@ -951,6 +951,44 @@ class AsignacionHabitacion(models.Model):
         managed = False
         db_table = 'asignacion_habitacion'
 
+class ControlesPeriodicosBitacora(models.Model):
+    id_bitacora = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente')
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario')
+    id_configuracion = models.ForeignKey('ConfiguracionControlesPeriodicos', models.DO_NOTHING, db_column='id_configuracion')
+    peso_talla_estado = models.CharField(max_length=50)
+    peso_kg = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    talla_cm = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
+    glicemia_estado = models.CharField(max_length=50)
+    valor_glicemia = models.DecimalField(max_digits=7, decimal_places=2, blank=True, null=True)
+    terapia_fisica_estado = models.CharField(max_length=50)
+    terapia_fisica_observaciones = models.TextField(blank=True, null=True)
+    terapia_respiratoria_estado = models.CharField(max_length=50)
+    terapia_respiratoria_observaciones = models.TextField(blank=True, null=True)
+    corte_unas_estado = models.CharField(max_length=50)
+    corte_cabello_estado = models.CharField(max_length=50)
+    observaciones_generales = models.TextField(blank=True, null=True)
+    fecha_control = models.DateTimeField()
+    fecha_registro = models.DateTimeField()
+    fecha_proximo_control = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'controles_periodicos_bitacora'
+
+class ConfiguracionControlesPeriodicos(models.Model):
+    id_configuracion = models.AutoField(primary_key=True)
+    id_paciente = models.OneToOneField('Pacientes', models.DO_NOTHING, db_column='id_paciente')
+    intervalo_valor = models.IntegerField()
+    intervalo_unidad = models.CharField(max_length=10)
+    activo = models.BooleanField()
+    id_usuario_admin = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario_admin', blank=True,null=True)
+    fecha_creacion = models.DateTimeField()
+    fecha_actualizacion = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'configuracion_controles_periodicos'
 
 class ElementosPaciente(models.Model):
     id_elemento = models.AutoField(primary_key=True)

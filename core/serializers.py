@@ -58,6 +58,8 @@ from .models import (
     GrupoMedicacion,
     FormulacionMedicamentos,
     CierreTurno,
+    ConfiguracionControlesPeriodicos,
+    ControlesPeriodicosBitacora,
 )
 
 
@@ -677,6 +679,18 @@ class CierreTurnoSerializer(serializers.ModelSerializer):
     class Meta:
         model = CierreTurno
         fields = '__all__'
+
+class ConfiguracionControlesPeriodicosSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ConfiguracionControlesPeriodicos
+        fields = '__all__'
+
+class ControlesPeriodicosBitacoraSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ControlesPeriodicosBitacora
+        fields = '__all__'  
         
 class CitasSerializer(serializers.ModelSerializer):
 

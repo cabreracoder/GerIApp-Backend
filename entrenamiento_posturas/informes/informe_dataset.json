@@ -1,0 +1,76 @@
+{
+    "fecha_revision": "2026-10-29T19:21:56.997975",
+    "total_imagenes": 186,
+    "imagenes_validas": 186,
+    "imagenes_danadas": 0,
+    "categorias": {
+        "ACOSTADO": {
+            "total": 54,
+            "validas": 54,
+            "danadas": 0,
+            "camaras": {
+                "camara_1": {
+                    "total": 27,
+                    "validas": 27,
+                    "danadas": 0
+                },
+                "camara_2": {
+                    "total": 27,
+                    "validas": 27,
+                    "danadas": 0
+                }
+            }
+        },
+        "SENTADO": {
+            "total": 41,
+            "validas": 41,
+            "danadas": 0,
+            "camaras": {
+                "camara_1": {
+                    "total": 20,
+                    "validas": 20,
+                    "danadas": 0
+                },
+                "camara_2": {
+                    "total": 21,
+                    "validas": 21,
+                    "danadas": 0
+                }
+            }
+        },
+        "DE_PIE": {
+            "total": 50,
+            "validas": 50,
+            "danadas": 0,
+            "camaras": {
+                "camara_1": {
+                    "total": 25,
+                    "validas": 25,
+                    "danadas": 0
+                },
+                "camara_2": {
+                    "total": 25,
+                    "validas": 25,
+                    "danadas": 0
+                }
+            }
+        },
+        "SIN_PERSONA": {
+            "total": 41,
+            "validas": 41,
+            "danadas": 0,
+            "camaras": {
+                "camara_1": {
+                    "total": 21,
+                    "validas": 21,
+                    "danadas": 0
+                },
+                "camara_2": {
+                    "total": 20,
+                    "validas": 20,
+                    "danadas": 0
+                }
+            }
+        }
+    }
+}

@@ -48,6 +48,14 @@ from google.auth.transport import requests
 from .authentication import crear_token_usuario
 from .permissions import EsSuperadministradorOMetodoLectura
 
+#importaciones del view para funcionar lo  de el tiempo de la bitacora 
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+from django.utils import timezone
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
 from .models import (
     AsignacionTurnoUsuario,
     CierreTurno,
@@ -2650,10 +2658,139 @@ class ConfiguracionControlesPeriodicosViewSet(viewsets.ModelViewSet):
     queryset = ConfiguracionControlesPeriodicos.objects.all()
     serializer_class = ConfiguracionControlesPeriodicosSerializer
 
+    @action(detail=False, methods=['get'])
+    def estado_paciente(self, request):
+        id_paciente = request.query_params.get('id_paciente')
+
+        if not id_paciente:
+            return Response(
+                {'error': 'Debes enviar el id_paciente'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        configuracion = ConfiguracionControlesPeriodicos.objects.filter(
+            id_paciente_id=id_paciente
+        ).first()
+
+        if not configuracion:
+            return Response({
+                'configurado': False,
+                'habilitado': False,
+                'mensaje': 'El administrador todavía no configura los controles.'
+            })
+
+        if not configuracion.activo:
+            return Response({
+                'configurado': True,
+                'habilitado': False,
+                'activo': False,
+                'mensaje': 'Los controles periódicos están desactivados.'
+            })
+
+        ultimo_control = ControlesPeriodicosBitacora.objects.filter(
+            id_configuracion=configuracion
+        ).order_by('-fecha_registro').first()
+
+        ahora = timezone.now()
+
+        if ultimo_control:
+            proxima_fecha = ultimo_control.fecha_proximo_control
+            habilitado = ahora >= proxima_fecha
+        else:
+            proxima_fecha = None
+            habilitado = True
+
+        return Response({
+            'configurado': True,
+            'habilitado': habilitado,
+            'activo': True,
+            'id_configuracion': configuracion.id_configuracion,
+            'intervalo_valor': configuracion.intervalo_valor,
+            'intervalo_unidad': configuracion.intervalo_unidad,
+            'ultimo_control': ultimo_control.fecha_control if ultimo_control else None,
+            'fecha_proximo_control': proxima_fecha,
+            'mensaje': (
+                'Puedes registrar los controles periódicos.'
+                if habilitado
+                else 'Los controles periódicos todavía están dentro del período establecido.'
+            )
+        })
+
 class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
     queryset = ControlesPeriodicosBitacora.objects.all()
     serializer_class = ControlesPeriodicosBitacoraSerializer
 
+    def create(self, request, *args, **kwargs):
+        id_configuracion = request.data.get('id_configuracion')
+
+        if not id_configuracion:
+            return Response(
+                {'error': 'Debes enviar el id_configuracion'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        configuracion = ConfiguracionControlesPeriodicos.objects.filter(
+            id_configuracion=id_configuracion,
+            activo=True
+        ).first()
+
+        if not configuracion:
+            return Response(
+                {'error': 'No existe una configuración activa.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        ultimo_control = ControlesPeriodicosBitacora.objects.filter(
+            id_configuracion=configuracion
+        ).order_by('-fecha_registro').first()
+
+        ahora = timezone.now()
+
+        if ultimo_control and ahora < ultimo_control.fecha_proximo_control:
+            return Response(
+                {
+                    'error': 'Todavía no se cumple el período de los controles.',
+                    'fecha_proximo_control': ultimo_control.fecha_proximo_control
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        intervalo = configuracion.intervalo_valor
+        unidad = configuracion.intervalo_unidad.lower().strip()
+
+        if intervalo <= 0:
+            return Response(
+                {'error': 'El intervalo debe ser mayor que cero.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if unidad in ['dias', 'día', 'día(s)', 'días']:
+            proxima_fecha = ahora + timedelta(days=intervalo)
+
+        elif unidad in ['semanas', 'semana']:
+            proxima_fecha = ahora + timedelta(weeks=intervalo)
+
+        elif unidad in ['meses', 'mes']:
+            proxima_fecha = ahora + relativedelta(months=intervalo)
+
+        else:
+            return Response(
+                {'error': 'La unidad debe ser días, semanas o meses.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        datos = request.data.copy()
+        datos['fecha_registro'] = ahora.isoformat()
+        datos['fecha_proximo_control'] = proxima_fecha.isoformat()
+
+        serializer = self.get_serializer(data=datos)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED
+        )
 
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE

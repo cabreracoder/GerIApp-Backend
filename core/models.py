@@ -952,7 +952,7 @@ class AsignacionHabitacion(models.Model):
         db_table = 'asignacion_habitacion'
 
 class ControlesPeriodicosBitacora(models.Model):
-    id_bitacora = models.AutoField(primary_key=True)
+    id_controles = models.AutoField(primary_key=True)
     id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente')
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario')
     id_configuracion = models.ForeignKey('ConfiguracionControlesPeriodicos', models.DO_NOTHING, db_column='id_configuracion')

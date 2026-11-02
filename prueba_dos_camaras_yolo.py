@@ -182,7 +182,7 @@ class CapturaFFmpeg:
 # CONFIGURACIÓN GENERAL
 # ============================================================
 
-MODELO_YOLO = "yolo11n-pose.pt"
+MODELO_YOLO = "./runs/classify/train-3/weights/best.pt"
 FPS_YOLO = 10
 TAMANO_YOLO = 640
 CONFIANZA_MINIMA_PUNTO = 0.35
@@ -319,211 +319,6 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
     def log_message(self, formato, *argumentos):
         # Evitar mensajes repetitivos por cada conexión.
         pass
-
-
-# ============================================================
-# FUNCIÓN ORIGINAL PARA CALCULAR ÁNGULOS
-# ============================================================
-
-def calcular_angulo(a, b, c):
-    a = np.array(a, dtype=np.float32)
-    b = np.array(b, dtype=np.float32)
-    c = np.array(c, dtype=np.float32)
-
-    ba = a - b
-    bc = c - b
-
-    producto = np.dot(ba, bc)
-    magnitud = np.linalg.norm(ba) * np.linalg.norm(bc)
-
-    if magnitud == 0:
-        return 0
-
-    coseno = producto / magnitud
-    coseno = np.clip(coseno, -1.0, 1.0)
-
-    return np.degrees(np.arccos(coseno))
-
-
-# ============================================================
-# FUNCIÓN ORIGINAL PARA VALIDAR EL CUERPO
-# ============================================================
-
-def cuerpo_valido(keypoints, confianzas):
-    puntos_importantes = [5, 6, 11, 12, 13, 14, 15, 16]
-
-    if confianzas is None or len(confianzas) < 17:
-        return False
-
-    puntos_visibles = sum(
-        confianzas[i] >= CONFIANZA_MINIMA_PUNTO
-        for i in puntos_importantes
-    )
-
-    if puntos_visibles < 6:
-        return False
-
-    hombro_izq = confianzas[5] >= CONFIANZA_MINIMA_PUNTO
-    hombro_der = confianzas[6] >= CONFIANZA_MINIMA_PUNTO
-
-    cadera_izq = confianzas[11] >= CONFIANZA_MINIMA_PUNTO
-    cadera_der = confianzas[12] >= CONFIANZA_MINIMA_PUNTO
-
-    rodilla_izq = confianzas[13] >= CONFIANZA_MINIMA_PUNTO
-    rodilla_der = confianzas[14] >= CONFIANZA_MINIMA_PUNTO
-
-    tobillo_izq = confianzas[15] >= CONFIANZA_MINIMA_PUNTO
-    tobillo_der = confianzas[16] >= CONFIANZA_MINIMA_PUNTO
-
-    hombros_validos = hombro_izq or hombro_der
-    caderas_validas = cadera_izq or cadera_der
-
-    pierna_izquierda = (
-        cadera_izq and rodilla_izq and tobillo_izq
-    )
-
-    pierna_derecha = (
-        cadera_der and rodilla_der and tobillo_der
-    )
-
-    piernas_validas = pierna_izquierda or pierna_derecha
-
-    return (
-        hombros_validos
-        and caderas_validas
-        and piernas_validas
-    )
-
-
-# ============================================================
-# FUNCIÓN ORIGINAL PARA DETECTAR POSTURA
-# ============================================================
-
-def detectar_postura(puntos):
-    hombro_izq = puntos[5]
-    hombro_der = puntos[6]
-
-    cadera_izq = puntos[11]
-    cadera_der = puntos[12]
-
-    rodilla_izq = puntos[13]
-    rodilla_der = puntos[14]
-
-    tobillo_izq = puntos[15]
-    tobillo_der = puntos[16]
-
-    hombros = (
-        (hombro_izq[0] + hombro_der[0]) / 2,
-        (hombro_izq[1] + hombro_der[1]) / 2,
-    )
-
-    caderas = (
-        (cadera_izq[0] + cadera_der[0]) / 2,
-        (cadera_izq[1] + cadera_der[1]) / 2,
-    )
-
-    puntos_validos = np.array(puntos)
-
-    ancho = (
-        puntos_validos[:, 0].max()
-        - puntos_validos[:, 0].min()
-    )
-
-    alto = (
-        puntos_validos[:, 1].max()
-        - puntos_validos[:, 1].min()
-    )
-
-    if alto == 0:
-        return "DESCONOCIDO"
-
-    proporcion = ancho / alto
-
-    angulo_rodilla_izq = calcular_angulo(
-        cadera_izq, rodilla_izq, tobillo_izq
-    )
-
-    angulo_rodilla_der = calcular_angulo(
-        cadera_der, rodilla_der, tobillo_der
-    )
-
-    angulo_rodillas = (
-        angulo_rodilla_izq + angulo_rodilla_der
-    ) / 2
-
-    dx = caderas[0] - hombros[0]
-    dy = caderas[1] - hombros[1]
-
-    angulo_tronco = abs(
-        np.degrees(np.arctan2(dx, dy))
-    )
-
-    dx_pierna_izq = tobillo_izq[0] - cadera_izq[0]
-    dy_pierna_izq = tobillo_izq[1] - cadera_izq[1]
-
-    dx_pierna_der = tobillo_der[0] - cadera_der[0]
-    dy_pierna_der = tobillo_der[1] - cadera_der[1]
-
-    angulo_pierna_izq = abs(
-        np.degrees(
-            np.arctan2(dx_pierna_izq, dy_pierna_izq)
-        )
-    )
-
-    angulo_pierna_der = abs(
-        np.degrees(
-            np.arctan2(dx_pierna_der, dy_pierna_der)
-        )
-    )
-
-    angulo_piernas = (
-        angulo_pierna_izq + angulo_pierna_der
-    ) / 2
-
-    # ACOSTADA
-    if angulo_tronco > 55 and angulo_piernas > 55:
-        return "ACOSTADA"
-
-    # SENTADA con rodillas dobladas
-    if angulo_rodillas < 145:
-        return "SENTADA"
-
-    # SENTADA con piernas estiradas
-    if angulo_rodillas >= 145 and angulo_piernas > 45:
-        return "SENTADA"
-
-    # Validaciones para DE PIE
-    rodillas_extendidas = (
-        angulo_rodilla_izq >= 145
-        and angulo_rodilla_der >= 145
-    )
-
-    piernas_verticales = (
-        angulo_pierna_izq <= 45
-        and angulo_pierna_der <= 45
-    )
-
-    rodillas_debajo_caderas = (
-        rodilla_izq[1] > caderas[1]
-        and rodilla_der[1] > caderas[1]
-    )
-
-    tobillos_debajo_rodillas = (
-        tobillo_izq[1] > rodilla_izq[1]
-        and tobillo_der[1] > rodilla_der[1]
-    )
-
-    if (
-        rodillas_extendidas
-        and piernas_verticales
-        and rodillas_debajo_caderas
-        and tobillos_debajo_rodillas
-        and angulo_tronco < 35
-    ):
-        return "DE PIE"
-
-    return "DESCONOCIDO"
-
 
 # ============================================================
 # CAPTURA INDEPENDIENTE DE CADA CÁMARA
@@ -697,10 +492,12 @@ def enviar_eventos_backend():
 def actualizar_postura(nombre, postura_detectada, imagen):
     estado = estados[nombre]
 
+    # Normalizar texto para evitar errores por espacios o mayúsculas
+    postura_detectada = postura_detectada.strip().upper()
+
     # Contar ausencia de persona.
     if postura_detectada == "SIN PERSONA":
         estado["contador_sin_persona"] += 1
-
         if estado["contador_sin_persona"] >= MAX_SIN_PERSONA:
             estado["postura_candidata"] = "SIN PERSONA"
             estado["contador_postura"] = 0
@@ -710,12 +507,10 @@ def actualizar_postura(nombre, postura_detectada, imagen):
             estado["levantamiento_en_proceso"] = False
             estado["levantamiento_detectado"] = False
             estado["tipo_alerta_levantamiento"] = ""
-
         return
 
     estado["contador_sin_persona"] = 0
 
-    # Conservar el comportamiento de la versión original.
     if postura_detectada == "DESCONOCIDO":
         estado["postura_actual"] = "DESCONOCIDO"
         estado["postura_candidata"] = "DESCONOCIDO"
@@ -742,13 +537,16 @@ def actualizar_postura(nombre, postura_detectada, imagen):
 
     anterior = estado["postura_anterior"]
     actual = estado["postura_actual"]
+    
+    # 🔍 Imprimir cambios de estado para depurar en consola
+    print(f"[{nombre}] Transición detectada: {anterior} ➔ {actual}")
 
-    if actual == "ACOSTADA":
+    if actual in ["ACOSTADO", "ACOSTADA"]:
         estado["levantamiento_en_proceso"] = False
         print(f"[{nombre}] Persona ACOSTADA.")
 
     # ACOSTADA -> SENTADA
-    elif anterior == "ACOSTADA" and actual == "SENTADA":
+    elif anterior in ["ACOSTADO", "ACOSTADA"] and actual == "SENTADA":
         estado["levantamiento_en_proceso"] = True
         estado["levantamiento_detectado"] = True
         estado["tipo_alerta_levantamiento"] = "INICIO"
@@ -759,15 +557,13 @@ def actualizar_postura(nombre, postura_detectada, imagen):
             TIPO_PACIENTE_SENTADO,
             imagen,
         )
+        print(f"[{nombre}] INICIO DE LEVANTAMIENTO (ACOSTADA -> SENTADA)")
 
-        print(f"[{nombre}] INICIO DE LEVANTAMIENTO")
-        print(f"[{nombre}] ACOSTADA -> SENTADA")
-
-    # SENTADA -> DE PIE
+    # SENTADA -> DE PIE (o INCORPORADO)
     elif (
         estado["levantamiento_en_proceso"]
         and anterior == "SENTADA"
-        and actual == "DE PIE"
+        and actual in ["DE PIE", "INCORPORADO"]
     ):
         estado["contador_levantamientos"] += 1
         estado["levantamiento_en_proceso"] = False
@@ -780,16 +576,11 @@ def actualizar_postura(nombre, postura_detectada, imagen):
             TIPO_LEVANTAMIENTO_COMPLETO,
             imagen,
         )
+        print(f"[{nombre}] LEVANTAMIENTO COMPLETO. Total: {estado['contador_levantamientos']}")
 
-        print(f"[{nombre}] LEVANTAMIENTO COMPLETO")
-        print(
-            f"[{nombre}] Total: "
-            f"{estado['contador_levantamientos']}"
-        )
-
-
+        
 # ============================================================
-# PROCESAR UNA IMAGEN CON YOLO POSE
+# PROCESAR UNA IMAGEN CON CLASIFICACIÓN YOLO (train-3)
 # ============================================================
 
 transmisor_livekit = None
@@ -812,43 +603,30 @@ def procesar_camara(nombre, modelo):
 
         frame = estado["frame"].copy()
 
-    # Inferencia de YOLO fuera del bloqueo de captura.
+    # Inferencia del modelo de clasificación YOLO fuera del bloqueo de captura.
     resultados = modelo(
         frame,
         verbose=False,
-        conf=0.5,
         imgsz=TAMANO_YOLO,
     )
 
     resultado = resultados[0]
-    frame_mostrar = resultado.plot()
-    postura_detectada = "SIN PERSONA"
+    frame_mostrar = frame.copy()
+    
+    # Extracción de la clase predicha y su confianza (API de Clasificación de Ultralytics)
+    if hasattr(resultado, 'probs') and resultado.probs is not None:
+        top1_index = resultado.probs.top1
+        postura_detectada = resultado.names[top1_index].upper()  # Ej: 'ACOSTADO', 'SENTADO', 'DE_PIE', 'SIN_PERSONA'
+        confianza_pred = float(resultado.probs.top1conf) * 100
+    else:
+        postura_detectada = "DESCONOCIDO"
+        confianza_pred = 0.0
 
-    if (
-        resultado.keypoints is not None
-        and len(resultado.keypoints) > 0
-    ):
-        # Conservamos la selección de la primera persona,
-        # igual que en el script original.
-        puntos = resultado.keypoints.xy[0].cpu().numpy()
+    # Umbral opcional de seguridad (si la confianza es baja, se marca como desconocido)
+    if confianza_pred < 45.0:
+        postura_detectada = "DESCONOCIDO"
 
-        if resultado.keypoints.conf is not None:
-            confianzas = (
-                resultado.keypoints.conf[0].cpu().numpy()
-            )
-        else:
-            confianzas = None
-
-        if (
-            len(puntos) >= 17
-            and confianzas is not None
-            and len(confianzas) >= 17
-            and cuerpo_valido(puntos, confianzas)
-        ):
-            postura_detectada = detectar_postura(puntos)
-        else:
-            postura_detectada = "DESCONOCIDO"
-
+    # Actualizar la máquina de estados con la postura detectada
     actualizar_postura(
         nombre,
         postura_detectada,
@@ -893,18 +671,18 @@ def procesar_camara(nombre, modelo):
 
     cv2.putText(
         frame_mostrar,
-        f"POSTURA: {postura_actual}",
+        f"POSTURA: {postura_actual} ({confianza_pred:.1f}%)",
         (30, 65),
         cv2.FONT_HERSHEY_SIMPLEX,
-        1.0,
-        (0, 255, 0),
+        0.8,
+        (0, 255, 255),
         2,
         cv2.LINE_AA,
     )
 
     cv2.putText(
         frame_mostrar,
-        f"DETECTANDO: {postura_detectada}",
+        f"DETECTANDO: {postura_detectada} ({confianza_pred:.1f}%)",
         (30, 100),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
@@ -970,9 +748,9 @@ def main():
     hilo_backend = None
 
     try:
-        print("=" * 55)
-        print("GERIAPP - YOLO POSE CON DOS CÁMARAS JALTECH")
-        print("=" * 55)
+        print("=" * 60)
+        print("GERIAPP - CLASIFICACIÓN DE POSTURAS YOLO CON DOS CÁMARAS")
+        print("=" * 60)
 
         # Consultar las cámaras registradas en GerIApp.
         print("\nConsultando cámaras activas en GerIApp...")
@@ -985,6 +763,7 @@ def main():
 
         # Consultar los pacientes activos de GerIApp.
         pacientes_backend = obtener_pacientes_activos()
+
 
         # Agrupar los pacientes por habitación.
         pacientes_por_habitacion = {}

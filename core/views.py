@@ -16,6 +16,8 @@ from django.db.models import Q
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+#importacion para resumen de turno 
+from datetime import datetime, timedelta
 
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
@@ -2538,54 +2540,245 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+        
+class ResumenCuidadosTurnoView(APIView):
+
+        def get(self, request, id_asignacion):
+
+            try:
+            # 1. Buscar la asignación del turno
+                asignacion = (
+                    AsignacionTurnoUsuario.objects
+                    .select_related("id_usuario", "id_turno")
+                    .get(
+                        id_asignacion_turno_usuario=id_asignacion
+                    )
+                )
+
+                if not asignacion.id_usuario:
+                    return Response(
+                        {"error": "La asignación no tiene un cuidador."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if not asignacion.id_turno:
+                    return Response(
+                        {"error": "La asignación no tiene un turno asociado."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                turno = asignacion.id_turno
+                id_cuidador = asignacion.id_usuario_id
+
+                if not turno.hora_fin:
+                    return Response(
+                        {"error": "El turno no tiene una hora de finalización configurada."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # 2. Calcular el horario programado del turno
+                fecha_inicio = datetime.combine(
+                    asignacion.fecha,
+                    turno.hora_inicio
+                )
+
+                fecha_fin_turno = asignacion.fecha
+
+                # Si el turno cruza la medianoche
+                if turno.hora_fin <= turno.hora_inicio:
+                    fecha_fin_turno += timedelta(days=1)
+
+                fecha_fin = datetime.combine(
+                    fecha_fin_turno,
+                    turno.hora_fin
+                )
+
+                # Aplicar zona horaria del proyecto
+                if timezone.is_aware(timezone.now()):
+                    zona = timezone.get_current_timezone()
+
+                    fecha_inicio = timezone.make_aware(
+                        fecha_inicio,
+                        zona
+                    )
+
+                    fecha_fin = timezone.make_aware(
+                        fecha_fin,
+                        zona
+                    )
+
+                # 3. Buscar pacientes activos del cuidador
+                asignaciones_pacientes = (
+                    AsignacionPacienteCuidador.objects
+                    .select_related("id_paciente")
+                    .filter(
+                        id_usuario_id=id_cuidador,
+                        estado__iexact="Activo"
+                    )
+                )
+
+                # Evitar pacientes repetidos
+                pacientes_por_id = {}
+
+                for asignacion_paciente in asignaciones_pacientes:
+
+                    paciente = asignacion_paciente.id_paciente
+
+                    if paciente:
+                        pacientes_por_id[paciente.id_paciente] = paciente
+
+                resultado_pacientes = []
+
+                # 4. Consultar bitácoras, signos y controles por paciente
+                for id_paciente, paciente in pacientes_por_id.items():
+
+                    bitacoras = Bitacora.objects.filter(
+                        id_usuario_id=id_cuidador,
+                        id_paciente_id=id_paciente,
+                        fecha_hora__gte=fecha_inicio,
+                        fecha_hora__lte=fecha_fin
+                    ).order_by("fecha_hora")
+
+                    ids_bitacoras = list(
+                        bitacoras.values_list(
+                            "id_bitacora",
+                            flat=True
+                        )
+                    )
+
+                    # Signos vitales asociados a cada bitácora
+                    signos = SignosVitales.objects.filter(
+                        id_bitacora_id__in=ids_bitacoras
+                    ).order_by("fecha_hora")
+
+                    signos_por_bitacora = {}
+
+                    for signo in signos:
+                        id_bitacora = signo.id_bitacora_id
+
+                        if id_bitacora not in signos_por_bitacora:
+                            signos_por_bitacora[id_bitacora] = []
+
+                        signos_por_bitacora[id_bitacora].append(
+                            SignosVitalesSerializer(signo).data
+                        )
+
+                    resultado_bitacoras = []
+
+                    for bitacora in bitacoras:
+
+                        datos_bitacora = BitacoraSerializer(
+                            bitacora
+                        ).data
+
+                        datos_bitacora["signos_vitales"] = (
+                            signos_por_bitacora.get(
+                                bitacora.id_bitacora,
+                                []
+                            )
+                        )
+
+                        resultado_bitacoras.append(datos_bitacora)
+
+                    # 5. Controles periódicos independientes
+                    controles = ControlesPeriodicosBitacora.objects.filter(
+                        id_usuario_id=id_cuidador,
+                        id_paciente_id=id_paciente,
+                        fecha_registro__gte=fecha_inicio,
+                        fecha_registro__lte=fecha_fin
+                    ).order_by("fecha_registro")
+
+                    resultado_pacientes.append({
+                        "id_paciente": paciente.id_paciente,
+                        "nombre": paciente.nombre,
+                        "apellido": paciente.apellido,
+                        "foto": paciente.foto,
+                        "habitacion": paciente.habitacion,
+                        "cama": paciente.cama,
+
+                        "bitacoras": resultado_bitacoras,
+
+                        "controles_periodicos": (
+                            ControlesPeriodicosBitacoraSerializer(
+                                controles,
+                                many=True
+                            ).data
+                        )
+                    })
+
+                # 6. Respuesta completa
+                return Response({
+                    "id_asignacion": asignacion.id_asignacion_turno_usuario,
+                    "id_cuidador": id_cuidador,
+
+                    "turno": {
+                        "id_turno": turno.id_turno,
+                        "nombre": turno.nombre,
+                        "fecha": str(asignacion.fecha),
+                        "hora_inicio": str(turno.hora_inicio),
+                        "hora_fin": str(turno.hora_fin)
+                    },
+
+                    "fecha_hora_inicio": fecha_inicio,
+                    "fecha_hora_fin": fecha_fin,
+
+                    "pacientes": resultado_pacientes
+                }, status=status.HTTP_200_OK)
+
+            except AsignacionTurnoUsuario.DoesNotExist:
+                return Response(
+                    {"error": "No se encontró la asignación del turno."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
-    queryset = AsignacionTurnoUsuario.objects.all()
-    serializer_class = AsignacionTurnoUsuarioSerializer
+        queryset = AsignacionTurnoUsuario.objects.all()
+        serializer_class = AsignacionTurnoUsuarioSerializer
 
-    def perform_create(self, serializer):
-        asignacion = serializer.save()
-        usuario = asignacion.id_usuario
+        def perform_create(self, serializer):
+            asignacion = serializer.save()
+            usuario = asignacion.id_usuario
 
-        print("========== PUSH TURNO ==========")
-        print("Asignación creada:", asignacion.pk)
-        print("Usuario asignado:", usuario.pk if usuario else None)
-        print("Fecha del turno:", asignacion.fecha)
+            print("========== PUSH TURNO ==========")
+            print("Asignación creada:", asignacion.pk)
+            print("Usuario asignado:", usuario.pk if usuario else None)
+            print("Fecha del turno:", asignacion.fecha)
 
-        if not usuario:
-            print("ERROR: La asignación no tiene usuario.")
-            return
+            if not usuario:
+                print("ERROR: La asignación no tiene usuario.")
+                return
 
-        try:
-            fecha_turno = asignacion.fecha.strftime("%d/%m/%Y")
+            try:
+                fecha_turno = asignacion.fecha.strftime("%d/%m/%Y")
 
-            mensaje = (
-                f"Te han asignado un nuevo turno para el día "
-                f"{fecha_turno}. Consulta la sección Inicio de GerIApp."
-            )
+                mensaje = (
+                    f"Te han asignado un nuevo turno para el día "
+                    f"{fecha_turno}. Consulta la sección Inicio de GerIApp."
+                )
 
-            notificacion = Notificaciones.objects.create(
-                titulo="Nuevo turno asignado",
-                tipo="TURNO",
-                mensaje=mensaje,
-                enviar_correo=False,
-                fecha_hora=timezone.now(),
-                estado=True,
-                id_usuario=usuario,
-            )
+                notificacion = Notificaciones.objects.create(
+                    titulo="Nuevo turno asignado",
+                    tipo="TURNO",
+                    mensaje=mensaje,
+                    enviar_correo=False,
+                    fecha_hora=timezone.now(),
+                    estado=True,
+                    id_usuario=usuario,
+                )
 
-            print(
-                "Notificación creada:",
-                notificacion.id_notificacion
-            )
+                print(
+                    "Notificación creada:",
+                    notificacion.id_notificacion
+                )
 
-            enviar_notificacion_fcm(notificacion, usuario)
+                enviar_notificacion_fcm(notificacion, usuario)
 
-            print("Función de envío FCM ejecutada.")
+                print("Función de envío FCM ejecutada.")
 
-        except Exception as e:
-            print("ERROR EN PUSH TURNO:", repr(e))
-            raise
+            except Exception as e:
+                print("ERROR EN PUSH TURNO:", repr(e))
+                raise
 
 class PermisosViewSet(viewsets.ModelViewSet):
     queryset = Permisos.objects.all()

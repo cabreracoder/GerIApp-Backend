@@ -49,6 +49,10 @@ from .views import (
     BitacoraViewSet,
     ActividadesViewSet,
     SignosVitalesViewSet,
+    ResumenCuidadosTurnoView,
+
+    #agrego importacion para resumen de cerrar turno
+    
 )
 
 # ==============================
@@ -342,6 +346,12 @@ path(
     obtener_token_livekit,
     name='livekit-token'
 ),
+path(
+    'resumen-cuidados-turno/<int:id_asignacion>/',
+    ResumenCuidadosTurnoView.as_view(),
+    name='resumen_cuidados_turno'
+),
+
 
 
 ]

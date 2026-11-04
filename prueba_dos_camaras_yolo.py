@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import re
 import subprocess
+import collections
 
 from conexion_backend import (
     enviar_evento_geriapp,
@@ -105,6 +106,9 @@ class CapturaFFmpeg:
 
     def __init__(self, dispositivo):
         self.bytes_frame = ANCHO_CAMARA * ALTO_CAMARA * 3
+        # Historial de los últimos X frames (ej: 12 frames)
+        self.historial_posturas = collections.deque(maxlen=12)
+        self.postura_confirmada = "DESCONOCIDO"
 
         comando = [
             "ffmpeg",
@@ -182,12 +186,18 @@ class CapturaFFmpeg:
 # CONFIGURACIÓN GENERAL
 # ============================================================
 
-MODELO_YOLO = "./runs/classify/train-3/weights/best.pt"
+# Usa el modelo nuevo. Esta ruta coincide con la salida real del entrenamiento.
+MODELO_YOLO = "./runs/classify/runs/classify/train-4/weights/best.pt"
 FPS_YOLO = 10
 TAMANO_YOLO = 640
-CONFIANZA_MINIMA_PUNTO = 0.35
-FRAMES_ESTABILIDAD = 5
-MAX_SIN_PERSONA = 15
+
+# Umbrales conservadores: si no hay suficiente evidencia, el sistema
+# se abstiene y muestra DESCONOCIDO en vez de inventar una postura.
+CONFIANZA_MINIMA_POSTURA = 0.80
+CONFIANZA_MINIMA_SIN_PERSONA = 0.90
+MARGEN_MINIMO = 0.20  # diferencia entre la primera y segunda clase
+FRAMES_ESTABILIDAD = 15
+MAX_SIN_PERSONA = 20
 DURACION_AVISO_LEVANTAMIENTO = 2
 
 # Esta configuración se construirá desde el backend al iniciar.
@@ -195,7 +205,28 @@ CAMARAS_CONFIG = {}
 
 TIPO_PACIENTE_SENTADO = 2
 TIPO_LEVANTAMIENTO_COMPLETO = 4
-CONFIANZA_EVENTO = 95.00
+# La confianza enviada al backend se toma de la predicción confirmada.
+
+
+# Convierte los nombres del modelo a los nombres internos de la máquina de estados.
+# El modelo puede devolver ACOSTADO/SENTADO/DE_PIE/SIN_PERSONA.
+EQUIVALENCIAS_POSTURAS = {
+    "ACOSTADO": "ACOSTADA",
+    "ACOSTADA": "ACOSTADA",
+    "SENTADO": "SENTADA",
+    "SENTADA": "SENTADA",
+    "DE_PIE": "DE PIE",
+    "DE PIE": "DE PIE",
+    "INCORPORADO": "INCORPORADO",
+    "SIN_PERSONA": "SIN PERSONA",
+    "SIN PERSONA": "SIN PERSONA",
+}
+
+
+def normalizar_postura(postura):
+    """Unifica las etiquetas de YOLO para que coincidan con las transiciones."""
+    texto = str(postura).strip().upper()
+    return EQUIVALENCIAS_POSTURAS.get(texto, texto)
 
 
 # ============================================================
@@ -227,6 +258,7 @@ def crear_estado():
 
         "contador_postura": 0,
         "contador_sin_persona": 0,
+        "confianza_confirmada": 0.0,
 
         "levantamiento_en_proceso": False,
         "levantamiento_detectado": False,
@@ -362,7 +394,7 @@ def registrar_evento(nombre, tipo_evento, imagen):
         "id_habitacion": config["id_habitacion"],
         "id_paciente": config["id_paciente"],
         "id_tipo_evento": tipo_evento,
-        "confianza": CONFIANZA_EVENTO,
+        "confianza": round(estados[nombre]["confianza_confirmada"], 2),
         "imagen": imagen.copy(),
     }
 
@@ -489,34 +521,37 @@ def enviar_eventos_backend():
 # Conserva la secuencia de la versión original.
 # ============================================================
 
-def actualizar_postura(nombre, postura_detectada, imagen):
+def actualizar_postura(nombre, postura_detectada, imagen, confianza=0.0):
     estado = estados[nombre]
+    postura_detectada = normalizar_postura(postura_detectada)
 
-    # Normalizar texto para evitar errores por espacios o mayúsculas
-    postura_detectada = postura_detectada.strip().upper()
-
-    # Contar ausencia de persona.
+    # Confirmar ausencia de persona durante varios frames.
     if postura_detectada == "SIN PERSONA":
         estado["contador_sin_persona"] += 1
+
         if estado["contador_sin_persona"] >= MAX_SIN_PERSONA:
             estado["postura_candidata"] = "SIN PERSONA"
             estado["contador_postura"] = 0
             estado["postura_actual"] = "SIN PERSONA"
             estado["postura_anterior"] = "SIN PERSONA"
             estado["ultima_postura_valida"] = "SIN PERSONA"
+            estado["confianza_confirmada"] = float(confianza)
             estado["levantamiento_en_proceso"] = False
             estado["levantamiento_detectado"] = False
             estado["tipo_alerta_levantamiento"] = ""
+
         return
 
     estado["contador_sin_persona"] = 0
 
+    # Una predicción poco confiable no cambia la última postura válida.
     if postura_detectada == "DESCONOCIDO":
         estado["postura_actual"] = "DESCONOCIDO"
         estado["postura_candidata"] = "DESCONOCIDO"
         estado["contador_postura"] = 0
         return
 
+    # Exigir varios frames consecutivos con la misma postura.
     if postura_detectada == estado["postura_candidata"]:
         estado["contador_postura"] += 1
     else:
@@ -526,6 +561,7 @@ def actualizar_postura(nombre, postura_detectada, imagen):
     if estado["contador_postura"] < FRAMES_ESTABILIDAD:
         return
 
+    # No procesar repetidamente una postura que ya estaba confirmada.
     if postura_detectada == estado["ultima_postura_valida"]:
         estado["postura_actual"] = postura_detectada
         return
@@ -533,20 +569,22 @@ def actualizar_postura(nombre, postura_detectada, imagen):
     estado["postura_anterior"] = estado["ultima_postura_valida"]
     estado["ultima_postura_valida"] = postura_detectada
     estado["postura_actual"] = postura_detectada
+    estado["confianza_confirmada"] = float(confianza)
     estado["contador_postura"] = 0
 
     anterior = estado["postura_anterior"]
     actual = estado["postura_actual"]
-    
-    # 🔍 Imprimir cambios de estado para depurar en consola
+
     print(f"[{nombre}] Transición detectada: {anterior} ➔ {actual}")
 
-    if actual in ["ACOSTADO", "ACOSTADA"]:
+    # Si vuelve a acostarse antes de completar el levantamiento,
+    # se cancela el proceso pendiente.
+    if actual == "ACOSTADA":
         estado["levantamiento_en_proceso"] = False
         print(f"[{nombre}] Persona ACOSTADA.")
 
-    # ACOSTADA -> SENTADA
-    elif anterior in ["ACOSTADO", "ACOSTADA"] and actual == "SENTADA":
+    # ACOSTADA -> SENTADA: inicio del levantamiento.
+    elif anterior == "ACOSTADA" and actual == "SENTADA":
         estado["levantamiento_en_proceso"] = True
         estado["levantamiento_detectado"] = True
         estado["tipo_alerta_levantamiento"] = "INICIO"
@@ -557,13 +595,14 @@ def actualizar_postura(nombre, postura_detectada, imagen):
             TIPO_PACIENTE_SENTADO,
             imagen,
         )
+
         print(f"[{nombre}] INICIO DE LEVANTAMIENTO (ACOSTADA -> SENTADA)")
 
-    # SENTADA -> DE PIE (o INCORPORADO)
+    # SENTADA -> DE PIE: levantamiento completado.
     elif (
         estado["levantamiento_en_proceso"]
         and anterior == "SENTADA"
-        and actual in ["DE PIE", "INCORPORADO"]
+        and actual in ("DE PIE", "INCORPORADO")
     ):
         estado["contador_levantamientos"] += 1
         estado["levantamiento_en_proceso"] = False
@@ -576,11 +615,14 @@ def actualizar_postura(nombre, postura_detectada, imagen):
             TIPO_LEVANTAMIENTO_COMPLETO,
             imagen,
         )
-        print(f"[{nombre}] LEVANTAMIENTO COMPLETO. Total: {estado['contador_levantamientos']}")
 
-        
+        print(
+            f"[{nombre}] LEVANTAMIENTO COMPLETO. "
+            f"Total: {estado['contador_levantamientos']}"
+        )
+
 # ============================================================
-# PROCESAR UNA IMAGEN CON CLASIFICACIÓN YOLO (train-3)
+# PROCESAR UNA IMAGEN CON CLASIFICACIÓN YOLO (train-4)
 # ============================================================
 
 transmisor_livekit = None
@@ -590,20 +632,18 @@ def procesar_camara(nombre, modelo):
     estado = estados[nombre]
 
     ahora = time.time()
-
     if ahora - estado["ultimo_procesamiento"] < 1 / FPS_YOLO:
         return
 
     estado["ultimo_procesamiento"] = ahora
 
-    # Copiar el fotograma y liberar el bloqueo antes de YOLO.
+    # Copiar el fotograma y liberar el bloqueo antes de ejecutar YOLO.
     with estado["frame_lock"]:
         if estado["frame"] is None:
             return
-
         frame = estado["frame"].copy()
 
-    # Inferencia del modelo de clasificación YOLO fuera del bloqueo de captura.
+    # Inferencia del modelo de clasificación YOLO.
     resultados = modelo(
         frame,
         verbose=False,
@@ -612,28 +652,50 @@ def procesar_camara(nombre, modelo):
 
     resultado = resultados[0]
     frame_mostrar = frame.copy()
-    
-    # Extracción de la clase predicha y su confianza (API de Clasificación de Ultralytics)
-    if hasattr(resultado, 'probs') and resultado.probs is not None:
-        top1_index = resultado.probs.top1
-        postura_detectada = resultado.names[top1_index].upper()  # Ej: 'ACOSTADO', 'SENTADO', 'DE_PIE', 'SIN_PERSONA'
-        confianza_pred = float(resultado.probs.top1conf) * 100
-    else:
-        postura_detectada = "DESCONOCIDO"
-        confianza_pred = 0.0
 
-    # Umbral opcional de seguridad (si la confianza es baja, se marca como desconocido)
-    if confianza_pred < 45.0:
-        postura_detectada = "DESCONOCIDO"
+    # Obtener las dos clases más probables. No basta con tomar top1:
+    # también exigimos una diferencia clara frente a la segunda clase.
+    confianza_pred = 0.0
+    margen_pred = 0.0
+    postura_detectada = "DESCONOCIDO"
 
-    # Actualizar la máquina de estados con la postura detectada
+    if hasattr(resultado, "probs") and resultado.probs is not None:
+        probabilidades = resultado.probs.data.detach().cpu().numpy()
+        indices_ordenados = np.argsort(probabilidades)[::-1]
+
+        top1_index = int(indices_ordenados[0])
+        top2_index = int(indices_ordenados[1])
+
+        prob_top1 = float(probabilidades[top1_index])
+        prob_top2 = float(probabilidades[top2_index])
+
+        confianza_pred = prob_top1 * 100.0
+        margen_pred = prob_top1 - prob_top2
+
+        postura_original = resultado.names[top1_index]
+        candidata = normalizar_postura(postura_original)
+
+        # Umbral más alto para afirmar que no hay ninguna persona.
+        umbral = (
+            CONFIANZA_MINIMA_SIN_PERSONA
+            if candidata == "SIN PERSONA"
+            else CONFIANZA_MINIMA_POSTURA
+        )
+
+        # Si el modelo duda entre dos clases, no genera postura.
+        if prob_top1 >= umbral and margen_pred >= MARGEN_MINIMO:
+            postura_detectada = candidata
+
+    # Se envía también DESCONOCIDO para reiniciar la secuencia de
+    # confirmación cuando una predicción no cumple los criterios.
     actualizar_postura(
         nombre,
         postura_detectada,
         frame,
+        confianza_pred,
     )
 
-    # Limpiar la alerta visual después de dos segundos.
+    # Limpiar la alerta visual después del tiempo configurado.
     if (
         estado["levantamiento_detectado"]
         and time.time() - estado["tiempo_levantamiento"]
@@ -682,7 +744,7 @@ def procesar_camara(nombre, modelo):
 
     cv2.putText(
         frame_mostrar,
-        f"DETECTANDO: {postura_detectada} ({confianza_pred:.1f}%)",
+        f"DETECTANDO: {postura_detectada} ({confianza_pred:.1f}%) M:{margen_pred:.2f}",
         (30, 100),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
@@ -869,6 +931,7 @@ def main():
             print(
                 f"[CONFIG] {nombre} | GerIApp ID: {id_camara} "
                 f"| Habitación: {id_habitacion} "
+                f"| Paciente: {id_paciente} "
                 f"| Dispositivo USB: {identificador}"
             )
 

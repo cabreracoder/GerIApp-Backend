@@ -1,0 +1,37 @@
+camaras:
+- id: 1
+  nombre: camara_1
+  indice: 1
+  puntos_cama:
+  - - 89
+    - 117
+  - - 274
+    - 136
+  - - 452
+    - 406
+  - - 195
+    - 448
+- id: 2
+  nombre: camara_2
+  indice: 2
+  puntos_cama:
+  - - 2
+    - 167
+  - - 94
+    - 7
+  - - 407
+    - 167
+  - - 408
+    - 370
+imagen:
+  ancho: 512
+  alto: 1024
+captura:
+  intervalo: 1
+  formato_video: mp4
+  fps: 20
+clases:
+  - ACOSTADO
+  - SENTADO
+  - DE_PIE
+  - SIN_PERSONA

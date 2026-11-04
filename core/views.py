@@ -124,6 +124,7 @@ from .models import (
     FormulacionMedicamentos,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
+    SeguimientoAdministracionMedicamento,   
 )
 
 from .serializers import (
@@ -185,7 +186,8 @@ from .serializers import (
     FormulacionMedicamentosSerializer,
     CierreTurnoSerializer,
     ConfiguracionControlesPeriodicosSerializer,
-    ControlesPeriodicosBitacoraSerializer,  
+    ControlesPeriodicosBitacoraSerializer, 
+    SeguimientoAdministracionMedicamentoSerializer , 
 )
 
 
@@ -851,7 +853,50 @@ class RolesViewSet(viewsets.ModelViewSet):
     permission_classes = [EsSuperadministradorOMetodoLectura]
 
 
+class SeguimientoAdministracionMedicamentoViewSet(viewsets.ModelViewSet):
+    queryset = SeguimientoAdministracionMedicamento.objects.all()
+    serializer_class = SeguimientoAdministracionMedicamentoSerializer
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        """
+        Filtra los registros de seguimiento según el rol del usuario.
+        - Superadministrador: todos los registros.
+        - Administrador: registros de su sede.
+        - Encargado: registros de pacientes asignados a él.
+        - Otros roles: únicamente sus propios registros.
+        """
+        usuario = self.request.user
+
+        if not getattr(usuario, "is_authenticated", False):
+            return SeguimientoAdministracionMedicamento.objects.none()
+
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador
+        if rol_id == 4:
+            return SeguimientoAdministracionMedicamento.objects.all()
+
+        # Administrador: solo registros de su sede
+        if rol_id == 1:
+            sede_id = getattr(usuario, "id_sede_id", None)
+            if sede_id is None:
+                return SeguimientoAdministracionMedicamento.objects.none()
+
+            return SeguimientoAdministracionMedicamento.objects.filter(
+                paciente__habitacion__id_sede_id=sede_id
+            )
+
+        # Encargado: registros de pacientes asignados a él
+        if rol_id == 2:
+            return SeguimientoAdministracionMedicamento.objects.filter(
+                paciente__asignaciones__id_usuario=usuario
+            ).distinct()
+
+        # Otros roles: únicamente sus propios registros
+        return SeguimientoAdministracionMedicamento.objects.filter(
+            id_usuario=usuario
+        )       
 
 
 class UsuariosViewSet(viewsets.ModelViewSet):

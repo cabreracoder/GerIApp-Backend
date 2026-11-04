@@ -60,9 +60,14 @@ from .models import (
     CierreTurno,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
+    SeguimientoAdministracionMedicamento,
 )
 
 
+class SeguimientoAdministracionMedicamentoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SeguimientoAdministracionMedicamento
+        fields = '__all__'     
 
 class PacientesSerializer(serializers.ModelSerializer):
     # Permite recibir una imagen desde FormData

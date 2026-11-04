@@ -18,6 +18,8 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 #importacion para resumen de turno 
 from datetime import datetime, timedelta
+#ajuste de fecha cierre turno
+from zoneinfo import ZoneInfo
 
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
@@ -2543,194 +2545,213 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
         
 class ResumenCuidadosTurnoView(APIView):
 
-        def get(self, request, id_asignacion):
+    def get(self, request, id_asignacion):
 
-            try:
-            # 1. Buscar la asignación del turno
-                asignacion = (
-                    AsignacionTurnoUsuario.objects
-                    .select_related("id_usuario", "id_turno")
-                    .get(
-                        id_asignacion_turno_usuario=id_asignacion
-                    )
+        try:
+            # 1. Obtener asignación, cuidador y turno
+            asignacion = (
+                AsignacionTurnoUsuario.objects
+                .select_related("id_usuario", "id_turno")
+                .get(
+                    id_asignacion_turno_usuario=id_asignacion
+                )
+            )
+
+            if not asignacion.id_usuario:
+                return Response(
+                    {"error": "La asignación no tiene un cuidador."},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
-                if not asignacion.id_usuario:
-                    return Response(
-                        {"error": "La asignación no tiene un cuidador."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            if not asignacion.id_turno:
+                return Response(
+                    {"error": "La asignación no tiene un turno asociado."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-                if not asignacion.id_turno:
-                    return Response(
-                        {"error": "La asignación no tiene un turno asociado."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            turno = asignacion.id_turno
+            id_cuidador = asignacion.id_usuario_id
 
-                turno = asignacion.id_turno
-                id_cuidador = asignacion.id_usuario_id
+            if not turno.hora_inicio:
+                return Response(
+                    {"error": "El turno no tiene hora de inicio configurada."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-                if not turno.hora_fin:
-                    return Response(
-                        {"error": "El turno no tiene una hora de finalización configurada."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            # 2. Calcular inicio real del turno en Colombia
+            zona_colombia = ZoneInfo("America/Bogota")
 
-                # 2. Calcular el horario programado del turno
-                fecha_inicio = datetime.combine(
+            fecha_inicio = timezone.make_aware(
+                datetime.combine(
                     asignacion.fecha,
                     turno.hora_inicio
+                ),
+                zona_colombia
+            )
+
+            # 3. Buscar únicamente un cierre definitivo
+            cierre_turno = (
+                CierreTurno.objects
+                .filter(
+                    id_asignacion_turno_usuario_id=id_asignacion,
+                    estado__iexact="Finalizado"
                 )
+                .order_by("-fecha_hora")
+                .first()
+            )
 
-                fecha_fin_turno = asignacion.fecha
+            # 4. Determinar el límite final de consulta
+            if cierre_turno:
+                fecha_fin_consulta = cierre_turno.fecha_hora
 
-                # Si el turno cruza la medianoche
-                if turno.hora_fin <= turno.hora_inicio:
-                    fecha_fin_turno += timedelta(days=1)
-
-                fecha_fin = datetime.combine(
-                    fecha_fin_turno,
-                    turno.hora_fin
-                )
-
-                # Aplicar zona horaria del proyecto
-                if timezone.is_aware(timezone.now()):
-                    zona = timezone.get_current_timezone()
-
-                    fecha_inicio = timezone.make_aware(
-                        fecha_inicio,
-                        zona
+                if timezone.is_naive(fecha_fin_consulta):
+                    fecha_fin_consulta = timezone.make_aware(
+                        fecha_fin_consulta,
+                        zona_colombia
                     )
 
-                    fecha_fin = timezone.make_aware(
-                        fecha_fin,
-                        zona
-                    )
+                turno_cerrado = True
 
-                # 3. Buscar pacientes activos del cuidador
-                asignaciones_pacientes = (
-                    AsignacionPacienteCuidador.objects
-                    .select_related("id_paciente")
+            else:
+                fecha_fin_consulta = timezone.now()
+                turno_cerrado = False
+
+            # Evitar consultas con un intervalo invertido
+            fecha_fin_consulta = max(
+                fecha_inicio,
+                fecha_fin_consulta
+            )
+
+            # 5. Obtener pacientes activos del cuidador
+            asignaciones_pacientes = (
+                AsignacionPacienteCuidador.objects
+                .select_related("id_paciente")
+                .filter(
+                    id_usuario_id=id_cuidador,
+                    estado__iexact="Activo"
+                )
+            )
+
+            pacientes_por_id = {}
+
+            for asignacion_paciente in asignaciones_pacientes:
+                paciente = asignacion_paciente.id_paciente
+
+                if paciente:
+                    pacientes_por_id[paciente.id_paciente] = paciente
+
+            resultado_pacientes = []
+
+            # 6. Consultar bitácoras, signos vitales y controles
+            for id_paciente, paciente in pacientes_por_id.items():
+
+                bitacoras = (
+                    Bitacora.objects
                     .filter(
-                        id_usuario_id=id_cuidador,
-                        estado__iexact="Activo"
-                    )
-                )
-
-                # Evitar pacientes repetidos
-                pacientes_por_id = {}
-
-                for asignacion_paciente in asignaciones_pacientes:
-
-                    paciente = asignacion_paciente.id_paciente
-
-                    if paciente:
-                        pacientes_por_id[paciente.id_paciente] = paciente
-
-                resultado_pacientes = []
-
-                # 4. Consultar bitácoras, signos y controles por paciente
-                for id_paciente, paciente in pacientes_por_id.items():
-
-                    bitacoras = Bitacora.objects.filter(
                         id_usuario_id=id_cuidador,
                         id_paciente_id=id_paciente,
                         fecha_hora__gte=fecha_inicio,
-                        fecha_hora__lte=fecha_fin
-                    ).order_by("fecha_hora")
+                        fecha_hora__lte=fecha_fin_consulta
+                    )
+                    .order_by("fecha_hora")
+                )
 
-                    ids_bitacoras = list(
-                        bitacoras.values_list(
-                            "id_bitacora",
-                            flat=True
+                ids_bitacoras = list(
+                    bitacoras.values_list(
+                        "id_bitacora",
+                        flat=True
+                    )
+                )
+
+                signos = (
+                    SignosVitales.objects
+                    .filter(
+                        id_bitacora_id__in=ids_bitacoras
+                    )
+                    .order_by("fecha_hora")
+                )
+
+                signos_por_bitacora = {}
+
+                for signo in signos:
+                    id_bitacora = signo.id_bitacora_id
+
+                    signos_por_bitacora.setdefault(
+                        id_bitacora,
+                        []
+                    ).append(
+                        SignosVitalesSerializer(signo).data
+                    )
+
+                resultado_bitacoras = []
+
+                for bitacora in bitacoras:
+                    datos_bitacora = BitacoraSerializer(
+                        bitacora
+                    ).data
+
+                    datos_bitacora["signos_vitales"] = (
+                        signos_por_bitacora.get(
+                            bitacora.id_bitacora,
+                            []
                         )
                     )
 
-                    # Signos vitales asociados a cada bitácora
-                    signos = SignosVitales.objects.filter(
-                        id_bitacora_id__in=ids_bitacoras
-                    ).order_by("fecha_hora")
+                    resultado_bitacoras.append(datos_bitacora)
 
-                    signos_por_bitacora = {}
-
-                    for signo in signos:
-                        id_bitacora = signo.id_bitacora_id
-
-                        if id_bitacora not in signos_por_bitacora:
-                            signos_por_bitacora[id_bitacora] = []
-
-                        signos_por_bitacora[id_bitacora].append(
-                            SignosVitalesSerializer(signo).data
-                        )
-
-                    resultado_bitacoras = []
-
-                    for bitacora in bitacoras:
-
-                        datos_bitacora = BitacoraSerializer(
-                            bitacora
-                        ).data
-
-                        datos_bitacora["signos_vitales"] = (
-                            signos_por_bitacora.get(
-                                bitacora.id_bitacora,
-                                []
-                            )
-                        )
-
-                        resultado_bitacoras.append(datos_bitacora)
-
-                    # 5. Controles periódicos independientes
-                    controles = ControlesPeriodicosBitacora.objects.filter(
+                controles = (
+                    ControlesPeriodicosBitacora.objects
+                    .filter(
                         id_usuario_id=id_cuidador,
                         id_paciente_id=id_paciente,
                         fecha_registro__gte=fecha_inicio,
-                        fecha_registro__lte=fecha_fin
-                    ).order_by("fecha_registro")
-
-                    resultado_pacientes.append({
-                        "id_paciente": paciente.id_paciente,
-                        "nombre": paciente.nombre,
-                        "apellido": paciente.apellido,
-                        "foto": paciente.foto,
-                        "habitacion": paciente.habitacion,
-                        "cama": paciente.cama,
-
-                        "bitacoras": resultado_bitacoras,
-
-                        "controles_periodicos": (
-                            ControlesPeriodicosBitacoraSerializer(
-                                controles,
-                                many=True
-                            ).data
-                        )
-                    })
-
-                # 6. Respuesta completa
-                return Response({
-                    "id_asignacion": asignacion.id_asignacion_turno_usuario,
-                    "id_cuidador": id_cuidador,
-
-                    "turno": {
-                        "id_turno": turno.id_turno,
-                        "nombre": turno.nombre,
-                        "fecha": str(asignacion.fecha),
-                        "hora_inicio": str(turno.hora_inicio),
-                        "hora_fin": str(turno.hora_fin)
-                    },
-
-                    "fecha_hora_inicio": fecha_inicio,
-                    "fecha_hora_fin": fecha_fin,
-
-                    "pacientes": resultado_pacientes
-                }, status=status.HTTP_200_OK)
-
-            except AsignacionTurnoUsuario.DoesNotExist:
-                return Response(
-                    {"error": "No se encontró la asignación del turno."},
-                    status=status.HTTP_404_NOT_FOUND
+                        fecha_registro__lte=fecha_fin_consulta
+                    )
+                    .order_by("fecha_registro")
                 )
 
+                resultado_pacientes.append({
+                    "id_paciente": paciente.id_paciente,
+                    "nombre": paciente.nombre,
+                    "apellido": paciente.apellido,
+                    "foto": paciente.foto,
+                    "habitacion": paciente.habitacion,
+                    "cama": paciente.cama,
+                    "bitacoras": resultado_bitacoras,
+                    "controles_periodicos": (
+                        ControlesPeriodicosBitacoraSerializer(
+                            controles,
+                            many=True
+                        ).data
+                    )
+                })
+
+            # 7. Respuesta final
+            return Response({
+                "id_asignacion": asignacion.id_asignacion_turno_usuario,
+                "id_cuidador": id_cuidador,
+
+                "turno": {
+                    "id_turno": turno.id_turno,
+                    "nombre": turno.nombre,
+                    "fecha": str(asignacion.fecha),
+                    "hora_inicio": str(turno.hora_inicio),
+                    "hora_fin": str(turno.hora_fin)
+                },
+
+                "fecha_hora_inicio": fecha_inicio,
+                "fecha_hora_fin": fecha_fin_consulta,
+                "turno_cerrado": turno_cerrado,
+
+                "pacientes": resultado_pacientes
+
+            }, status=status.HTTP_200_OK)
+
+        except AsignacionTurnoUsuario.DoesNotExist:
+            return Response(
+                {"error": "No se encontró la asignación del turno."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
         queryset = AsignacionTurnoUsuario.objects.all()

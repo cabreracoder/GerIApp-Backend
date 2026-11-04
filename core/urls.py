@@ -333,6 +333,11 @@ path(
     name='configuracion-institucion'
 ),
 path(
+    'resumen-cuidados-turno/<int:id_asignacion>/',
+    ResumenCuidadosTurnoView.as_view(),
+    name='resumen_cuidados_turno'
+),
+path(
     '',
     include(router.urls)
 ),
@@ -346,12 +351,4 @@ path(
     obtener_token_livekit,
     name='livekit-token'
 ),
-path(
-    'resumen-cuidados-turno/<int:id_asignacion>/',
-    ResumenCuidadosTurnoView.as_view(),
-    name='resumen_cuidados_turno'
-),
-
-
-
 ]

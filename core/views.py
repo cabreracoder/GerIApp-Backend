@@ -3057,6 +3057,7 @@ class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
 class RegistrosFacialesViewSet(viewsets.ModelViewSet):
     queryset = RegistrosFaciales.objects.all()
     serializer_class = RegistrosFacialesSerializer
+    
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE
 # ============================================================

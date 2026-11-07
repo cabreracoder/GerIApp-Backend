@@ -67,7 +67,21 @@ from .models import (
 class RegistrosFacialesSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistrosFaciales
-        fields = '__all__'
+        fields = [
+            'id_registro_facial',
+            'id_paciente',
+            'url_fotografia',
+            'public_id',
+            'activo',
+            'fecha_registro',
+            'fecha_actualizacion'
+        ]
+
+        read_only_fields = [
+            'id_registro_facial',
+            'fecha_registro',
+            'fecha_actualizacion'
+        ]
         
 class SeguimientoAdministracionMedicamentoSerializer(serializers.ModelSerializer):
     class Meta:

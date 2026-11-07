@@ -61,7 +61,6 @@ from .models import (
 
 from .serializers import (
     AsignacionTurnoUsuarioSerializer,
-    RegistrosFacialesSerializer,
 )
 
 from livekit import api
@@ -190,7 +189,8 @@ from .serializers import (
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer, 
     SeguimientoAdministracionMedicamentoSerializer , 
-   registrosFacialesSerializer,
+    RegistrosFacialesSerializer,
+
 )
 
 

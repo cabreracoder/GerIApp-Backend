@@ -518,6 +518,36 @@ class Pacientes(models.Model):
         managed = False
         db_table = 'pacientes'
 
+class RegistrosFaciales(models.Model):
+    id_registro_facial = models.AutoField(primary_key=True)
+
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        related_name='registros_faciales'
+    )
+
+    # Embedding facial cifrado
+    embedding = models.BinaryField()
+
+    # Referencia de la fotografía en Cloudinary
+    url_fotografia = models.TextField()
+    public_id = models.CharField(max_length=255)
+
+    # Estado del registro
+    activo = models.BooleanField(default=True)
+
+    # Fechas de control
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'registros_faciales'
+
+    def __str__(self):
+        return f'Registro facial {self.id_registro_facial} - Paciente {self.id_paciente_id}'
 
 class PerfilProfesional(models.Model):
     id_perfil_profesional = models.AutoField(primary_key=True)

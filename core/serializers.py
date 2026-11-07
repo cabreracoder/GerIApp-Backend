@@ -61,9 +61,14 @@ from .models import (
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
     SeguimientoAdministracionMedicamento,
+    ReconocimientoFacial,
 )
 
-
+class ReconocimientoFacialSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReconocimientoFacial
+        fields = '__all__'
+        
 class SeguimientoAdministracionMedicamentoSerializer(serializers.ModelSerializer):
     class Meta:
         model = SeguimientoAdministracionMedicamento

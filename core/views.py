@@ -136,7 +136,8 @@ from .models import (
     FormulacionMedicamentos,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
-    SeguimientoAdministracionMedicamento,   
+    SeguimientoAdministracionMedicamento,
+    ReconocimientoFacial,      
 )
 
 from .serializers import (
@@ -200,6 +201,7 @@ from .serializers import (
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer, 
     SeguimientoAdministracionMedicamentoSerializer , 
+    ReconocimientoFacialSerializer
 )
 
 
@@ -3051,6 +3053,11 @@ class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
 
+
+class reconocimientoFacialViewSet(viewsets.ModelViewSet):
+    queryset = ReconocimientoFacial.objects.all()
+    serializer_class = ReconocimientoFacialSerializer
+    
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE
 # ============================================================

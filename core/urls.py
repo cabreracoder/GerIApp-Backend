@@ -29,7 +29,8 @@ from .views import (
     CierreTurnoViewSet,
     ConfiguracionControlesPeriodicosViewSet,
     ControlesPeriodicosBitacoraViewSet,
-    SeguimientoAdministracionMedicamentoViewSet,    
+    SeguimientoAdministracionMedicamentoViewSet, 
+    reconocimientoFacialViewSet,   
 )
 
 # ==============================
@@ -282,6 +283,8 @@ router.register(r'configuracion_controles_periodicos', ConfiguracionControlesPer
 router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraViewSet)
 
 router.register(r'seguimiento_administracion_medicamento', SeguimientoAdministracionMedicamentoViewSet) 
+
+router.register(r'reconocimiento_facial', reconocimientoFacialViewSet)
 
 urlpatterns = [
 

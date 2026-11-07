@@ -124,7 +124,8 @@ from .models import (
     FormulacionMedicamentos,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
-    SeguimientoAdministracionMedicamento,   
+    SeguimientoAdministracionMedicamento,
+    ReconocimientoFacial,      
 )
 
 from .serializers import (
@@ -188,6 +189,7 @@ from .serializers import (
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer, 
     SeguimientoAdministracionMedicamentoSerializer , 
+    ReconocimientoFacialSerializer
 )
 
 
@@ -2698,6 +2700,10 @@ class ConfiguracionControlesPeriodicosViewSet(viewsets.ModelViewSet):
 class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
     queryset = ControlesPeriodicosBitacora.objects.all()
     serializer_class = ControlesPeriodicosBitacoraSerializer
+
+class reconocimientoFacialViewSet(viewsets.ModelViewSet):
+    queryset = ReconocimientoFacial.objects.all()
+    serializer_class = ReconocimientoFacialSerializer
 
 
 # ============================================================

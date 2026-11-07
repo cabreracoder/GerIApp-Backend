@@ -73,6 +73,7 @@ from .models import (
 
 from .serializers import (
     AsignacionTurnoUsuarioSerializer,
+    RegistrosFacialesSerializer,
 )
 
 from livekit import api
@@ -137,7 +138,7 @@ from .models import (
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
     SeguimientoAdministracionMedicamento,
-    ReconocimientoFacial,      
+    RegistrosFaciales,     
 )
 
 from .serializers import (
@@ -201,7 +202,7 @@ from .serializers import (
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer, 
     SeguimientoAdministracionMedicamentoSerializer , 
-    ReconocimientoFacialSerializer
+   registrosFacialesSerializer,
 )
 
 
@@ -3053,11 +3054,9 @@ class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
 
-
-class reconocimientoFacialViewSet(viewsets.ModelViewSet):
-    queryset = ReconocimientoFacial.objects.all()
-    serializer_class = ReconocimientoFacialSerializer
-    
+class RegistrosFacialesViewSet(viewsets.ModelViewSet):
+    queryset = RegistrosFaciales.objects.all()
+    serializer_class = RegistrosFacialesSerializer
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE
 # ============================================================

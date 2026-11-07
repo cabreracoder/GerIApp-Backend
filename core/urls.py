@@ -4,7 +4,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 
 from rest_framework.routers import DefaultRouter
-from .views import obtener_token_livekit
+from .views import RegistrosFacialeslViewSet, obtener_token_livekit
 # ==============================
 # ViewSets principales
 # ==============================
@@ -30,7 +30,7 @@ from .views import (
     ConfiguracionControlesPeriodicosViewSet,
     ControlesPeriodicosBitacoraViewSet,
     SeguimientoAdministracionMedicamentoViewSet, 
-    reconocimientoFacialViewSet,   
+    RegistrosFacialeslViewSet,  
 )
 
 # ==============================
@@ -288,7 +288,7 @@ router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraVie
 
 router.register(r'seguimiento_administracion_medicamento', SeguimientoAdministracionMedicamentoViewSet) 
 
-router.register(r'reconocimiento_facial', reconocimientoFacialViewSet)
+router.register(r'registros_faciales', RegistrosFacialeslViewSet)
 
 urlpatterns = [
 

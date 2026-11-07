@@ -61,6 +61,7 @@ from .models import (
 
 from .serializers import (
     AsignacionTurnoUsuarioSerializer,
+    RegistrosFacialesSerializer,
 )
 
 from livekit import api
@@ -125,7 +126,7 @@ from .models import (
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
     SeguimientoAdministracionMedicamento,
-    ReconocimientoFacial,      
+    RegistrosFaciales,     
 )
 
 from .serializers import (
@@ -189,7 +190,7 @@ from .serializers import (
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer, 
     SeguimientoAdministracionMedicamentoSerializer , 
-    ReconocimientoFacialSerializer
+   registrosFacialesSerializer,
 )
 
 
@@ -2701,9 +2702,9 @@ class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
     queryset = ControlesPeriodicosBitacora.objects.all()
     serializer_class = ControlesPeriodicosBitacoraSerializer
 
-class reconocimientoFacialViewSet(viewsets.ModelViewSet):
-    queryset = ReconocimientoFacial.objects.all()
-    serializer_class = ReconocimientoFacialSerializer
+class RegistrosFacialeslViewSet(viewsets.ModelViewSet):
+    queryset = RegistrosFaciales.objects.all()
+    serializer_class = RegistrosFacialesSerializer
 
 
 # ============================================================

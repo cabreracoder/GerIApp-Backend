@@ -92,7 +92,8 @@ class PacientesSerializer(serializers.ModelSerializer):
     # Permite recibir una imagen desde FormData
     foto = serializers.CharField(
         required=False,
-        allow_null=True
+        allow_null=True,
+        allow_blank=True
     )
 
     class Meta:
@@ -126,11 +127,24 @@ class PacientesSerializer(serializers.ModelSerializer):
 
         from .models import Habitaciones, Camas, Pacientes, Sedes
 
-        # Obtener la sede seleccionada
-        sede = attrs.get(
-            'id_sede',
-            self.instance.id_sede if self.instance else None
-        )
+        # Obtener la sede del usuario autenticado
+        request = self.context.get('request')
+
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError({
+                'id_sede': 'No se pudo verificar la sede del usuario.'
+            })
+
+        sede = getattr(request.user, 'id_sede', None)
+
+        if sede is None:
+            raise serializers.ValidationError({
+                'id_sede': 'Tu usuario no tiene una sede asignada.'
+            })
+
+        # Forzar la sede autorizada, ignorando la enviada por Angular
+        attrs['id_sede'] = sede
+
 
         # Validar sede obligatoria
         if sede is None:

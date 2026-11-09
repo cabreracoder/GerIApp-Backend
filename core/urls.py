@@ -289,7 +289,11 @@ router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraVie
 
 router.register(r'seguimiento_administracion_medicamento', SeguimientoAdministracionMedicamentoViewSet) 
 
-router.register(r'registros_faciales', RegistrosFacialesViewSet)
+router.register(
+    r'registros_faciales',
+    RegistrosFacialesViewSet,
+    basename='registros-faciales'
+)
 
 urlpatterns = [
 

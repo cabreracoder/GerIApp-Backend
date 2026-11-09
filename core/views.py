@@ -1,3 +1,4 @@
+
 from rest_framework import viewsets, status, parsers
 from rest_framework.views import APIView
 from rest_framework.decorators import (
@@ -8,6 +9,11 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.parsers import (
+    MultiPartParser,
+    FormParser,
+    JSONParser,
+)
 
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
@@ -16,49 +22,68 @@ from django.db.models import Q
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-#importacion para resumen de turno 
-from datetime import datetime, timedelta
-#ajuste de fecha cierre turno
-from zoneinfo import ZoneInfo
 
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+# ==========================================
+# IMPORTACIONES DE PYTHON
+# ==========================================
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
+
+import logging
+import os
+import random
+import re
+
+
+# ==========================================
+# OTRAS DEPENDENCIAS
+# ==========================================
+
+from dateutil.relativedelta import relativedelta
+
+import sib_api_v3_sdk
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+
+from firebase_admin import messaging
+
+from google.oauth2 import id_token
+from google.auth.transport import requests
+
+from livekit import api
+
+
+# ==========================================
+# SERVICIOS DEL PROYECTO
+# ==========================================
 
 from servicios.cloudinary_service import (
     subir_imagen,
     eliminar_imagen,
 )
 
-import sib_api_v3_sdk
-from django.db import transaction
-from django.conf import settings
-import logging
-import os
-import random
-import re
+from reconocimiento_facial.reconocedor import ReconocedorFacial
+from reconocimiento_facial.cifrado import cifrar_embedding
 
-from urllib.parse import urlparse
-from datetime import timedelta
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+# ==========================================
+# CONFIGURACIONES Y UTILIDADES LOCALES
+# ==========================================
 
-from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
 
-from google.oauth2 import id_token
-from google.auth.transport import requests
-
-from .authentication import crear_token_usuario
+from .authentication import GeriAppTokenAuthentication, crear_token_usuario
 from .permissions import EsSuperadministradorOMetodoLectura
 
-#importaciones del view para funcionar lo  de el tiempo de la bitacora 
-from datetime import timedelta
-from dateutil.relativedelta import relativedelta
-from django.utils import timezone
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
-from rest_framework.response import Response
+
+# ==========================================
+# MODELOS
+# ==========================================
 
 from .models import (
     AsignacionTurnoUsuario,
@@ -69,22 +94,9 @@ from .models import (
     Habitaciones,
     Pacientes,
     AsignacionPacienteCuidador,
-)
-
-from .serializers import (
-    AsignacionTurnoUsuarioSerializer,
-)
-
-from livekit import api
-
-logger = logging.getLogger(__name__)
-
-from .models import (
     HistoriaClinicas,
-    Pacientes,
     Medicamentos,
     Roles,
-    Usuarios,
     Documentos,
     Enfermedades,
     Diagnosticos,
@@ -107,9 +119,7 @@ from .models import (
     TipoEmergencia,
     EventosAdversos,
     ImagenesEventoAdverso,
-    AsignacionPacienteCuidador,
     Turnos,
-    AsignacionTurnoUsuario,
     Permisos,
     PermisosRol,
     FamiliarResponsable,
@@ -119,15 +129,12 @@ from .models import (
     CuidadosEnfermeria,
     ElementosPaciente,
     RecuperacionPassword,
-    Notificaciones,
     NotificacionDestinatario,
     Citas,
     FcmTokens,
     Camas,
-    Habitaciones,
     Fundaciones,
     Sedes,
-    Camaras,
     TiposEventoIa,
     EventosIa,
     EvidenciasIa,
@@ -137,10 +144,16 @@ from .models import (
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
     SeguimientoAdministracionMedicamento,
-    RegistrosFaciales,     
+    RegistrosFaciales,
 )
 
+
+# ==========================================
+# SERIALIZADORES
+# ==========================================
+
 from .serializers import (
+    AsignacionTurnoUsuarioSerializer,
     DiagnosticosSerializer,
     EnfermedadesSerializer,
     MedicamentosSerializer,
@@ -171,7 +184,6 @@ from .serializers import (
     ImagenesEventoAdversoSerializer,
     AsignacionPacienteCuidadorSerializer,
     TurnosSerializer,
-    AsignacionTurnoUsuarioSerializer,
     PermisosSerializer,
     PermisosRolSerializer,
     FamiliarResponsableSerializer,
@@ -199,11 +211,17 @@ from .serializers import (
     FormulacionMedicamentosSerializer,
     CierreTurnoSerializer,
     ConfiguracionControlesPeriodicosSerializer,
-    ControlesPeriodicosBitacoraSerializer, 
-    SeguimientoAdministracionMedicamentoSerializer , 
+    ControlesPeriodicosBitacoraSerializer,
+    SeguimientoAdministracionMedicamentoSerializer,
     RegistrosFacialesSerializer,
-
 )
+
+
+# ==========================================
+# CONFIGURACIÓN DEL LOGGER
+# ==========================================
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -761,6 +779,7 @@ class ConfiguracionInstitucionView(APIView):
 class PacientesViewSet(viewsets.ModelViewSet):
     queryset = Pacientes.objects.all()
     serializer_class = PacientesSerializer
+    permission_classes = [IsAuthenticated]
 
     def _obtener_id_rol(self, usuario):
         rol = getattr(usuario, "id_rol", None)
@@ -829,6 +848,10 @@ class PacientesViewSet(viewsets.ModelViewSet):
                 )
             })
 
+        # Forzar la sede correspondiente a la habitación autorizada
+        serializer.validated_data["id_sede"] = habitacion.id_sede
+
+        # Guardar el nombre de la sede
         serializer.validated_data["sede"] = habitacion.id_sede.nombre
 
     def perform_create(self, serializer):
@@ -986,7 +1009,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         )
 
     # =====================================================
-    # CREAR USUARIO
+    # REAR USUARIO
     # =====================================================
 
     def create(self, request, *args, **kwargs):
@@ -3054,10 +3077,416 @@ class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
 
-class RegistrosFacialesViewSet(viewsets.ModelViewSet):
-    queryset = RegistrosFaciales.objects.all()
+# ============================================================
+# VIEWSET DE REGISTROS FACIALES
+# ============================================================
+
+class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
+
     serializer_class = RegistrosFacialesSerializer
-    
+    authentication_classes = [GeriAppTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    authentication_classes = [GeriAppTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    # ==========================================
+    # OBTENER ID DEL ROL
+    # ==========================================
+
+    def _obtener_id_rol(self, usuario):
+
+        rol = getattr(usuario, "id_rol", None)
+
+        return (
+            getattr(rol, "id_rol", None)
+            if rol is not None
+            else getattr(usuario, "id_rol_id", None)
+        )
+
+    # ==========================================
+    # CONSULTAR REGISTROS FACIALES
+    # ==========================================
+
+    def get_queryset(self):
+
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return RegistrosFaciales.objects.none()
+
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return RegistrosFaciales.objects.none()
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return RegistrosFaciales.objects.none()
+
+        # Obtener las habitaciones pertenecientes a la sede
+        habitaciones_sede = Habitaciones.objects.filter(
+            id_sede_id=sede_id
+        ).values_list("id_habitacion", flat=True)
+
+        # Consultar registros faciales de pacientes activos
+        # que estén ubicados en habitaciones de la sede
+        return RegistrosFaciales.objects.filter(
+            activo=True,
+            id_paciente__estado=True,
+            id_paciente__habitacion__in=habitaciones_sede
+        ).select_related("id_paciente").distinct()
+
+    # ==========================================
+    # VALIDAR PACIENTE Y SEDE
+    # ==========================================
+
+    def _validar_paciente(self, id_paciente):
+
+        usuario = self.request.user
+
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return None
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return None
+
+        # Obtener habitaciones de la sede del usuario
+        habitaciones_sede = Habitaciones.objects.filter(
+            id_sede_id=sede_id
+        ).values_list("id_habitacion", flat=True)
+
+        # Buscar paciente activo que esté en una habitación
+        # perteneciente a la sede del usuario
+        paciente = Pacientes.objects.filter(
+            id_paciente=id_paciente,
+            estado=True,
+            habitacion__in=habitaciones_sede
+        ).first()
+
+        return paciente
+
+    # ==========================================
+    # PROCESAR FOTOGRAFÍA Y GENERAR EMBEDDING
+    # ==========================================
+
+    def _procesar_fotografia(self, fotografia):
+
+        if not fotografia:
+            raise ValueError("Debe seleccionar una fotografía.")
+
+        reconocedor = ReconocedorFacial()
+
+        resultados = reconocedor.procesar_imagen(fotografia)
+
+        if len(resultados) == 0:
+            raise ValueError(
+                "No se detectó ningún rostro en la fotografía."
+            )
+
+        if len(resultados) > 1:
+            raise ValueError(
+                "La fotografía debe contener únicamente un rostro."
+            )
+
+        embedding = resultados[0]["embedding"]
+
+        embedding_bytes = embedding.tobytes()
+
+        embedding_cifrado = cifrar_embedding(embedding_bytes)
+
+        fotografia.seek(0)
+
+        return embedding_cifrado
+
+    # ==========================================
+    # REGISTRAR ROSTRO
+    # ==========================================
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="registrar",
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def registrar(self, request):
+
+        id_paciente = request.data.get("id_paciente")
+        fotografia = request.FILES.get("fotografia")
+
+        if not id_paciente:
+            return Response(
+                {"error": "El id_paciente es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not fotografia:
+            return Response(
+                {"error": "Debe enviar una fotografía."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        paciente = self._validar_paciente(id_paciente)
+
+        if not paciente:
+            return Response(
+                {
+                    "error": "El paciente no existe, está inactivo "
+                             "o no pertenece a tu sede."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Verificar si ya existe un registro facial activo
+        registro_existente = RegistrosFaciales.objects.filter(
+            id_paciente=paciente,
+            activo=True
+        ).first()
+
+        if registro_existente:
+            return Response(
+                {
+                    "error": "El paciente ya tiene un registro facial activo.",
+                    "id_registro_facial": registro_existente.id_registro_facial
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        # Procesar fotografía
+        try:
+
+            embedding_cifrado = self._procesar_fotografia(fotografia)
+
+        except ValueError as error:
+
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception:
+
+            logger.exception("Error procesando fotografía facial.")
+
+            return Response(
+                {"error": "No fue posible procesar la fotografía."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        resultado_cloudinary = None
+
+        try:
+
+            # Subir fotografía a Cloudinary
+            resultado_cloudinary = subir_imagen(
+                fotografia,
+                carpeta="geriapp/reconocimiento_facial"
+            )
+
+            if not resultado_cloudinary.get("secure_url"):
+                raise RuntimeError("Cloudinary no devolvió la URL.")
+
+            if not resultado_cloudinary.get("public_id"):
+                raise RuntimeError("Cloudinary no devolvió el public_id.")
+
+            # Guardar registro facial en PostgreSQL
+            with transaction.atomic():
+
+                registro = RegistrosFaciales.objects.create(
+                    id_paciente=paciente,
+                    embedding=embedding_cifrado,
+                    url_fotografia=resultado_cloudinary["secure_url"],
+                    public_id=resultado_cloudinary["public_id"],
+                    activo=True
+                )
+
+            serializer = self.get_serializer(registro)
+
+            return Response(
+                {
+                    "mensaje": "Registro facial creado correctamente.",
+                    "registro": serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception:
+
+            logger.exception("Error guardando el registro facial.")
+
+            # Si falla el registro en la base de datos,
+            # eliminar la fotografía subida a Cloudinary
+            if resultado_cloudinary and resultado_cloudinary.get("public_id"):
+
+                try:
+                    eliminar_imagen(resultado_cloudinary["public_id"])
+
+                except Exception:
+                    logger.exception(
+                        "No fue posible eliminar la imagen de Cloudinary."
+                    )
+
+            return Response(
+                {"error": "No fue posible guardar el registro facial."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    # ==========================================
+    # ACTUALIZAR ROSTRO
+    # ==========================================
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="actualizar",
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def actualizar(self, request):
+
+        id_paciente = request.data.get("id_paciente")
+        fotografia = request.FILES.get("fotografia")
+
+        if not id_paciente:
+            return Response(
+                {"error": "El id_paciente es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not fotografia:
+            return Response(
+                {"error": "Debe enviar una nueva fotografía."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        paciente = self._validar_paciente(id_paciente)
+
+        if not paciente:
+            return Response(
+                {
+                    "error": "El paciente no existe, está inactivo "
+                             "o no pertenece a tu sede."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Buscar registro facial activo del paciente
+        registro = RegistrosFaciales.objects.filter(
+            id_paciente=paciente,
+            activo=True
+        ).first()
+
+        if not registro:
+            return Response(
+                {
+                    "error": "El paciente no tiene un registro facial activo."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Procesar nueva fotografía
+        try:
+
+            embedding_cifrado = self._procesar_fotografia(fotografia)
+
+        except ValueError as error:
+
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception:
+
+            logger.exception("Error procesando nueva fotografía facial.")
+
+            return Response(
+                {"error": "No fue posible procesar la nueva fotografía."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        resultado_cloudinary = None
+
+        public_id_anterior = registro.public_id
+
+        try:
+
+            # Subir nueva fotografía
+            resultado_cloudinary = subir_imagen(
+                fotografia,
+                carpeta="geriapp/reconocimiento_facial"
+            )
+
+            if not resultado_cloudinary.get("secure_url"):
+                raise RuntimeError("Cloudinary no devolvió la URL.")
+
+            if not resultado_cloudinary.get("public_id"):
+                raise RuntimeError("Cloudinary no devolvió el public_id.")
+
+            # Actualizar registro facial
+            with transaction.atomic():
+
+                registro.embedding = embedding_cifrado
+
+                registro.url_fotografia = resultado_cloudinary["secure_url"]
+
+                registro.public_id = resultado_cloudinary["public_id"]
+
+                registro.save(
+                    update_fields=[
+                        "embedding",
+                        "url_fotografia",
+                        "public_id",
+                        "fecha_actualizacion"
+                    ]
+                )
+
+            # Eliminar fotografía anterior después de guardar la nueva
+            if public_id_anterior:
+
+                try:
+
+                    eliminar_imagen(public_id_anterior)
+
+                except Exception:
+
+                    logger.exception(
+                        "No fue posible eliminar la fotografía anterior."
+                    )
+
+            serializer = self.get_serializer(registro)
+
+            return Response(
+                {
+                    "mensaje": "Registro facial actualizado correctamente.",
+                    "registro": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception:
+
+            logger.exception("Error actualizando el registro facial.")
+
+            # Si falla la actualización, eliminar la nueva imagen
+            if resultado_cloudinary and resultado_cloudinary.get("public_id"):
+
+                try:
+
+                    eliminar_imagen(resultado_cloudinary["public_id"])
+
+                except Exception:
+
+                    logger.exception(
+                        "No fue posible eliminar la nueva imagen de Cloudinary."
+                    )
+
+            return Response(
+                {"error": "No fue posible actualizar el registro facial."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )    
+
+
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE
 # ============================================================

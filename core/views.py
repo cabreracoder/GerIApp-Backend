@@ -146,6 +146,7 @@ from .models import (
     ControlesPeriodicosBitacora,
     SeguimientoAdministracionMedicamento,
     RegistrosFaciales,
+    DocumentosHistoriaClinica, 
 )
 
 
@@ -215,6 +216,7 @@ from .serializers import (
     ControlesPeriodicosBitacoraSerializer,
     SeguimientoAdministracionMedicamentoSerializer,
     RegistrosFacialesSerializer,
+    DocumentosHistoriaClinicaSerializer,
 )
 
 
@@ -769,6 +771,11 @@ def cambiar_password_recuperacion(request):
 # ============================================================
 # VIEWSETS
 # ============================================================
+
+class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
+    queryset = DocumentosHistoriaClinica.objects.all()
+    serializer_class = DocumentosHistoriaClinicaSerializer
+    permission_classes = [IsAuthenticated]
 
 class ConfiguracionInstitucionView(APIView):
     def get(self, request):

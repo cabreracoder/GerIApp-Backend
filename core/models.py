@@ -341,7 +341,19 @@ class HistoriaClinicas(models.Model):
         managed = False
         db_table = 'historia_clinicas'
 
+class DocumentosHistoriaClinica(models.Model):
+    id_documento = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente')
+    archivo = models.CharField(max_length=500)
+    nombre_archivo = models.CharField(max_length=255)
+    fecha_subida = models.DateTimeField()
+    descripcion = models.CharField(max_length=500, blank=True, null=True)
+    estado = models.BooleanField()
 
+    class Meta:
+        managed = False
+        db_table = 'documentos_historia_clinica'
+        
 class ImagenesEventoAdverso(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     id_evento_adverso = models.ForeignKey(EventosAdversos, models.DO_NOTHING, db_column='id_evento_adverso', blank=True, null=True)

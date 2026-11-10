@@ -98,7 +98,20 @@ class ReconocedorFacial:
 
             resultados.append({
                 "indice": indice,
+
+                # Coordenadas del rostro detectado por YuNet
+                "x": rostro["x"],
+                "y": rostro["y"],
+                "ancho": rostro["ancho"],
+                "alto": rostro["alto"],
+
+                # Puntos faciales
+                "puntos_faciales": rostro["puntos_faciales"],
+
+                # Confianza de detección
                 "confianza_deteccion": rostro["confianza"],
+
+                # Embedding generado por SFace
                 "embedding": embedding
             })
 
@@ -108,7 +121,6 @@ class ReconocedorFacial:
             )
 
         return resultados
-
 
 # ==========================================
 # PRUEBA DEL RECONOCEDOR FACIAL
@@ -129,6 +141,16 @@ if __name__ == "__main__":
     print("\nRESULTADO DE LA PRUEBA")
 
     for resultado in resultados:
+
+        print(f"\nRostro {resultado['indice'] + 1}")
+
+        print(
+            "Coordenadas:",
+            resultado["x"],
+            resultado["y"],
+            resultado["ancho"],
+            resultado["alto"]
+        )
 
         print(
             "Dimensiones del embedding:",

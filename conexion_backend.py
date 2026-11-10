@@ -1,8 +1,11 @@
-
 import os
 import requests
+import base64
+import numpy as np
 
 from datetime import datetime, timezone
+
+from reconocimiento_facial.cifrado import descifrar_embedding
 
 
 # ============================================================
@@ -16,6 +19,7 @@ API_CAMARAS = f"{BASE_URL}/camaras/"
 API_URL = f"{BASE_URL}/eventos_ia/"
 API_SUBIR_IMAGEN = f"{BASE_URL}/subir-imagen/"
 API_EVIDENCIAS = f"{BASE_URL}/evidencias_ia/"
+API_PLANTILLAS = f"{BASE_URL}/registros_faciales/plantillas/"
 
 sesion = requests.Session()
 autenticado = False
@@ -187,6 +191,143 @@ def obtener_pacientes_activos():
             f"No se pudieron consultar los pacientes: {error}"
         ) from error
 
+# ============================================================
+# CONSULTAR Y DESCIFRAR PLANTILLAS FACIALES POR CÁMARA
+# ============================================================
+
+def obtener_plantillas_faciales(id_camara):
+    """
+    Consulta las plantillas faciales asociadas a una cámara.
+
+    Los embeddings llegan cifrados desde Django.
+    Se descifran localmente y se convierten en vectores
+    NumPy de 128 dimensiones.
+
+    Retorna una lista de diccionarios:
+    [
+        {
+            "id_registro_facial": 1,
+            "id_paciente": 1,
+            "embedding": numpy.ndarray
+        }
+    ]
+    """
+
+    asegurar_autenticacion()
+
+    try:
+        respuesta = sesion.get(
+            API_PLANTILLAS,
+            params={"id_camara": id_camara},
+            timeout=(5, 30)
+        )
+
+        # Renovar autenticación si el token expiró
+        if respuesta.status_code == 401:
+            autenticar_geriapp()
+
+            respuesta = sesion.get(
+                API_PLANTILLAS,
+                params={"id_camara": id_camara},
+                timeout=(5, 30)
+            )
+
+        respuesta.raise_for_status()
+
+        datos = respuesta.json()
+
+        if not isinstance(datos, dict):
+            raise RuntimeError(
+                "La respuesta de plantillas no tiene el formato esperado."
+            )
+
+        registros = datos.get("plantillas", [])
+
+        if not isinstance(registros, list):
+            raise RuntimeError(
+                "El listado de plantillas tiene un formato inválido."
+            )
+
+        plantillas_descifradas = []
+
+        for registro in registros:
+
+            try:
+                # 1. Obtener los datos del paciente
+                id_paciente = registro.get("id_paciente")
+                id_registro = registro.get("id_registro_facial")
+
+                embedding_base64 = registro.get(
+                    "embedding_cifrado"
+                )
+
+                if not embedding_base64:
+                    print(
+                        f"Plantilla del registro {id_registro} "
+                        "sin embedding."
+                    )
+                    continue
+
+                # 2. Decodificar Base64
+                embedding_cifrado = base64.b64decode(
+                    embedding_base64,
+                    validate=True
+                )
+
+                # 3. Descifrar localmente con Fernet
+                embedding_bytes = descifrar_embedding(
+                    embedding_cifrado
+                )
+
+                # 4. Convertir bytes a vector NumPy
+                embedding = np.frombuffer(
+                    embedding_bytes,
+                    dtype=np.float32
+                ).copy()
+
+                # 5. Validar dimensiones
+                if embedding.shape != (128,):
+                    print(
+                        f"Dimensiones incorrectas en el registro "
+                        f"{id_registro}: {embedding.shape}"
+                    )
+                    continue
+
+                # 6. Validar valores numéricos
+                if not np.all(np.isfinite(embedding)):
+                    print(
+                        f"Embedding inválido en el registro "
+                        f"{id_registro}."
+                    )
+                    continue
+
+                # 7. Guardar plantilla descifrada
+                plantillas_descifradas.append({
+                    "id_registro_facial": id_registro,
+                    "id_paciente": id_paciente,
+                    "embedding": embedding
+                })
+
+            except (ValueError, TypeError) as error:
+                print(
+                    f"No se pudo procesar la plantilla "
+                    f"{registro.get('id_registro_facial')}: {error}"
+                )
+                continue
+
+        print(
+            f"Cámara {id_camara}: "
+            f"{len(plantillas_descifradas)} plantillas faciales "
+            "descifradas correctamente."
+        )
+
+        return plantillas_descifradas
+
+    except requests.exceptions.RequestException as error:
+        raise RuntimeError(
+            f"No se pudieron consultar las plantillas faciales "
+            f"de la cámara {id_camara}: {error}"
+        ) from error
 
 # ============================================================
 # ENVIAR EVENTOS A GERIAPP

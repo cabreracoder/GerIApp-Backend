@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
+import base64
 import logging
 import os
 import random
@@ -3136,6 +3137,123 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
             id_paciente__habitacion__in=habitaciones_sede
         ).select_related("id_paciente").distinct()
 
+    # ==========================================
+    # OBTENER PLANTILLAS FACIALES POR CÁMARA
+    # ==========================================
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="plantillas"
+    )
+    def plantillas(self, request):
+
+        # 1. Obtener el usuario autenticado
+        usuario = request.user
+
+        if not usuario.is_authenticated:
+            return Response(
+                {"error": "Usuario no autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # 2. Validar el rol
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return Response(
+                {"error": "No tienes permisos para consultar plantillas faciales."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 3. Obtener la sede del usuario
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return Response(
+                {"error": "Tu usuario no tiene una sede asignada."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 4. Obtener el ID de la cámara
+        id_camara = request.query_params.get("id_camara")
+
+        if not id_camara:
+            return Response(
+                {"error": "El parámetro id_camara es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            id_camara = int(id_camara)
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "El ID de la cámara debe ser un número válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Buscar la cámara y verificar que pertenezca a la sede
+        camara = Camaras.objects.filter(
+            id_camara=id_camara,
+            estado=True,
+            id_habitacion__estado=True,
+            id_habitacion__id_sede_id=sede_id
+        ).select_related(
+            "id_habitacion"
+        ).first()
+
+        if not camara:
+            return Response(
+                {
+                    "error": "La cámara no existe, está inactiva "
+                             "o no pertenece a tu sede."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 6. Obtener la habitación de la cámara
+        id_habitacion = camara.id_habitacion_id
+
+        if not id_habitacion:
+            return Response(
+                {"error": "La cámara no tiene una habitación asignada."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 7. Consultar registros faciales de pacientes activos
+        #    que pertenezcan a la habitación de esta cámara
+        registros = RegistrosFaciales.objects.filter(
+            activo=True,
+            id_paciente__estado=True,
+            id_paciente__habitacion=id_habitacion
+        ).select_related(
+            "id_paciente"
+        )
+
+        # 8. Preparar las plantillas para el programa local
+        plantillas = []
+
+        for registro in registros:
+
+            embedding_cifrado = bytes(registro.embedding)
+
+            plantillas.append({
+                "id_registro_facial": registro.id_registro_facial,
+                "id_paciente": registro.id_paciente_id,
+                "embedding_cifrado": base64.b64encode(
+                    embedding_cifrado
+                ).decode("ascii")
+            })
+
+        # 9. Responder
+        return Response(
+            {
+                "id_camara": camara.id_camara,
+                "id_habitacion": id_habitacion,
+                "total_plantillas": len(plantillas),
+                "plantillas": plantillas
+            },
+            status=status.HTTP_200_OK
+        )
+    
     # ==========================================
     # VALIDAR PACIENTE Y SEDE
     # ==========================================

@@ -344,9 +344,12 @@ class HistoriaClinicas(models.Model):
 class DocumentosHistoriaClinica(models.Model):
     id_documento = models.AutoField(primary_key=True)
     id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente')
-    archivo = models.CharField(max_length=500)
+    archivo = models.FileField(
+    upload_to='documentos_historia_clinica/',
+    max_length=500
+)
     nombre_archivo = models.CharField(max_length=255)
-    fecha_subida = models.DateTimeField()
+    fecha_subida = models.DateTimeField(auto_now_add=True)
     descripcion = models.CharField(max_length=500, blank=True, null=True)
     estado = models.BooleanField()
 

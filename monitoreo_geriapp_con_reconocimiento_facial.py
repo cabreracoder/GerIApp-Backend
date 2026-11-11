@@ -164,6 +164,8 @@ def crear_estado():
         "estado_reconocimiento_facial": "SIN INICIAR",
         "rostro_paciente_bbox": None,
         "ultima_deteccion_rostro_paciente": 0.0,
+        # Última detección de cualquier rostro, reconocido o no.
+        "ultima_deteccion_rostro": 0.0,
 
         # Seguimiento corporal independiente por cámara.
         "bbox_cuerpo_paciente": None,
@@ -979,6 +981,7 @@ def reiniciar_ciclo_camara(nombre, motivo="AUSENCIA DE PERSONAS"):
 
     estado["ultima_coincidencia_facial"] = 0.0
     estado["ultimo_procesamiento_facial"] = 0.0
+    estado["ultima_deteccion_rostro"] = 0.0
     estado["ultima_similitud_facial"] = 0.0
     estado["candidato_id_paciente"] = None
     estado["contador_coincidencias_facial"] = 0
@@ -1039,7 +1042,6 @@ def actualizar_identidad_facial(nombre, frame):
         estado["rostro_paciente_bbox"] = None
         estado["ultima_deteccion_rostro_paciente"] = 0.0
         estado["estado_reconocimiento_facial"] = "SIN PLANTILLAS"
-        return
 
     # Al no existir una identidad confirmada, buscar rostros con mayor
     # frecuencia. Una vez identificado el paciente, volver al FPS normal.
@@ -1122,6 +1124,11 @@ def actualizar_identidad_facial(nombre, frame):
             f"[{nombre}] Error en reconocimiento facial: {error}"
         )
         return
+
+    # Registrar presencia facial independientemente de que el rostro
+    # pertenezca a un paciente registrado o pueda asociarse a un cuerpo.
+    if len(rostros) > 0:
+        estado["ultima_deteccion_rostro"] = ahora
 
     # ==================================================
     # 1. CUANDO NO SE DETECTAN ROSTROS
@@ -1584,38 +1591,52 @@ def procesar_camara(nombre, modelo):
 
     config = CAMARAS_CONFIG[nombre]
 
-    hay_detecciones = (
+    # Separar detección de cajas YOLO, puntos de pose y presencia facial.
+    # Una persona puede estar visible de cara aunque YOLO no genere pose.
+    hay_personas_yolo = (
         resultado.boxes is not None
         and len(resultado.boxes) > 0
+    )
+    hay_detecciones_pose = (
+        hay_personas_yolo
         and resultado.keypoints is not None
     )
 
-    estado["persona_detectada"] = bool(hay_detecciones)
-    identidad_confirmada = False
-    bbox_rostro = None
-    rostro_reciente = False
+    # Ejecutar reconocimiento facial sin depender de que YOLO encuentre
+    # cajas o keypoints. La propia función controla su intervalo de FPS.
+    actualizar_identidad_facial(nombre, frame)
+
+    tiempo_ultima_cara = estado.get("ultima_deteccion_rostro", 0.0)
+    rostro_reciente_cualquiera = (
+        tiempo_ultima_cara > 0
+        and (time.time() - tiempo_ultima_cara) <= 2.0
+    )
+    hay_presencia = hay_personas_yolo or rostro_reciente_cualquiera
+    estado["persona_detectada"] = bool(hay_presencia)
+
+    identidad_confirmada = config.get("id_paciente") is not None
+    bbox_rostro = estado.get("rostro_paciente_bbox")
+    tiempo_rostro = estado.get(
+        "ultima_deteccion_rostro_paciente", 0.0
+    )
+    rostro_reciente = (
+        bbox_rostro is not None
+        and tiempo_rostro > 0
+        and (time.time() - tiempo_rostro) <= 2.0
+    )
     indice = None
 
     # ==================================================
-    # DETECTAR HABITACIÓN VACÍA Y REINICIAR EL CICLO
+    # DETECTAR AUSENCIA REAL (SIN CAJAS YOLO NI ROSTROS)
     # ==================================================
-    if not hay_detecciones:
+    if not hay_presencia:
         if estado.get("inicio_sin_personas") is None:
             estado["inicio_sin_personas"] = time.time()
-            # Invalidar de inmediato el ancla corporal: aunque la cámara
-            # pierda a alguien por un instante, nunca asociar al siguiente
-            # cuerpo usando la caja de la persona anterior.
             estado["bbox_cuerpo_paciente"] = None
             estado["ultima_deteccion_cuerpo_paciente"] = 0.0
             estado["metodo_asociacion_cuerpo"] = "SIN PERSONAS EN IMAGEN"
-            estado["rostro_paciente_bbox"] = None
-            estado["ultima_deteccion_rostro_paciente"] = 0.0
-            # Forzar reconocimiento inmediato cuando vuelva a aparecer alguien.
-            estado["ultimo_procesamiento_facial"] = 0.0
 
-        tiempo_ausencia = (
-            time.time() - estado["inicio_sin_personas"]
-        )
+        tiempo_ausencia = time.time() - estado["inicio_sin_personas"]
 
         if (
             tiempo_ausencia >= TIEMPO_AUSENCIA_PARA_REINICIAR
@@ -1623,37 +1644,24 @@ def procesar_camara(nombre, modelo):
         ):
             reiniciar_ciclo_camara(
                 nombre,
-                f"ninguna persona detectada durante {tiempo_ausencia:.1f} s",
+                f"ninguna persona ni rostro detectado durante {tiempo_ausencia:.1f} s",
             )
             estado["reinicio_por_ausencia_realizado"] = True
 
         postura_detectada = "SIN PERSONA"
         confianza = 0.0
         indice = None
-
     else:
-        # La presencia de una persona reinicia el temporizador de ausencia.
         estado["inicio_sin_personas"] = None
         estado["reinicio_por_ausencia_realizado"] = False
 
-        # Primer intento facial inmediato al detectar presencia; si no hay
-        # identidad, los siguientes intentos ocurren cada 0.35 segundos.
-        actualizar_identidad_facial(nombre, frame)
+        # Si solo hay rostro y no hay pose, conservar la identidad facial,
+        # pero no inventar una postura ni asociar un cuerpo.
+        if not hay_detecciones_pose:
+            postura_detectada = "DESCONOCIDO"
+            confianza = 0.0
 
-        # La identidad puede haber cambiado durante el reconocimiento.
-        identidad_confirmada = config.get("id_paciente") is not None
-        bbox_rostro = estado.get("rostro_paciente_bbox")
-        tiempo_rostro = estado.get(
-            "ultima_deteccion_rostro_paciente", 0.0
-        )
-        rostro_reciente = (
-            bbox_rostro is not None
-            and tiempo_rostro > 0
-            and (time.time() - tiempo_rostro) <= 2.0
-        )
-        indice = None
-
-    if identidad_confirmada and hay_detecciones:
+    if identidad_confirmada and hay_detecciones_pose:
         if rostro_reciente:
             # El rostro es el ancla más fiable: asociar directamente.
             indice = seleccionar_persona_asociada(resultado, bbox_rostro)
@@ -1724,7 +1732,7 @@ def procesar_camara(nombre, modelo):
     # puede asociarse durante varios segundos, también cerrar el ciclo.
     # Así no se conserva la identidad anterior mientras un acompañante
     # permanece dentro del campo de visión.
-    if hay_detecciones and config.get("id_paciente") is not None:
+    if hay_detecciones_pose and config.get("id_paciente") is not None:
         ultima_asociacion = estado.get(
             "ultima_deteccion_cuerpo_paciente", 0.0
         )
@@ -1750,7 +1758,7 @@ def procesar_camara(nombre, modelo):
     else:
         estado["inicio_sin_asociacion_paciente"] = None
 
-    if hay_detecciones:
+    if hay_detecciones_pose:
         actualizar_postura(
             nombre,
             postura_detectada,
@@ -1758,7 +1766,8 @@ def procesar_camara(nombre, modelo):
             confianza,
         )
     elif not estado.get("reinicio_por_ausencia_realizado", False):
-        # Antes de completar los 2 s, no generar transiciones ni eventos.
+        # Sin pose corporal no generar transiciones ni eventos, aunque
+        # exista presencia facial o cajas YOLO sin keypoints.
         estado["postura_actual"] = "DESCONOCIDO"
         estado["contador_postura"] = 0
         estado["postura_candidata"] = "DESCONOCIDO"

@@ -3305,6 +3305,11 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
 
         resultados = reconocedor.procesar_imagen(fotografia)
 
+        print(
+        f"[REGISTRO FACIAL] Archivo: {fotografia.name} | "
+        f"Detecciones: {len(resultados)}"
+)
+
         if len(resultados) == 0:
             raise ValueError(
                 "No se detectó ningún rostro en la fotografía."

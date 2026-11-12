@@ -1590,7 +1590,17 @@ def procesar_camara(nombre, modelo):
         and resultado.keypoints is not None
     )
 
+    # Validar específicamente las detecciones de YOLO Pose.
+    hay_detecciones_pose = (
+        resultado is not None
+        and resultado.boxes is not None
+        and resultado.keypoints is not None
+        and len(resultado.boxes) > 0
+        and len(resultado.keypoints) > 0
+    )
+
     estado["persona_detectada"] = bool(hay_detecciones)
+
     identidad_confirmada = False
     bbox_rostro = None
     rostro_reciente = False
@@ -1599,18 +1609,23 @@ def procesar_camara(nombre, modelo):
     # ==================================================
     # DETECTAR HABITACIÓN VACÍA Y REINICIAR EL CICLO
     # ==================================================
+
     if not hay_detecciones:
+
         if estado.get("inicio_sin_personas") is None:
+
             estado["inicio_sin_personas"] = time.time()
-            # Invalidar de inmediato el ancla corporal: aunque la cámara
-            # pierda a alguien por un instante, nunca asociar al siguiente
-            # cuerpo usando la caja de la persona anterior.
+
             estado["bbox_cuerpo_paciente"] = None
             estado["ultima_deteccion_cuerpo_paciente"] = 0.0
-            estado["metodo_asociacion_cuerpo"] = "SIN PERSONAS EN IMAGEN"
+
+            estado["metodo_asociacion_cuerpo"] = (
+                "SIN PERSONAS EN IMAGEN"
+            )
+
             estado["rostro_paciente_bbox"] = None
             estado["ultima_deteccion_rostro_paciente"] = 0.0
-            # Forzar reconocimiento inmediato cuando vuelva a aparecer alguien.
+
             estado["ultimo_procesamiento_facial"] = 0.0
 
         tiempo_ausencia = (
@@ -1619,12 +1634,17 @@ def procesar_camara(nombre, modelo):
 
         if (
             tiempo_ausencia >= TIEMPO_AUSENCIA_PARA_REINICIAR
-            and not estado.get("reinicio_por_ausencia_realizado", False)
+            and not estado.get(
+                "reinicio_por_ausencia_realizado", False
+            )
         ):
+
             reiniciar_ciclo_camara(
                 nombre,
-                f"ninguna persona detectada durante {tiempo_ausencia:.1f} s",
+                f"ninguna persona detectada durante "
+                f"{tiempo_ausencia:.1f} s",
             )
+
             estado["reinicio_por_ausencia_realizado"] = True
 
         postura_detectada = "SIN PERSONA"
@@ -1632,32 +1652,41 @@ def procesar_camara(nombre, modelo):
         indice = None
 
     else:
-        # La presencia de una persona reinicia el temporizador de ausencia.
+
+        # La presencia de una persona reinicia el temporizador.
         estado["inicio_sin_personas"] = None
         estado["reinicio_por_ausencia_realizado"] = False
 
-        # Primer intento facial inmediato al detectar presencia; si no hay
-        # identidad, los siguientes intentos ocurren cada 0.35 segundos.
+        # ==================================================
+        # RECONOCIMIENTO FACIAL
+        # ==================================================
+
         actualizar_identidad_facial(nombre, frame)
 
-        # La identidad puede haber cambiado durante el reconocimiento.
-        identidad_confirmada = config.get("id_paciente") is not None
+        # Consultar nuevamente la identidad después del reconocimiento.
+        identidad_confirmada = (
+            config.get("id_paciente") is not None
+        )
+
         bbox_rostro = estado.get("rostro_paciente_bbox")
+
         tiempo_rostro = estado.get(
             "ultima_deteccion_rostro_paciente", 0.0
         )
+
         rostro_reciente = (
             bbox_rostro is not None
             and tiempo_rostro > 0
             and (time.time() - tiempo_rostro) <= 2.0
         )
+
         indice = None
 
     # ==================================================
     # ASOCIACIÓN CORPORAL EXCLUSIVAMENTE POR ROSTRO
     # ==================================================
 
-    # Valores iniciales para evitar variables sin definir.
+    # Inicializar variables para evitar referencias sin definir.
     indice = None
     puntos = None
     confianzas = None

@@ -1887,7 +1887,136 @@ def procesar_camara(nombre, modelo):
         estado["levantamiento_detectado"] = False
         estado["tipo_alerta_levantamiento"] = ""
 
+    # ==================================================
+    # 7. PREPARAR INFORMACIÓN VISUAL
+    # ==================================================
 
+    postura_actual = estado["postura_actual"]
+
+    if estado["levantamiento_detectado"]:
+
+        texto_levantamiento = (
+            estado["tipo_alerta_levantamiento"]
+        )
+
+    elif estado["levantamiento_en_proceso"]:
+
+        texto_levantamiento = "EN PROCESO"
+
+    else:
+
+        texto_levantamiento = "NO"
+
+    color_alerta = (
+        (0, 0, 255)
+        if estado["levantamiento_detectado"]
+        else (255, 255, 255)
+    )
+
+    # ==================================================
+    # 8. INFORMACIÓN QUE SE MOSTRARÁ EN LA CÁMARA
+    # ==================================================
+
+    lineas = [
+
+        (
+            f"{nombre} | ID: "
+            f"{CAMARAS_CONFIG[nombre]['id_camara']}",
+            30, 0.7, (0, 255, 0)
+        ),
+
+        (
+            f"POSTURA: {postura_actual}",
+            65, 0.9, (0, 255, 0)
+        ),
+
+        (
+            f"DETECTANDO: {postura_detectada}",
+            100, 0.7, (255, 255, 0)
+        ),
+
+        (
+            f"CONFIRMACION: "
+            f"{estado['contador_postura']}/{FRAMES_ESTABILIDAD}",
+            135, 0.65, (255, 255, 255)
+        ),
+
+        (
+            f"CONFIANZA: {confianza * 100:.1f}%",
+            170, 0.65, (255, 255, 255)
+        ),
+
+        (
+            f"LEVANTAMIENTO: {texto_levantamiento}",
+            205, 0.65, color_alerta
+        ),
+
+        (
+            f"TOTAL: {estado['contador_levantamientos']}",
+            240, 0.65, (0, 165, 255)
+        ),
+
+        (
+            f"PACIENTE: "
+            f"{CAMARAS_CONFIG[nombre]['id_paciente'] or 'NO IDENTIFICADO'}",
+            275, 0.60, (0, 255, 255)
+        ),
+
+        (
+            f"FACIAL: {estado['estado_reconocimiento_facial']} "
+            f"({estado['ultima_similitud_facial']:.2f})",
+            305, 0.50, (0, 255, 255)
+        ),
+
+        (
+            f"CUERPO: {estado['metodo_asociacion_cuerpo']}",
+            335, 0.55, (255, 200, 0)
+        ),
+
+    ]
+
+    # ==================================================
+    # 9. DIBUJAR INFORMACIÓN SOBRE EL FOTOGRAMA
+    # ==================================================
+
+    for texto, y, escala, color in lineas:
+
+        cv2.putText(
+            frame_mostrar,
+            texto,
+            (25, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            escala,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    # ==================================================
+    # 10. GUARDAR FOTOGRAMA PROCESADO
+    # ==================================================
+
+    with estado["frame_lock"]:
+
+        estado["frame_mostrar"] = frame_mostrar.copy()
+
+    # ==================================================
+    # 11. PUBLICAR FOTOGRAMA EN LIVEKIT
+    # ==================================================
+
+    if transmisor_livekit is not None:
+
+        transmisor_livekit.publicar_frame(
+            CAMARAS_CONFIG[nombre]["id_camara"],
+            frame_mostrar,
+        )
+
+    # ==================================================
+    # 12. MOSTRAR VENTANA DE OPENCV
+    # ==================================================
+
+    cv2.imshow(nombre, frame_mostrar)
+    
 # ============================================================
 # PROGRAMA PRINCIPAL
 # ============================================================

@@ -1,4 +1,3 @@
-
 import cv2
 import numpy as np
 import threading
@@ -8,8 +7,6 @@ from ultralytics import YOLO
 import os
 from dotenv import load_dotenv
 load_dotenv()
-import re
-import subprocess
 
 from conexion_backend import (
     enviar_evento_geriapp,
@@ -25,177 +22,66 @@ from transmision_livekit import TransmisionLiveKit
 
 
 # ============================================================
-# CAPTURA POR IDENTIFICADOR DEL DISPOSITIVO USB
+# CAPTURA DE CÁMARAS MEDIANTE ÍNDICES DE OPENCV
 # ============================================================
 
 ANCHO_CAMARA = 640
 ALTO_CAMARA = 480
 FPS_CAMARA = 30
 
-
-def normalizar_identificador(valor):
-    """Normaliza el identificador USB para compararlo con FFmpeg."""
-    return re.sub(r"[^a-z0-9]", "", str(valor).lower())
-
-
-def obtener_dispositivos_dshow():
-    """Obtiene los nombres alternativos de las cámaras de Windows."""
-    resultado = subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-list_devices", "true",
-            "-f", "dshow",
-            "-i", "dummy",
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-
-    lineas = resultado.stderr.splitlines()
-    dispositivos = []
-
-    for i, linea in enumerate(lineas):
-        nombre = re.search(r'"([^"]+)"\s+\(video\)', linea)
-
-        if not nombre:
-            continue
-
-        for siguiente in lineas[i + 1:i + 4]:
-            alternativa = re.search(
-                r'Alternative name "([^"]+)"',
-                siguiente,
-            )
-
-            if alternativa:
-                dispositivos.append({
-                    "nombre": nombre.group(1),
-                    "alternativa": alternativa.group(1),
-                })
-                break
-
-            if "(video)" in siguiente:
-                break
-
-    return dispositivos
+# Índices comprobados en este computador:
+# 0 = cámara integrada del portátil (EXCLUIDA)
+# 1 = cámara externa JALTECH 1
+# 2 = cámara externa JALTECH 2
+#
+# La clave es el ID de cámara registrado en GerIApp.
+# El valor es el índice físico que utiliza OpenCV.
+INDICES_CAMARAS = {
+    1: 1,
+    2: 2,
+}
 
 
-def buscar_dispositivo_usb(identificador, dispositivos):
-    """Relaciona el identificador del backend con el dispositivo físico."""
-    if not identificador:
+def abrir_camara_opencv(indice):
+    """Abre una cámara física usando su índice de OpenCV (Windows)."""
+    indice = int(indice)
+
+    if indice == 0:
+        raise ValueError(
+            "El índice 0 está reservado para la cámara integrada."
+        )
+
+    camara = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+
+    if not camara.isOpened():
+        camara.release()
         return None
 
-    objetivo = normalizar_identificador(identificador)
+    camara.set(cv2.CAP_PROP_FRAME_WIDTH, ANCHO_CAMARA)
+    camara.set(cv2.CAP_PROP_FRAME_HEIGHT, ALTO_CAMARA)
+    camara.set(cv2.CAP_PROP_FPS, FPS_CAMARA)
 
-    for dispositivo in dispositivos:
-        alternativa = normalizar_identificador(
-            dispositivo["alternativa"]
-        )
-
-        if objetivo in alternativa:
-            return dispositivo["alternativa"]
-
-    return None
-
-
-class CapturaFFmpeg:
-    """Interfaz compatible con read(), isOpened() y release()."""
-
-    def __init__(self, dispositivo):
-        self.bytes_frame = ANCHO_CAMARA * ALTO_CAMARA * 3
-
-        comando = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel", "error",
-            "-f", "dshow",
-            "-video_size", f"{ANCHO_CAMARA}x{ALTO_CAMARA}",
-            "-framerate", str(FPS_CAMARA),
-            "-i", f"video={dispositivo}",
-            "-vf", "fps=15",
-            "-an",
-            "-f", "rawvideo",
-            "-pix_fmt", "bgr24",
-            "pipe:1",
-        ]
-        self.proceso = subprocess.Popen(
-            comando,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            bufsize=self.bytes_frame * 2,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-
-    def isOpened(self):
-        return (
-            self.proceso is not None
-            and self.proceso.poll() is None
-        )
-
-    def read(self):
-        if not self.isOpened():
-            return False, None
-
-        datos = bytearray()
-
-        while len(datos) < self.bytes_frame:
-            bloque = self.proceso.stdout.read(
-                self.bytes_frame - len(datos)
-            )
-
-            if not bloque:
-                return False, None
-
-            datos.extend(bloque)
-
-        imagen = np.frombuffer(
-            datos,
-            dtype=np.uint8,
-        ).reshape(
-            (ALTO_CAMARA, ANCHO_CAMARA, 3)
-        ).copy()
-
-        return True, imagen
-
-    def release(self):
-        if self.proceso is None:
-            return
-
-        if self.proceso.poll() is None:
-            self.proceso.terminate()
-
-            try:
-                self.proceso.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.proceso.kill()
-                self.proceso.wait()
-
-        if self.proceso.stdout:
-            self.proceso.stdout.close()
-
-        self.proceso = None
+    return camara
 
 
 # ============================================================
 # CONFIGURACIÓN GENERAL
 # ============================================================
 
-MODELO_YOLO = "./runs/classify/train-3/weights/best.pt"
+MODELO_YOLO = "yolo11n-pose.pt"
 FPS_YOLO = 10
 TAMANO_YOLO = 640
-CONFIANZA_MINIMA_PUNTO = 0.35
-FRAMES_ESTABILIDAD = 5
-MAX_SIN_PERSONA = 15
+CONFIANZA_DETECCION = 0.50
+CONFIANZA_MINIMA_PUNTO = 0.40
+FRAMES_ESTABILIDAD = 8
+MAX_SIN_PERSONA = 25
 DURACION_AVISO_LEVANTAMIENTO = 2
+TIEMPO_MAXIMO_DESCONOCIDO = 3.0
 
-# Esta configuración se construirá desde el backend al iniciar.
 CAMARAS_CONFIG = {}
 
 TIPO_PACIENTE_SENTADO = 2
 TIPO_LEVANTAMIENTO_COMPLETO = 4
-CONFIANZA_EVENTO = 95.00
 
 
 # ============================================================
@@ -227,6 +113,9 @@ def crear_estado():
 
         "contador_postura": 0,
         "contador_sin_persona": 0,
+        "ultima_confianza": 0.0,
+        "ultimo_frame_valido": time.time(),
+        "persona_detectada": False,
 
         "levantamiento_en_proceso": False,
         "levantamiento_detectado": False,
@@ -239,7 +128,6 @@ def crear_estado():
     }
 
 
-# Se crean cuando se consultan las cámaras del backend.
 estados = {}
 
 
@@ -313,25 +201,369 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
                 time.sleep(0.1)
 
         except (BrokenPipeError, ConnectionResetError, OSError):
-            # El navegador cerró la conexión.
             pass
 
     def log_message(self, formato, *argumentos):
-        # Evitar mensajes repetitivos por cada conexión.
         pass
+
+
+# ============================================================
+# FUNCIONES PARA CALCULAR ÁNGULOS
+# ============================================================
+
+def calcular_angulo(a, b, c):
+    a = np.array(a, dtype=np.float32)
+    b = np.array(b, dtype=np.float32)
+    c = np.array(c, dtype=np.float32)
+
+    ba = a - b
+    bc = c - b
+
+    producto = np.dot(ba, bc)
+    magnitud = np.linalg.norm(ba) * np.linalg.norm(bc)
+
+    if magnitud == 0:
+        return 0
+
+    coseno = producto / magnitud
+    coseno = np.clip(coseno, -1.0, 1.0)
+
+    return np.degrees(np.arccos(coseno))
+
+
+# ============================================================
+# VALIDACIÓN DE PUNTOS DEL CUERPO
+# ============================================================
+
+def punto_visible(confianzas, indice):
+    return (
+        confianzas is not None
+        and len(confianzas) > indice
+        and float(confianzas[indice]) >= CONFIANZA_MINIMA_PUNTO
+    )
+
+
+def cuerpo_valido(keypoints, confianzas):
+    """
+    Valida hombros, caderas y al menos una pierna completa.
+    Esta validación general permite continuar evaluando
+    ACOSTADA y SENTADA.
+    """
+
+    if (
+        keypoints is None
+        or confianzas is None
+        or len(keypoints) < 17
+        or len(confianzas) < 17
+    ):
+        return False
+
+    hombros = (
+        punto_visible(confianzas, 5)
+        or punto_visible(confianzas, 6)
+    )
+
+    caderas = (
+        punto_visible(confianzas, 11)
+        or punto_visible(confianzas, 12)
+    )
+
+    pierna_izq = all(
+        punto_visible(confianzas, i)
+        for i in (11, 13, 15)
+    )
+
+    pierna_der = all(
+        punto_visible(confianzas, i)
+        for i in (12, 14, 16)
+    )
+
+    return hombros and caderas and (
+        pierna_izq or pierna_der
+    )
+
+
+def confianza_cuerpo(confianzas):
+    """Promedio de confianza de los puntos importantes."""
+
+    if confianzas is None or len(confianzas) < 17:
+        return 0.0
+
+    indices = [5, 6, 11, 12, 13, 14, 15, 16]
+
+    valores = [
+        float(confianzas[i])
+        for i in indices
+        if float(confianzas[i]) >= CONFIANZA_MINIMA_PUNTO
+    ]
+
+    return float(np.mean(valores)) if valores else 0.0
+
+
+def punto_medio(puntos, confianzas, a, b):
+    disponibles = []
+
+    if punto_visible(confianzas, a):
+        disponibles.append(puntos[a])
+
+    if punto_visible(confianzas, b):
+        disponibles.append(puntos[b])
+
+    if not disponibles:
+        return None
+
+    return np.mean(disponibles, axis=0)
+
+
+def angulo_respecto_vertical(origen, destino):
+    """
+    Devuelve:
+    0 grados = segmento vertical.
+    90 grados = segmento horizontal.
+    """
+
+    vector = (
+        np.asarray(destino, dtype=np.float32)
+        - np.asarray(origen, dtype=np.float32)
+    )
+
+    return abs(
+        float(
+            np.degrees(
+                np.arctan2(vector[0], vector[1])
+            )
+        )
+    )
+
+
+# ============================================================
+# DETECCIÓN DE POSTURAS
+# ============================================================
+
+def detectar_postura(puntos, confianzas, caja=None):
+    """
+    Clasifica ACOSTADA, SENTADA o DE PIE.
+
+    DE PIE:
+    - Cabeza visible.
+    - Ambos hombros visibles.
+    - Ambas caderas visibles.
+    - Ambas rodillas visibles.
+    - Ambos tobillos visibles.
+    - Tronco vertical.
+    - Ambas piernas verticales.
+    - Ambas rodillas extendidas.
+    - Caja de detección vertical.
+
+    Las condiciones estrictas solamente se aplican a DE PIE.
+    """
+
+    hombros = punto_medio(
+        puntos, confianzas, 5, 6
+    )
+
+    caderas = punto_medio(
+        puntos, confianzas, 11, 12
+    )
+
+    if hombros is None or caderas is None:
+        return "DESCONOCIDO"
+
+    angulo_tronco = angulo_respecto_vertical(
+        hombros, caderas
+    )
+
+    angulos_rodilla = []
+    angulos_pierna = []
+
+    # Evaluar las dos piernas.
+    for cadera, rodilla, tobillo in (
+        (11, 13, 15),
+        (12, 14, 16),
+    ):
+
+        if all(
+            punto_visible(confianzas, i)
+            for i in (cadera, rodilla, tobillo)
+        ):
+
+            ang_rodilla = calcular_angulo(
+                puntos[cadera],
+                puntos[rodilla],
+                puntos[tobillo],
+            )
+
+            ang_pierna = angulo_respecto_vertical(
+                puntos[cadera],
+                puntos[tobillo],
+            )
+
+            angulos_rodilla.append(ang_rodilla)
+            angulos_pierna.append(ang_pierna)
+
+    # --------------------------------------------------------
+    # VALIDAR PROPORCIÓN DE LA CAJA
+    # --------------------------------------------------------
+
+    caja_vertical = False
+
+    if caja is not None:
+
+        x1, y1, x2, y2 = map(float, caja)
+
+        ancho = max(1.0, x2 - x1)
+        alto = max(1.0, y2 - y1)
+
+        caja_vertical = alto / ancho >= 1.15
+
+    # --------------------------------------------------------
+    # VALIDAR CUERPO COMPLETO
+    # --------------------------------------------------------
+
+    # COCO:
+    # 0-4: cabeza
+    # 5-6: hombros
+    # 11-12: caderas
+    # 13-14: rodillas
+    # 15-16: tobillos
+
+    cabeza_visible = any(
+        punto_visible(confianzas, i)
+        for i in range(5)
+    )
+
+    cuerpo_completo = (
+        cabeza_visible
+        and all(
+            punto_visible(confianzas, i)
+            for i in (
+                5, 6,
+                11, 12,
+                13, 14,
+                15, 16,
+            )
+        )
+    )
+
+    # --------------------------------------------------------
+    # DETECTAR DE PIE
+    # --------------------------------------------------------
+
+    if (
+        cuerpo_completo
+        and caja_vertical
+        and len(angulos_pierna) == 2
+        and len(angulos_rodilla) == 2
+    ):
+
+        ambas_piernas_verticales = all(
+            angulo <= 38
+            for angulo in angulos_pierna
+        )
+
+        ambas_rodillas_extendidas = all(
+            angulo >= 145
+            for angulo in angulos_rodilla
+        )
+
+        tronco_vertical = angulo_tronco <= 38
+
+        if (
+            tronco_vertical
+            and ambas_piernas_verticales
+            and ambas_rodillas_extendidas
+        ):
+            return "DE PIE"
+
+    # --------------------------------------------------------
+    # DETECTAR ACOSTADA
+    # --------------------------------------------------------
+
+    if (
+        angulo_tronco >= 55
+        and angulos_pierna
+        and max(angulos_pierna) >= 50
+    ):
+        return "ACOSTADA"
+
+    # --------------------------------------------------------
+    # DETECTAR SENTADA
+    # --------------------------------------------------------
+
+    if angulos_rodilla and (
+        min(angulos_rodilla) < 145
+        or (
+            angulo_tronco >= 35
+            and angulo_tronco < 75
+        )
+    ):
+        return "SENTADA"
+
+    return "DESCONOCIDO"
+
+
+# ============================================================
+# SELECCIONAR PERSONA DETECTADA
+# ============================================================
+
+def seleccionar_persona(resultado):
+    """Selecciona la persona detectada con mayor área y confianza."""
+
+    if (
+        resultado.boxes is None
+        or resultado.keypoints is None
+    ):
+        return None
+
+    candidatos = []
+
+    cantidad = min(
+        len(resultado.boxes),
+        len(resultado.keypoints),
+    )
+
+    for i in range(cantidad):
+
+        box = resultado.boxes.xyxy[i].cpu().numpy()
+
+        x1, y1, x2, y2 = box
+
+        area = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+
+        conf_det = (
+            float(resultado.boxes.conf[i].item())
+            if resultado.boxes.conf is not None
+            else 0.0
+        )
+
+        puntuacion = area * max(conf_det, 0.01)
+
+        candidatos.append((puntuacion, i))
+
+    if not candidatos:
+        return None
+
+    return max(
+        candidatos,
+        key=lambda x: x[0]
+    )[1]
+
 
 # ============================================================
 # CAPTURA INDEPENDIENTE DE CADA CÁMARA
 # ============================================================
 
 def capturar_camara(nombre):
+
     estado = estados[nombre]
     camara = estado["camara"]
 
     while ejecutando.is_set():
+
         correcto, imagen = camara.read()
 
         if not correcto:
+
             estado["activa"] = False
             time.sleep(0.1)
             continue
@@ -346,14 +578,22 @@ def capturar_camara(nombre):
 # REGISTRAR EVENTO Y CONSERVAR SU IMAGEN
 # ============================================================
 
-def registrar_evento(nombre, tipo_evento, imagen):
+def registrar_evento(
+    nombre,
+    tipo_evento,
+    imagen,
+    confianza=None,
+):
+
     config = CAMARAS_CONFIG[nombre]
 
     if config["id_paciente"] is None:
+
         print(
             f"[{nombre}] Evento no registrado: "
             "no hay un paciente identificado de forma segura."
         )
+
         return
 
     evento = {
@@ -362,7 +602,14 @@ def registrar_evento(nombre, tipo_evento, imagen):
         "id_habitacion": config["id_habitacion"],
         "id_paciente": config["id_paciente"],
         "id_tipo_evento": tipo_evento,
-        "confianza": CONFIANZA_EVENTO,
+        "confianza": round(
+            float(
+                confianza
+                if confianza is not None
+                else 0.0
+            ) * 100,
+            2,
+        ),
         "imagen": imagen.copy(),
     }
 
@@ -379,10 +626,13 @@ def registrar_evento(nombre, tipo_evento, imagen):
 # ============================================================
 
 def enviar_eventos_backend():
+
     while True:
+
         evento = cola_eventos.get()
 
         try:
+
             if evento is None:
                 return
 
@@ -402,10 +652,12 @@ def enviar_eventos_backend():
             )
 
             if not resultado:
+
                 print(
                     f"[{nombre}] No se confirmó el registro "
                     "del evento."
                 )
+
                 continue
 
             id_evento = (
@@ -414,17 +666,18 @@ def enviar_eventos_backend():
             )
 
             if id_evento is None:
+
                 print(
                     f"[{nombre}] El backend no devolvió el ID "
                     "del evento. No se registrará la evidencia."
                 )
+
                 continue
 
             print(
                 f"[{nombre}] Evento registrado. ID: {id_evento}"
             )
 
-            # La imagen proviene de la cámara que generó el evento.
             imagen_evento = evento["imagen"]
 
             correcto, imagen_codificada = cv2.imencode(
@@ -434,9 +687,11 @@ def enviar_eventos_backend():
             )
 
             if not correcto:
+
                 print(
                     f"[{nombre}] No se pudo codificar la imagen."
                 )
+
                 continue
 
             resultado_imagen = subir_imagen_cloudinary(
@@ -444,20 +699,24 @@ def enviar_eventos_backend():
             )
 
             if not resultado_imagen:
+
                 print(
                     f"[{nombre}] El evento existe, pero falló "
                     "la subida de la imagen."
                 )
+
                 continue
 
             url_imagen = resultado_imagen.get("url")
             public_id = resultado_imagen.get("public_id")
 
             if not url_imagen or not public_id:
+
                 print(
                     f"[{nombre}] Faltan url o public_id "
                     "en la respuesta de Cloudinary."
                 )
+
                 continue
 
             evidencia = registrar_evidencia_geriapp(
@@ -467,18 +726,25 @@ def enviar_eventos_backend():
             )
 
             if evidencia:
+
                 print(
                     f"[{nombre}] Evidencia registrada "
                     f"para el evento {id_evento}."
                 )
+
             else:
+
                 print(
                     f"[{nombre}] No se confirmó el registro "
                     "de la evidencia."
                 )
 
         except Exception as error:
-            print("Error procesando evento:", error)
+
+            print(
+                "Error procesando evento:",
+                error,
+            )
 
         finally:
             cola_eventos.task_done()
@@ -486,40 +752,59 @@ def enviar_eventos_backend():
 
 # ============================================================
 # ACTUALIZAR LA POSTURA DE UNA CÁMARA
-# Conserva la secuencia de la versión original.
 # ============================================================
 
-def actualizar_postura(nombre, postura_detectada, imagen):
+def actualizar_postura(
+    nombre,
+    postura_detectada,
+    imagen,
+    confianza=0.0,
+):
+
     estado = estados[nombre]
 
-    # Normalizar texto para evitar errores por espacios o mayúsculas
-    postura_detectada = postura_detectada.strip().upper()
-
-    # Contar ausencia de persona.
     if postura_detectada == "SIN PERSONA":
+
         estado["contador_sin_persona"] += 1
+        estado["contador_postura"] = 0
+        estado["postura_candidata"] = "SIN PERSONA"
+
         if estado["contador_sin_persona"] >= MAX_SIN_PERSONA:
-            estado["postura_candidata"] = "SIN PERSONA"
-            estado["contador_postura"] = 0
+
+            anterior = estado["ultima_postura_valida"]
+
             estado["postura_actual"] = "SIN PERSONA"
-            estado["postura_anterior"] = "SIN PERSONA"
             estado["ultima_postura_valida"] = "SIN PERSONA"
+            estado["postura_anterior"] = anterior
             estado["levantamiento_en_proceso"] = False
-            estado["levantamiento_detectado"] = False
-            estado["tipo_alerta_levantamiento"] = ""
+
         return
 
     estado["contador_sin_persona"] = 0
 
     if postura_detectada == "DESCONOCIDO":
-        estado["postura_actual"] = "DESCONOCIDO"
-        estado["postura_candidata"] = "DESCONOCIDO"
+
+        if (
+            time.time() - estado["ultimo_frame_valido"]
+            > TIEMPO_MAXIMO_DESCONOCIDO
+        ):
+
+            estado["postura_actual"] = "DESCONOCIDO"
+
         estado["contador_postura"] = 0
+        estado["postura_candidata"] = "DESCONOCIDO"
+
         return
 
+    estado["ultimo_frame_valido"] = time.time()
+    estado["ultima_confianza"] = confianza
+
     if postura_detectada == estado["postura_candidata"]:
+
         estado["contador_postura"] += 1
+
     else:
+
         estado["postura_candidata"] = postura_detectada
         estado["contador_postura"] = 1
 
@@ -527,26 +812,30 @@ def actualizar_postura(nombre, postura_detectada, imagen):
         return
 
     if postura_detectada == estado["ultima_postura_valida"]:
+
         estado["postura_actual"] = postura_detectada
         return
 
-    estado["postura_anterior"] = estado["ultima_postura_valida"]
+    anterior = estado["ultima_postura_valida"]
+
+    estado["postura_anterior"] = anterior
     estado["ultima_postura_valida"] = postura_detectada
     estado["postura_actual"] = postura_detectada
     estado["contador_postura"] = 0
 
-    anterior = estado["postura_anterior"]
-    actual = estado["postura_actual"]
-    
-    # 🔍 Imprimir cambios de estado para depurar en consola
-    print(f"[{nombre}] Transición detectada: {anterior} ➔ {actual}")
+    if postura_detectada == "ACOSTADA":
 
-    if actual in ["ACOSTADO", "ACOSTADA"]:
         estado["levantamiento_en_proceso"] = False
-        print(f"[{nombre}] Persona ACOSTADA.")
 
-    # ACOSTADA -> SENTADA
-    elif anterior in ["ACOSTADO", "ACOSTADA"] and actual == "SENTADA":
+        print(
+            f"[{nombre}] Postura ACOSTADA confirmada."
+        )
+
+    elif (
+        anterior == "ACOSTADA"
+        and postura_detectada == "SENTADA"
+    ):
+
         estado["levantamiento_en_proceso"] = True
         estado["levantamiento_detectado"] = True
         estado["tipo_alerta_levantamiento"] = "INICIO"
@@ -556,100 +845,162 @@ def actualizar_postura(nombre, postura_detectada, imagen):
             nombre,
             TIPO_PACIENTE_SENTADO,
             imagen,
+            confianza,
         )
-        print(f"[{nombre}] INICIO DE LEVANTAMIENTO (ACOSTADA -> SENTADA)")
 
-    # SENTADA -> DE PIE (o INCORPORADO)
+        print(
+            f"[{nombre}] ACOSTADA -> SENTADA: inicio confirmado."
+        )
+
     elif (
-        estado["levantamiento_en_proceso"]
-        and anterior == "SENTADA"
-        and actual in ["DE PIE", "INCORPORADO"]
+        anterior == "SENTADA"
+        and postura_detectada == "ACOSTADA"
     ):
-        estado["contador_levantamientos"] += 1
+
+        estado["levantamiento_en_proceso"] = False
+
+        print(
+            f"[{nombre}] Regresó a ACOSTADA; "
+            "levantamiento cancelado."
+        )
+
+    elif (
+        postura_detectada == "DE PIE"
+        and anterior in ("ACOSTADA", "SENTADA")
+    ):
+
         estado["levantamiento_en_proceso"] = False
         estado["levantamiento_detectado"] = True
-        estado["tipo_alerta_levantamiento"] = "COMPLETO"
+        estado["tipo_alerta_levantamiento"] = "COMPLETADO"
         estado["tiempo_levantamiento"] = time.time()
+        estado["contador_levantamientos"] += 1
 
         registrar_evento(
             nombre,
             TIPO_LEVANTAMIENTO_COMPLETO,
             imagen,
+            confianza,
         )
-        print(f"[{nombre}] LEVANTAMIENTO COMPLETO. Total: {estado['contador_levantamientos']}")
 
-        
+        print(
+            f"[{nombre}] {anterior} -> DE PIE: "
+            "levantamiento completado."
+        )
+
+
 # ============================================================
-# PROCESAR UNA IMAGEN CON CLASIFICACIÓN YOLO (train-3)
+# PROCESAR UNA IMAGEN CON YOLO POSE
 # ============================================================
 
 transmisor_livekit = None
 
 
 def procesar_camara(nombre, modelo):
-    estado = estados[nombre]
 
+    estado = estados[nombre]
     ahora = time.time()
 
-    if ahora - estado["ultimo_procesamiento"] < 1 / FPS_YOLO:
+    if (
+        ahora - estado["ultimo_procesamiento"]
+        < 1 / FPS_YOLO
+    ):
         return
 
     estado["ultimo_procesamiento"] = ahora
 
-    # Copiar el fotograma y liberar el bloqueo antes de YOLO.
     with estado["frame_lock"]:
+
         if estado["frame"] is None:
             return
 
         frame = estado["frame"].copy()
 
-    # Inferencia del modelo de clasificación YOLO fuera del bloqueo de captura.
-    resultados = modelo(
-        frame,
+    resultados = modelo.predict(
+        source=frame,
         verbose=False,
+        conf=CONFIANZA_DETECCION,
         imgsz=TAMANO_YOLO,
     )
 
     resultado = resultados[0]
-    frame_mostrar = frame.copy()
-    
-    # Extracción de la clase predicha y su confianza (API de Clasificación de Ultralytics)
-    if hasattr(resultado, 'probs') and resultado.probs is not None:
-        top1_index = resultado.probs.top1
-        postura_detectada = resultado.names[top1_index].upper()  # Ej: 'ACOSTADO', 'SENTADO', 'DE_PIE', 'SIN_PERSONA'
-        confianza_pred = float(resultado.probs.top1conf) * 100
+
+    frame_mostrar = resultado.plot()
+
+    postura_detectada = "SIN PERSONA"
+    confianza = 0.0
+
+    indice = seleccionar_persona(resultado)
+
+    if indice is not None:
+
+        estado["persona_detectada"] = True
+
+        puntos = (
+            resultado.keypoints.xy[indice]
+            .cpu()
+            .numpy()
+        )
+
+        confianzas = (
+            resultado.keypoints.conf[indice].cpu().numpy()
+            if resultado.keypoints.conf is not None
+            else None
+        )
+
+        if cuerpo_valido(puntos, confianzas):
+
+            caja_persona = (
+                resultado.boxes.xyxy[indice]
+                .cpu()
+                .numpy()
+            )
+
+            postura_detectada = detectar_postura(
+                puntos,
+                confianzas,
+                caja_persona,
+            )
+
+            confianza = confianza_cuerpo(confianzas)
+
+        else:
+
+            postura_detectada = "DESCONOCIDO"
+
     else:
-        postura_detectada = "DESCONOCIDO"
-        confianza_pred = 0.0
 
-    # Umbral opcional de seguridad (si la confianza es baja, se marca como desconocido)
-    if confianza_pred < 45.0:
-        postura_detectada = "DESCONOCIDO"
+        estado["persona_detectada"] = False
 
-    # Actualizar la máquina de estados con la postura detectada
     actualizar_postura(
         nombre,
         postura_detectada,
         frame,
+        confianza,
     )
 
-    # Limpiar la alerta visual después de dos segundos.
     if (
         estado["levantamiento_detectado"]
         and time.time() - estado["tiempo_levantamiento"]
         >= DURACION_AVISO_LEVANTAMIENTO
     ):
+
         estado["levantamiento_detectado"] = False
         estado["tipo_alerta_levantamiento"] = ""
 
     postura_actual = estado["postura_actual"]
-    contador = estado["contador_postura"]
 
     if estado["levantamiento_detectado"]:
-        texto_levantamiento = estado["tipo_alerta_levantamiento"]
+
+        texto_levantamiento = (
+            estado["tipo_alerta_levantamiento"]
+        )
+
     elif estado["levantamiento_en_proceso"]:
+
         texto_levantamiento = "EN PROCESO"
+
     else:
+
         texto_levantamiento = "NO"
 
     color_alerta = (
@@ -658,84 +1009,62 @@ def procesar_camara(nombre, modelo):
         else (255, 255, 255)
     )
 
-    cv2.putText(
-        frame_mostrar,
-        f"{nombre} | ID: {CAMARAS_CONFIG[nombre]['id_camara']}",
-        (30, 30),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 0),
-        2,
-        cv2.LINE_AA,
-    )
+    lineas = [
+        (
+            f"{nombre} | ID: "
+            f"{CAMARAS_CONFIG[nombre]['id_camara']}",
+            30, 0.7, (0, 255, 0)
+        ),
+        (
+            f"POSTURA: {postura_actual}",
+            65, 0.9, (0, 255, 0)
+        ),
+        (
+            f"DETECTANDO: {postura_detectada}",
+            100, 0.7, (255, 255, 0)
+        ),
+        (
+            f"CONFIRMACION: "
+            f"{estado['contador_postura']}/{FRAMES_ESTABILIDAD}",
+            135, 0.65, (255, 255, 255)
+        ),
+        (
+            f"CONFIANZA: {confianza * 100:.1f}%",
+            170, 0.65, (255, 255, 255)
+        ),
+        (
+            f"LEVANTAMIENTO: {texto_levantamiento}",
+            205, 0.65, color_alerta
+        ),
+        (
+            f"TOTAL: {estado['contador_levantamientos']}",
+            240, 0.65, (0, 165, 255)
+        ),
+    ]
 
-    cv2.putText(
-        frame_mostrar,
-        f"POSTURA: {postura_actual} ({confianza_pred:.1f}%)",
-        (30, 65),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
+    for texto, y, escala, color in lineas:
 
-    cv2.putText(
-        frame_mostrar,
-        f"DETECTANDO: {postura_detectada} ({confianza_pred:.1f}%)",
-        (30, 100),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (255, 255, 0),
-        2,
-        cv2.LINE_AA,
-    )
+        cv2.putText(
+            frame_mostrar,
+            texto,
+            (25, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            escala,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
 
-    cv2.putText(
-        frame_mostrar,
-        f"CONFIRMACION: {contador}/{FRAMES_ESTABILIDAD}",
-        (30, 135),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (255, 255, 255),
-        2,
-        cv2.LINE_AA,
-    )
-
-    cv2.putText(
-        frame_mostrar,
-        f"LEVANTAMIENTO: {texto_levantamiento}",
-        (30, 170),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        color_alerta,
-        2,
-        cv2.LINE_AA,
-    )
-
-    cv2.putText(
-        frame_mostrar,
-        f"TOTAL: {estado['contador_levantamientos']}",
-        (30, 205),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
-        (0, 165, 255),
-        2,
-        cv2.LINE_AA,
-    )
-
-    # Guardar el fotograma procesado para la transmisión.
     with estado["frame_lock"]:
         estado["frame_mostrar"] = frame_mostrar.copy()
 
-    # Publicar el fotograma en LiveKit.
     if transmisor_livekit is not None:
+
         transmisor_livekit.publicar_frame(
             CAMARAS_CONFIG[nombre]["id_camara"],
             frame_mostrar,
         )
 
-    # Mantener la ventana local de OpenCV.
     cv2.imshow(nombre, frame_mostrar)
 
 
@@ -744,104 +1073,151 @@ def procesar_camara(nombre, modelo):
 # ============================================================
 
 def main():
+
     hilos_captura = []
     hilo_backend = None
 
     try:
-        print("=" * 60)
-        print("GERIAPP - CLASIFICACIÓN DE POSTURAS YOLO CON DOS CÁMARAS")
-        print("=" * 60)
 
-        # Consultar las cámaras registradas en GerIApp.
-        print("\nConsultando cámaras activas en GerIApp...")
+        print("=" * 55)
+
+        print(
+            "GERIAPP - YOLO POSE: "
+            "ACOSTADA / SENTADA / DE PIE"
+        )
+
+        print("=" * 55)
+
+        # ----------------------------------------------------
+        # CONSULTAR CÁMARAS ACTIVAS
+        # ----------------------------------------------------
+
+        print(
+            "\nConsultando cámaras activas en GerIApp..."
+        )
+
         camaras_backend = obtener_camaras_activas()
 
         if not camaras_backend:
+
             raise RuntimeError(
                 "GerIApp no tiene cámaras activas para procesar."
             )
 
-        # Consultar los pacientes activos de GerIApp.
+        # ----------------------------------------------------
+        # CONSULTAR PACIENTES ACTIVOS
+        # ----------------------------------------------------
+
         pacientes_backend = obtener_pacientes_activos()
 
-
-        # Agrupar los pacientes por habitación.
         pacientes_por_habitacion = {}
 
         for paciente in pacientes_backend:
+
             id_habitacion = (
                 paciente.get("id_habitacion")
                 or paciente.get("habitacion")
             )
+
             id_paciente = (
                 paciente.get("id_paciente")
                 or paciente.get("id")
             )
 
-            # Algunos serializadores devuelven la habitación como objeto.
             if isinstance(id_habitacion, dict):
+
                 id_habitacion = (
                     id_habitacion.get("id_habitacion")
                     or id_habitacion.get("id")
                 )
 
-            if id_habitacion is not None and id_paciente is not None:
+            if (
+                id_habitacion is not None
+                and id_paciente is not None
+            ):
+
                 pacientes_por_habitacion.setdefault(
-                    int(id_habitacion), []
+                    int(id_habitacion),
+                    [],
                 ).append(int(id_paciente))
 
         CAMARAS_CONFIG.clear()
 
-
-        
-        # Consultar dispositivos físicos y relacionarlos por identificador.
-        dispositivos_dshow = obtener_dispositivos_dshow()
-
-        print("\nDispositivos físicos encontrados por FFmpeg:")
-        for dispositivo in dispositivos_dshow:
-            print(f"- {dispositivo['nombre']}")
-
-        CAMARAS_CONFIG.clear()
-
         camaras_validas = [
-            camara for camara in camaras_backend
+            camara
+            for camara in camaras_backend
             if camara.get("estado") is True
             and camara.get("id_habitacion") is not None
         ]
 
+        print("\nAsignación de cámaras físicas:")
+        print("- OpenCV índice 0: cámara integrada EXCLUIDA")
+        print("- OpenCV índice 1: cámara externa JALTECH 1")
+        print("- OpenCV índice 2: cámara externa JALTECH 2")
+
+        # ----------------------------------------------------
+        # CONFIGURAR CÁMARAS
+        # ----------------------------------------------------
+
         for camara_api in camaras_validas:
+
             id_camara = camara_api.get("id_camara")
             id_habitacion = camara_api.get("id_habitacion")
-            identificador = camara_api.get("identificador_dispositivo")
-
-            dispositivo = buscar_dispositivo_usb(
-                identificador,
-                dispositivos_dshow,
-            )
-
-            if not dispositivo:
-                print(
-                    f"[AVISO] Cámara GerIApp {id_camara}: "
-                    "no se encontró su identificador USB en Windows."
-                )
-                continue
-
-            # Comprobar que el dispositivo puede entregar imágenes.
-            prueba = CapturaFFmpeg(dispositivo)
-            disponible = False
 
             try:
-                if prueba.isOpened():
-                    correcto, frame = prueba.read()
-                    disponible = correcto and frame is not None
-            finally:
-                prueba.release()
 
-            if not disponible:
+                id_camara_int = int(id_camara)
+
+            except (TypeError, ValueError):
+
+                print(
+                    f"[AVISO] ID de cámara inválido: {id_camara}"
+                )
+
+                continue
+
+            indice_opencv = INDICES_CAMARAS.get(
+                id_camara_int
+            )
+
+            if indice_opencv is None:
+
                 print(
                     f"[AVISO] Cámara GerIApp {id_camara}: "
-                    "no se pudo obtener una imagen."
+                    "no tiene índice OpenCV configurado."
                 )
+
+                continue
+
+            prueba = abrir_camara_opencv(
+                indice_opencv
+            )
+
+            disponible = False
+
+            if prueba is not None:
+
+                try:
+
+                    correcto, frame_prueba = prueba.read()
+
+                    disponible = (
+                        correcto
+                        and frame_prueba is not None
+                    )
+
+                finally:
+
+                    prueba.release()
+
+            if not disponible:
+
+                print(
+                    f"[AVISO] Cámara GerIApp {id_camara}: "
+                    f"OpenCV índice {indice_opencv} "
+                    "no entregó una imagen."
+                )
+
                 continue
 
             nombre = (
@@ -849,8 +1225,11 @@ def main():
                 or f"Cámara {id_camara}"
             )
 
-            pacientes_habitacion = pacientes_por_habitacion.get(
-                int(id_habitacion), []
+            pacientes_habitacion = (
+                pacientes_por_habitacion.get(
+                    int(id_habitacion),
+                    [],
+                )
             )
 
             id_paciente = (
@@ -860,40 +1239,53 @@ def main():
             )
 
             CAMARAS_CONFIG[nombre] = {
-                "dispositivo_dshow": dispositivo,
+
+                "indice_opencv": indice_opencv,
                 "id_camara": id_camara,
                 "id_habitacion": id_habitacion,
                 "id_paciente": id_paciente,
+
             }
 
             print(
-                f"[CONFIG] {nombre} | GerIApp ID: {id_camara} "
-                f"| Habitación: {id_habitacion} "
-                f"| Dispositivo USB: {identificador}"
+                f"[CONFIG] {nombre} | "
+                f"GerIApp ID: {id_camara} | "
+                f"OpenCV índice: {indice_opencv} | "
+                f"Habitación: {id_habitacion} | "
+                f"Paciente: {id_paciente}"
             )
 
             if id_paciente is None:
+
                 print(
                     f"[AVISO] {nombre}: hay "
-                    f"{len(pacientes_habitacion)} pacientes activos "
-                    "en la habitación. No se registrarán eventos "
-                    "hasta resolver su asociación."
+                    f"{len(pacientes_habitacion)} pacientes "
+                    "activos en la habitación. "
+                    "No se registrarán eventos hasta resolver "
+                    "su asociación."
                 )
 
-
         if not CAMARAS_CONFIG:
+
             raise RuntimeError(
                 "No se encontraron cámaras externas configurables."
             )
 
-        # Crear un estado independiente para cada cámara configurada.
+        # ----------------------------------------------------
+        # CREAR ESTADOS
+        # ----------------------------------------------------
+
         estados.clear()
+
         estados.update({
             nombre: crear_estado()
             for nombre in CAMARAS_CONFIG
         })
 
-        # Iniciar el servidor local de video.
+        # ----------------------------------------------------
+        # INICIAR SERVIDOR LOCAL DE VIDEO
+        # ----------------------------------------------------
+
         servidor_video = ThreadingHTTPServer(
             (HOST_VIDEO, PUERTO_VIDEO),
             ServidorVideoHandler,
@@ -903,6 +1295,7 @@ def main():
             target=servidor_video.serve_forever,
             daemon=True,
         )
+
         hilo_video.start()
 
         print(
@@ -911,51 +1304,101 @@ def main():
         )
 
         print("\nCámaras configuradas para YOLO:")
+
         for nombre, config in CAMARAS_CONFIG.items():
+
             print(
                 f"- {nombre} | "
                 f"GerIApp ID: {config['id_camara']} | "
                 f"Habitación: {config['id_habitacion']} | "
                 f"Paciente: {config['id_paciente']} | "
-                f"Dispositivo USB: {config['dispositivo_dshow']}"
+                f"OpenCV índice: {config['indice_opencv']}"
             )
 
-        
-        # Abrir cada cámara usando su dispositivo físico identificado.
-        for nombre, config in CAMARAS_CONFIG.items():
-            camara = CapturaFFmpeg(config["dispositivo_dshow"])
+        # ----------------------------------------------------
+        # ABRIR CÁMARAS
+        # ----------------------------------------------------
 
-            if not camara.isOpened():
+        for nombre, config in CAMARAS_CONFIG.items():
+
+            indice_opencv = config["indice_opencv"]
+
+            camara = abrir_camara_opencv(
+                indice_opencv
+            )
+
+            if camara is None:
+
+                print(
+                    f"[{nombre}] No se pudo abrir "
+                    f"OpenCV índice {indice_opencv}."
+                )
+
+                continue
+
+            correcto, primer_frame = camara.read()
+
+            if (
+                not correcto
+                or primer_frame is None
+            ):
+
                 camara.release()
-                print(f"[{nombre}] No se pudo abrir el dispositivo.")
+
+                print(
+                    f"[{nombre}] OpenCV índice "
+                    f"{indice_opencv} abrió, "
+                    "pero no entregó imágenes."
+                )
+
                 continue
 
             estados[nombre]["camara"] = camara
 
+            estados[nombre]["frame"] = (
+                primer_frame.copy()
+            )
+
             print(
-                f"[{nombre}] Conectada por identificador USB | "
+                f"[{nombre}] Conectada | "
+                f"OpenCV índice {indice_opencv} | "
                 f"GerIApp ID {config['id_camara']}"
             )
 
         activas = [
-            nombre for nombre in CAMARAS_CONFIG
+            nombre
+            for nombre in CAMARAS_CONFIG
             if estados[nombre]["camara"] is not None
         ]
 
         if not activas:
+
             raise RuntimeError(
                 "No se pudo abrir ninguna cámara."
             )
 
-        print("\nCargando YOLO Pose...")
-        modelo = YOLO(MODELO_YOLO)
-        print("YOLO Pose cargado correctamente.")
+        # ----------------------------------------------------
+        # CARGAR YOLO
+        # ----------------------------------------------------
 
-        # Iniciar las transmisiones de video a LiveKit.
+        print("\nCargando YOLO Pose...")
+
+        modelo = YOLO(MODELO_YOLO)
+
+        print(
+            "YOLO Pose cargado correctamente."
+        )
+
+        # ----------------------------------------------------
+        # INICIAR LIVEKIT
+        # ----------------------------------------------------
+
         global transmisor_livekit
+
         transmisor_livekit = TransmisionLiveKit()
 
         for nombre in activas:
+
             config = CAMARAS_CONFIG[nombre]
 
             transmisor_livekit.iniciar_camara(
@@ -967,80 +1410,142 @@ def main():
             "[LiveKit] Todas las cámaras activas están conectadas."
         )
 
-        # Captura independiente para cada cámara.
+        # ----------------------------------------------------
+        # INICIAR HILOS DE CAPTURA
+        # ----------------------------------------------------
+
         for nombre in activas:
+
             hilo = threading.Thread(
                 target=capturar_camara,
                 args=(nombre,),
                 daemon=True,
             )
+
             hilo.start()
+
             hilos_captura.append(hilo)
 
-        # Hilo para Render y Cloudinary.
+        # ----------------------------------------------------
+        # INICIAR HILO DEL BACKEND
+        # ----------------------------------------------------
+
         hilo_backend = threading.Thread(
             target=enviar_eventos_backend,
             daemon=True,
         )
+
         hilo_backend.start()
 
-        print("\nDetección iniciada. Presiona Q para salir.")
+        print(
+            "\nDetección iniciada sin delimitar la cama. "
+            "Presiona Q para salir."
+        )
+
+        # ----------------------------------------------------
+        # BUCLE PRINCIPAL
+        # ----------------------------------------------------
 
         while ejecutando.is_set():
+
             for nombre in activas:
-                procesar_camara(nombre, modelo)
+
+                procesar_camara(
+                    nombre,
+                    modelo,
+                )
 
             if cv2.waitKey(1) & 0xFF == ord("q"):
+
                 break
 
     except KeyboardInterrupt:
-        print("Cierre solicitado desde el teclado.")
+
+        print(
+            "Cierre solicitado desde el teclado."
+        )
 
     except Exception as error:
-        print("Error en el programa:", error)
+
+        print(
+            "Error en el programa:",
+            error,
+        )
 
     finally:
+
         ejecutando.clear()
 
-        # Cerrar las transmisiones de LiveKit.
-        if transmisor_livekit is not None:
-            try:
-                transmisor_livekit.cerrar()
-            except Exception as error:
-                print(f"[LiveKit] Error al cerrar: {error}")
+        # ----------------------------------------------------
+        # CERRAR LIVEKIT
+        # ----------------------------------------------------
 
-        # Cerrar el servidor local de video.
+        if transmisor_livekit is not None:
+
+            try:
+
+                transmisor_livekit.cerrar()
+
+            except Exception as error:
+
+                print(
+                    f"[LiveKit] Error al cerrar: {error}"
+                )
+
+        # ----------------------------------------------------
+        # CERRAR SERVIDOR DE VIDEO
+        # ----------------------------------------------------
+
         if "servidor_video" in locals():
+
             servidor_video.shutdown()
             servidor_video.server_close()
 
         if "hilo_video" in locals():
+
             hilo_video.join(timeout=3)
 
+        # ----------------------------------------------------
+        # LIBERAR CÁMARAS
+        # ----------------------------------------------------
+
         for estado in estados.values():
+
             camara = estado["camara"]
 
             if camara is not None:
+
                 camara.release()
 
+        # ----------------------------------------------------
+        # CERRAR HILOS
+        # ----------------------------------------------------
+
         for hilo in hilos_captura:
+
             hilo.join(timeout=3)
 
-        # El marcador se procesa después de los eventos encolados.
         if hilo_backend is not None:
+
             cola_eventos.put(None)
+
             hilo_backend.join(timeout=30)
 
             if hilo_backend.is_alive():
+
                 print(
-                    "Advertencia: el hilo del backend sigue activo."
+                    "Advertencia: el hilo del backend "
+                    "sigue activo."
                 )
 
         cv2.destroyAllWindows()
 
-        print("\nPrograma detenido.")
+        print(
+            "\nPrograma detenido."
+        )
 
         for nombre, estado in estados.items():
+
             print(
                 f"{nombre}: levantamientos detectados = "
                 f"{estado['contador_levantamientos']}"

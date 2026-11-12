@@ -30,6 +30,10 @@ from .views import (
     CierreTurnoViewSet,
     ConfiguracionControlesPeriodicosViewSet,
     ControlesPeriodicosBitacoraViewSet,
+    SeguimientoAdministracionMedicamentoViewSet, 
+    RegistrosFacialesViewSet,
+    DocumentosHistoriaClinicaViewSet,
+    
 )
 
 # ==============================
@@ -287,6 +291,16 @@ router.register(r'configuracion_controles_periodicos', ConfiguracionControlesPer
 
 router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraViewSet)
 
+router.register(r'seguimiento_administracion_medicamento', SeguimientoAdministracionMedicamentoViewSet)
+
+router.register(r'documentos_historia_clinica', DocumentosHistoriaClinicaViewSet)
+
+router.register(
+    r'registros_faciales',
+    RegistrosFacialesViewSet,
+    basename='registros-faciales'
+)
+
 urlpatterns = [
 
 path(
@@ -336,6 +350,11 @@ path(
     name='configuracion-institucion'
 ),
 path(
+    'resumen-cuidados-turno/<int:id_asignacion>/',
+    ResumenCuidadosTurnoView.as_view(),
+    name='resumen_cuidados_turno'
+),
+path(
     '',
     include(router.urls)
 ),
@@ -349,12 +368,4 @@ path(
     obtener_token_livekit,
     name='livekit-token'
 ),
-path(
-    'resumen-cuidados-turno/<int:id_asignacion>/',
-    ResumenCuidadosTurnoView.as_view(),
-    name='resumen_cuidados_turno'
-),
-
-
-
 ]

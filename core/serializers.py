@@ -61,15 +61,46 @@ from .models import (
     CierreTurno,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
+    SeguimientoAdministracionMedicamento,
+    RegistrosFaciales,
+    DocumentosHistoriaClinica,
 )
 
+class DocumentosHistoriaClinicaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DocumentosHistoriaClinica
+        fields = '__all__'
+        
+class RegistrosFacialesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegistrosFaciales
+        fields = [
+            'id_registro_facial',
+            'id_paciente',
+            'url_fotografia',
+            'public_id',
+            'activo',
+            'fecha_registro',
+            'fecha_actualizacion'
+        ]
 
+        read_only_fields = [
+            'id_registro_facial',
+            'fecha_registro',
+            'fecha_actualizacion'
+        ]
+        
+class SeguimientoAdministracionMedicamentoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SeguimientoAdministracionMedicamento
+        fields = '__all__'     
 
 class PacientesSerializer(serializers.ModelSerializer):
     # Permite recibir una imagen desde FormData
     foto = serializers.CharField(
         required=False,
-        allow_null=True
+        allow_null=True,
+        allow_blank=True
     )
 
     class Meta:
@@ -103,11 +134,24 @@ class PacientesSerializer(serializers.ModelSerializer):
 
         from .models import Habitaciones, Camas, Pacientes, Sedes
 
-        # Obtener la sede seleccionada
-        sede = attrs.get(
-            'id_sede',
-            self.instance.id_sede if self.instance else None
-        )
+        # Obtener la sede del usuario autenticado
+        request = self.context.get('request')
+
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError({
+                'id_sede': 'No se pudo verificar la sede del usuario.'
+            })
+
+        sede = getattr(request.user, 'id_sede', None)
+
+        if sede is None:
+            raise serializers.ValidationError({
+                'id_sede': 'Tu usuario no tiene una sede asignada.'
+            })
+
+        # Forzar la sede autorizada, ignorando la enviada por Angular
+        attrs['id_sede'] = sede
+
 
         # Validar sede obligatoria
         if sede is None:

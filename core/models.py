@@ -341,7 +341,22 @@ class HistoriaClinicas(models.Model):
         managed = False
         db_table = 'historia_clinicas'
 
+class DocumentosHistoriaClinica(models.Model):
+    id_documento = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente')
+    archivo = models.FileField(
+    upload_to='documentos_historia_clinica/',
+    max_length=500
+)
+    nombre_archivo = models.CharField(max_length=255)
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+    descripcion = models.CharField(max_length=500, blank=True, null=True)
+    estado = models.BooleanField()
 
+    class Meta:
+        managed = False
+        db_table = 'documentos_historia_clinica'
+        
 class ImagenesEventoAdverso(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     id_evento_adverso = models.ForeignKey(EventosAdversos, models.DO_NOTHING, db_column='id_evento_adverso', blank=True, null=True)
@@ -553,7 +568,7 @@ class Pacientes(models.Model):
     eps = models.CharField()
     sede = models.CharField()
     fecha_ingreso = models.DateTimeField()
-    habitacion = models.IntegerField(blank=True, null=True)
+    habitacion = models.IntegerField()
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
     tipo_documento = models.CharField()
     numero_documento = models.CharField()
@@ -561,14 +576,45 @@ class Pacientes(models.Model):
     genero = models.CharField()
     grupo_sanguineo = models.CharField(max_length=5, blank=True, null=True)
     rh = models.CharField(max_length=5, blank=True, null=True)
-    cama = models.IntegerField(blank=True, null=True)
+    cama = models.IntegerField()
     estado = models.BooleanField()
     foto = models.CharField(blank=True, null=True)
+    id_sede = models.ForeignKey('Sedes', models.DO_NOTHING, db_column='id_sede', blank=True, null=True)
 
     class Meta:
         managed = False
         db_table = 'pacientes'
+         
+class RegistrosFaciales(models.Model):
+    id_registro_facial = models.AutoField(primary_key=True)
 
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        related_name='registros_faciales'
+    )
+
+    # Embedding facial cifrado
+    embedding = models.BinaryField()
+
+    # Referencia de la fotografía en Cloudinary
+    url_fotografia = models.TextField()
+    public_id = models.CharField(max_length=255)
+
+    # Estado del registro
+    activo = models.BooleanField(default=True)
+
+    # Fechas de control
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+    fecha_actualizacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'registros_faciales'
+
+    def __str__(self):
+        return f'Registro facial {self.id_registro_facial} - Paciente {self.id_paciente_id}'
 
 class PerfilProfesional(models.Model):
     id_perfil_profesional = models.AutoField(primary_key=True)
@@ -1026,6 +1072,20 @@ class ControlesPeriodicosBitacora(models.Model):
     class Meta:
         managed = False
         db_table = 'controles_periodicos_bitacora'
+
+class SeguimientoAdministracionMedicamento(models.Model):
+    id_seguimiento = models.AutoField(primary_key=True)
+    id_formulacion = models.ForeignKey('FormulacionMedicamentos', models.DO_NOTHING, db_column='id_formulacion')
+    fecha_hora_programada = models.DateTimeField()
+    estado = models.CharField(max_length=20)
+    motivo_no_administracion = models.CharField(max_length=255, blank=True, null=True)
+    fecha_hora_registro = models.DateTimeField(blank=True, null=True)
+    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario')
+    id_aplicacion = models.ForeignKey('AplicacionMedicamento', models.DO_NOTHING, db_column='id_aplicacion', blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = 'seguimiento_administracion_medicamento'
 
 class ConfiguracionControlesPeriodicos(models.Model):
     id_configuracion = models.AutoField(primary_key=True)

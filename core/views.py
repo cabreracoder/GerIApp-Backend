@@ -1,3 +1,4 @@
+
 from rest_framework import viewsets, status, parsers
 from rest_framework.views import APIView
 from rest_framework.decorators import (
@@ -8,6 +9,11 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.parsers import (
+    MultiPartParser,
+    FormParser,
+    JSONParser,
+)
 
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
@@ -16,47 +22,69 @@ from django.db.models import Q
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-#importacion para resumen de turno 
-from datetime import datetime, timedelta
 
-from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+# ==========================================
+# IMPORTACIONES DE PYTHON
+# ==========================================
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
+
+import base64
+import logging
+import os
+import random
+import re
+
+
+# ==========================================
+# OTRAS DEPENDENCIAS
+# ==========================================
+
+from dateutil.relativedelta import relativedelta
+
+import sib_api_v3_sdk
+
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+
+from firebase_admin import messaging
+
+from google.oauth2 import id_token
+from google.auth.transport import requests
+
+from livekit import api
+
+
+# ==========================================
+# SERVICIOS DEL PROYECTO
+# ==========================================
 
 from servicios.cloudinary_service import (
     subir_imagen,
     eliminar_imagen,
 )
 
-import sib_api_v3_sdk
-from django.db import transaction
-from django.conf import settings
-import logging
-import os
-import random
-import re
+from reconocimiento_facial.reconocedor import ReconocedorFacial
+from reconocimiento_facial.cifrado import cifrar_embedding
 
-from urllib.parse import urlparse
-from datetime import timedelta
 
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+# ==========================================
+# CONFIGURACIONES Y UTILIDADES LOCALES
+# ==========================================
 
-from firebase_admin import messaging
 from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
 
-from google.oauth2 import id_token
-from google.auth.transport import requests
-
-from .authentication import crear_token_usuario
+from .authentication import GeriAppTokenAuthentication, crear_token_usuario
 from .permissions import EsSuperadministradorOMetodoLectura
 
-#importaciones del view para funcionar lo  de el tiempo de la bitacora 
-from datetime import timedelta
-from dateutil.relativedelta import relativedelta
-from django.utils import timezone
-from rest_framework import status, viewsets
-from rest_framework.decorators import action
-from rest_framework.response import Response
+
+# ==========================================
+# MODELOS
+# ==========================================
 
 from .models import (
     AsignacionTurnoUsuario,
@@ -67,22 +95,9 @@ from .models import (
     Habitaciones,
     Pacientes,
     AsignacionPacienteCuidador,
-)
-
-from .serializers import (
-    AsignacionTurnoUsuarioSerializer,
-)
-
-from livekit import api
-
-logger = logging.getLogger(__name__)
-
-from .models import (
     HistoriaClinicas,
-    Pacientes,
     Medicamentos,
     Roles,
-    Usuarios,
     Documentos,
     Enfermedades,
     Diagnosticos,
@@ -105,9 +120,7 @@ from .models import (
     TipoEmergencia,
     EventosAdversos,
     ImagenesEventoAdverso,
-    AsignacionPacienteCuidador,
     Turnos,
-    AsignacionTurnoUsuario,
     Permisos,
     PermisosRol,
     FamiliarResponsable,
@@ -117,15 +130,12 @@ from .models import (
     CuidadosEnfermeria,
     ElementosPaciente,
     RecuperacionPassword,
-    Notificaciones,
     NotificacionDestinatario,
     Citas,
     FcmTokens,
     Camas,
-    Habitaciones,
     Fundaciones,
     Sedes,
-    Camaras,
     TiposEventoIa,
     EventosIa,
     EvidenciasIa,
@@ -135,9 +145,18 @@ from .models import (
     SeguimientoAdministracionMedicamento,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
+    SeguimientoAdministracionMedicamento,
+    RegistrosFaciales,
+    DocumentosHistoriaClinica, 
 )
 
+
+# ==========================================
+# SERIALIZADORES
+# ==========================================
+
 from .serializers import (
+    AsignacionTurnoUsuarioSerializer,
     DiagnosticosSerializer,
     EnfermedadesSerializer,
     MedicamentosSerializer,
@@ -168,7 +187,6 @@ from .serializers import (
     ImagenesEventoAdversoSerializer,
     AsignacionPacienteCuidadorSerializer,
     TurnosSerializer,
-    AsignacionTurnoUsuarioSerializer,
     PermisosSerializer,
     PermisosRolSerializer,
     FamiliarResponsableSerializer,
@@ -197,8 +215,18 @@ from .serializers import (
     SeguimientoAdministracionMedicamentoSerializer,
     CierreTurnoSerializer,
     ConfiguracionControlesPeriodicosSerializer,
-    ControlesPeriodicosBitacoraSerializer,  
+    ControlesPeriodicosBitacoraSerializer,
+    SeguimientoAdministracionMedicamentoSerializer,
+    RegistrosFacialesSerializer,
+    DocumentosHistoriaClinicaSerializer,
 )
+
+
+# ==========================================
+# CONFIGURACIÓN DEL LOGGER
+# ==========================================
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -746,6 +774,11 @@ def cambiar_password_recuperacion(request):
 # VIEWSETS
 # ============================================================
 
+class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
+    queryset = DocumentosHistoriaClinica.objects.all()
+    serializer_class = DocumentosHistoriaClinicaSerializer
+    permission_classes = [IsAuthenticated]
+
 class ConfiguracionInstitucionView(APIView):
     def get(self, request):
         return Response({
@@ -756,6 +789,7 @@ class ConfiguracionInstitucionView(APIView):
 class PacientesViewSet(viewsets.ModelViewSet):
     queryset = Pacientes.objects.all()
     serializer_class = PacientesSerializer
+    permission_classes = [IsAuthenticated]
 
     def _obtener_id_rol(self, usuario):
         rol = getattr(usuario, "id_rol", None)
@@ -824,6 +858,10 @@ class PacientesViewSet(viewsets.ModelViewSet):
                 )
             })
 
+        # Forzar la sede correspondiente a la habitación autorizada
+        serializer.validated_data["id_sede"] = habitacion.id_sede
+
+        # Guardar el nombre de la sede
         serializer.validated_data["sede"] = habitacion.id_sede.nombre
 
     def perform_create(self, serializer):
@@ -863,7 +901,50 @@ class RolesViewSet(viewsets.ModelViewSet):
     permission_classes = [EsSuperadministradorOMetodoLectura]
 
 
+class SeguimientoAdministracionMedicamentoViewSet(viewsets.ModelViewSet):
+    queryset = SeguimientoAdministracionMedicamento.objects.all()
+    serializer_class = SeguimientoAdministracionMedicamentoSerializer
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        """
+        Filtra los registros de seguimiento según el rol del usuario.
+        - Superadministrador: todos los registros.
+        - Administrador: registros de su sede.
+        - Encargado: registros de pacientes asignados a él.
+        - Otros roles: únicamente sus propios registros.
+        """
+        usuario = self.request.user
+
+        if not getattr(usuario, "is_authenticated", False):
+            return SeguimientoAdministracionMedicamento.objects.none()
+
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador
+        if rol_id == 4:
+            return SeguimientoAdministracionMedicamento.objects.all()
+
+        # Administrador: solo registros de su sede
+        if rol_id == 1:
+            sede_id = getattr(usuario, "id_sede_id", None)
+            if sede_id is None:
+                return SeguimientoAdministracionMedicamento.objects.none()
+
+            return SeguimientoAdministracionMedicamento.objects.filter(
+                paciente__habitacion__id_sede_id=sede_id
+            )
+
+        # Encargado: registros de pacientes asignados a él
+        if rol_id == 2:
+            return SeguimientoAdministracionMedicamento.objects.filter(
+                paciente__asignaciones__id_usuario=usuario
+            ).distinct()
+
+        # Otros roles: únicamente sus propios registros
+        return SeguimientoAdministracionMedicamento.objects.filter(
+            id_usuario=usuario
+        )       
 
 
 class UsuariosViewSet(viewsets.ModelViewSet):
@@ -938,7 +1019,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         )
 
     # =====================================================
-    # CREAR USUARIO
+    # REAR USUARIO
     # =====================================================
 
     def create(self, request, *args, **kwargs):
@@ -2985,194 +3066,213 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
         
 class ResumenCuidadosTurnoView(APIView):
 
-        def get(self, request, id_asignacion):
+    def get(self, request, id_asignacion):
 
-            try:
-            # 1. Buscar la asignación del turno
-                asignacion = (
-                    AsignacionTurnoUsuario.objects
-                    .select_related("id_usuario", "id_turno")
-                    .get(
-                        id_asignacion_turno_usuario=id_asignacion
-                    )
+        try:
+            # 1. Obtener asignación, cuidador y turno
+            asignacion = (
+                AsignacionTurnoUsuario.objects
+                .select_related("id_usuario", "id_turno")
+                .get(
+                    id_asignacion_turno_usuario=id_asignacion
+                )
+            )
+
+            if not asignacion.id_usuario:
+                return Response(
+                    {"error": "La asignación no tiene un cuidador."},
+                    status=status.HTTP_400_BAD_REQUEST
                 )
 
-                if not asignacion.id_usuario:
-                    return Response(
-                        {"error": "La asignación no tiene un cuidador."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            if not asignacion.id_turno:
+                return Response(
+                    {"error": "La asignación no tiene un turno asociado."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-                if not asignacion.id_turno:
-                    return Response(
-                        {"error": "La asignación no tiene un turno asociado."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            turno = asignacion.id_turno
+            id_cuidador = asignacion.id_usuario_id
 
-                turno = asignacion.id_turno
-                id_cuidador = asignacion.id_usuario_id
+            if not turno.hora_inicio:
+                return Response(
+                    {"error": "El turno no tiene hora de inicio configurada."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-                if not turno.hora_fin:
-                    return Response(
-                        {"error": "El turno no tiene una hora de finalización configurada."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            # 2. Calcular inicio real del turno en Colombia
+            zona_colombia = ZoneInfo("America/Bogota")
 
-                # 2. Calcular el horario programado del turno
-                fecha_inicio = datetime.combine(
+            fecha_inicio = timezone.make_aware(
+                datetime.combine(
                     asignacion.fecha,
                     turno.hora_inicio
+                ),
+                zona_colombia
+            )
+
+            # 3. Buscar únicamente un cierre definitivo
+            cierre_turno = (
+                CierreTurno.objects
+                .filter(
+                    id_asignacion_turno_usuario_id=id_asignacion,
+                    estado__iexact="Finalizado"
                 )
+                .order_by("-fecha_hora")
+                .first()
+            )
 
-                fecha_fin_turno = asignacion.fecha
+            # 4. Determinar el límite final de consulta
+            if cierre_turno:
+                fecha_fin_consulta = cierre_turno.fecha_hora
 
-                # Si el turno cruza la medianoche
-                if turno.hora_fin <= turno.hora_inicio:
-                    fecha_fin_turno += timedelta(days=1)
-
-                fecha_fin = datetime.combine(
-                    fecha_fin_turno,
-                    turno.hora_fin
-                )
-
-                # Aplicar zona horaria del proyecto
-                if timezone.is_aware(timezone.now()):
-                    zona = timezone.get_current_timezone()
-
-                    fecha_inicio = timezone.make_aware(
-                        fecha_inicio,
-                        zona
+                if timezone.is_naive(fecha_fin_consulta):
+                    fecha_fin_consulta = timezone.make_aware(
+                        fecha_fin_consulta,
+                        zona_colombia
                     )
 
-                    fecha_fin = timezone.make_aware(
-                        fecha_fin,
-                        zona
-                    )
+                turno_cerrado = True
 
-                # 3. Buscar pacientes activos del cuidador
-                asignaciones_pacientes = (
-                    AsignacionPacienteCuidador.objects
-                    .select_related("id_paciente")
+            else:
+                fecha_fin_consulta = timezone.now()
+                turno_cerrado = False
+
+            # Evitar consultas con un intervalo invertido
+            fecha_fin_consulta = max(
+                fecha_inicio,
+                fecha_fin_consulta
+            )
+
+            # 5. Obtener pacientes activos del cuidador
+            asignaciones_pacientes = (
+                AsignacionPacienteCuidador.objects
+                .select_related("id_paciente")
+                .filter(
+                    id_usuario_id=id_cuidador,
+                    estado__iexact="Activo"
+                )
+            )
+
+            pacientes_por_id = {}
+
+            for asignacion_paciente in asignaciones_pacientes:
+                paciente = asignacion_paciente.id_paciente
+
+                if paciente:
+                    pacientes_por_id[paciente.id_paciente] = paciente
+
+            resultado_pacientes = []
+
+            # 6. Consultar bitácoras, signos vitales y controles
+            for id_paciente, paciente in pacientes_por_id.items():
+
+                bitacoras = (
+                    Bitacora.objects
                     .filter(
-                        id_usuario_id=id_cuidador,
-                        estado__iexact="Activo"
-                    )
-                )
-
-                # Evitar pacientes repetidos
-                pacientes_por_id = {}
-
-                for asignacion_paciente in asignaciones_pacientes:
-
-                    paciente = asignacion_paciente.id_paciente
-
-                    if paciente:
-                        pacientes_por_id[paciente.id_paciente] = paciente
-
-                resultado_pacientes = []
-
-                # 4. Consultar bitácoras, signos y controles por paciente
-                for id_paciente, paciente in pacientes_por_id.items():
-
-                    bitacoras = Bitacora.objects.filter(
                         id_usuario_id=id_cuidador,
                         id_paciente_id=id_paciente,
                         fecha_hora__gte=fecha_inicio,
-                        fecha_hora__lte=fecha_fin
-                    ).order_by("fecha_hora")
+                        fecha_hora__lte=fecha_fin_consulta
+                    )
+                    .order_by("fecha_hora")
+                )
 
-                    ids_bitacoras = list(
-                        bitacoras.values_list(
-                            "id_bitacora",
-                            flat=True
+                ids_bitacoras = list(
+                    bitacoras.values_list(
+                        "id_bitacora",
+                        flat=True
+                    )
+                )
+
+                signos = (
+                    SignosVitales.objects
+                    .filter(
+                        id_bitacora_id__in=ids_bitacoras
+                    )
+                    .order_by("fecha_hora")
+                )
+
+                signos_por_bitacora = {}
+
+                for signo in signos:
+                    id_bitacora = signo.id_bitacora_id
+
+                    signos_por_bitacora.setdefault(
+                        id_bitacora,
+                        []
+                    ).append(
+                        SignosVitalesSerializer(signo).data
+                    )
+
+                resultado_bitacoras = []
+
+                for bitacora in bitacoras:
+                    datos_bitacora = BitacoraSerializer(
+                        bitacora
+                    ).data
+
+                    datos_bitacora["signos_vitales"] = (
+                        signos_por_bitacora.get(
+                            bitacora.id_bitacora,
+                            []
                         )
                     )
 
-                    # Signos vitales asociados a cada bitácora
-                    signos = SignosVitales.objects.filter(
-                        id_bitacora_id__in=ids_bitacoras
-                    ).order_by("fecha_hora")
+                    resultado_bitacoras.append(datos_bitacora)
 
-                    signos_por_bitacora = {}
-
-                    for signo in signos:
-                        id_bitacora = signo.id_bitacora_id
-
-                        if id_bitacora not in signos_por_bitacora:
-                            signos_por_bitacora[id_bitacora] = []
-
-                        signos_por_bitacora[id_bitacora].append(
-                            SignosVitalesSerializer(signo).data
-                        )
-
-                    resultado_bitacoras = []
-
-                    for bitacora in bitacoras:
-
-                        datos_bitacora = BitacoraSerializer(
-                            bitacora
-                        ).data
-
-                        datos_bitacora["signos_vitales"] = (
-                            signos_por_bitacora.get(
-                                bitacora.id_bitacora,
-                                []
-                            )
-                        )
-
-                        resultado_bitacoras.append(datos_bitacora)
-
-                    # 5. Controles periódicos independientes
-                    controles = ControlesPeriodicosBitacora.objects.filter(
+                controles = (
+                    ControlesPeriodicosBitacora.objects
+                    .filter(
                         id_usuario_id=id_cuidador,
                         id_paciente_id=id_paciente,
                         fecha_registro__gte=fecha_inicio,
-                        fecha_registro__lte=fecha_fin
-                    ).order_by("fecha_registro")
-
-                    resultado_pacientes.append({
-                        "id_paciente": paciente.id_paciente,
-                        "nombre": paciente.nombre,
-                        "apellido": paciente.apellido,
-                        "foto": paciente.foto,
-                        "habitacion": paciente.habitacion,
-                        "cama": paciente.cama,
-
-                        "bitacoras": resultado_bitacoras,
-
-                        "controles_periodicos": (
-                            ControlesPeriodicosBitacoraSerializer(
-                                controles,
-                                many=True
-                            ).data
-                        )
-                    })
-
-                # 6. Respuesta completa
-                return Response({
-                    "id_asignacion": asignacion.id_asignacion_turno_usuario,
-                    "id_cuidador": id_cuidador,
-
-                    "turno": {
-                        "id_turno": turno.id_turno,
-                        "nombre": turno.nombre,
-                        "fecha": str(asignacion.fecha),
-                        "hora_inicio": str(turno.hora_inicio),
-                        "hora_fin": str(turno.hora_fin)
-                    },
-
-                    "fecha_hora_inicio": fecha_inicio,
-                    "fecha_hora_fin": fecha_fin,
-
-                    "pacientes": resultado_pacientes
-                }, status=status.HTTP_200_OK)
-
-            except AsignacionTurnoUsuario.DoesNotExist:
-                return Response(
-                    {"error": "No se encontró la asignación del turno."},
-                    status=status.HTTP_404_NOT_FOUND
+                        fecha_registro__lte=fecha_fin_consulta
+                    )
+                    .order_by("fecha_registro")
                 )
 
+                resultado_pacientes.append({
+                    "id_paciente": paciente.id_paciente,
+                    "nombre": paciente.nombre,
+                    "apellido": paciente.apellido,
+                    "foto": paciente.foto,
+                    "habitacion": paciente.habitacion,
+                    "cama": paciente.cama,
+                    "bitacoras": resultado_bitacoras,
+                    "controles_periodicos": (
+                        ControlesPeriodicosBitacoraSerializer(
+                            controles,
+                            many=True
+                        ).data
+                    )
+                })
+
+            # 7. Respuesta final
+            return Response({
+                "id_asignacion": asignacion.id_asignacion_turno_usuario,
+                "id_cuidador": id_cuidador,
+
+                "turno": {
+                    "id_turno": turno.id_turno,
+                    "nombre": turno.nombre,
+                    "fecha": str(asignacion.fecha),
+                    "hora_inicio": str(turno.hora_inicio),
+                    "hora_fin": str(turno.hora_fin)
+                },
+
+                "fecha_hora_inicio": fecha_inicio,
+                "fecha_hora_fin": fecha_fin_consulta,
+                "turno_cerrado": turno_cerrado,
+
+                "pacientes": resultado_pacientes
+
+            }, status=status.HTTP_200_OK)
+
+        except AsignacionTurnoUsuario.DoesNotExist:
+            return Response(
+                {"error": "No se encontró la asignación del turno."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
         queryset = AsignacionTurnoUsuario.objects.all()
@@ -3426,6 +3526,582 @@ class ControlesPeriodicosBitacoraViewSet(viewsets.ModelViewSet):
             serializer.data,
             status=status.HTTP_201_CREATED
         )
+
+# ============================================================
+# VIEWSET DE REGISTROS FACIALES
+# ============================================================
+
+class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
+
+    serializer_class = RegistrosFacialesSerializer
+    authentication_classes = [GeriAppTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    authentication_classes = [GeriAppTokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    # ==========================================
+    # OBTENER ID DEL ROL
+    # ==========================================
+
+    def _obtener_id_rol(self, usuario):
+
+        rol = getattr(usuario, "id_rol", None)
+
+        return (
+            getattr(rol, "id_rol", None)
+            if rol is not None
+            else getattr(usuario, "id_rol_id", None)
+        )
+
+    # ==========================================
+    # CONSULTAR REGISTROS FACIALES
+    # ==========================================
+
+    def get_queryset(self):
+
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return RegistrosFaciales.objects.none()
+
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return RegistrosFaciales.objects.none()
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return RegistrosFaciales.objects.none()
+
+        # Obtener las habitaciones pertenecientes a la sede
+        habitaciones_sede = Habitaciones.objects.filter(
+            id_sede_id=sede_id
+        ).values_list("id_habitacion", flat=True)
+
+        # Consultar registros faciales de pacientes activos
+        # que estén ubicados en habitaciones de la sede
+        return RegistrosFaciales.objects.filter(
+            activo=True,
+            id_paciente__estado=True,
+            id_paciente__habitacion__in=habitaciones_sede
+        ).select_related("id_paciente").distinct()
+
+    # ==========================================
+    # OBTENER PLANTILLAS FACIALES POR CÁMARA
+    # ==========================================
+
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="plantillas"
+    )
+    def plantillas(self, request):
+
+        # 1. Obtener el usuario autenticado
+        usuario = request.user
+
+        if not usuario.is_authenticated:
+            return Response(
+                {"error": "Usuario no autenticado."},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # 2. Validar el rol
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return Response(
+                {"error": "No tienes permisos para consultar plantillas faciales."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 3. Obtener la sede del usuario
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return Response(
+                {"error": "Tu usuario no tiene una sede asignada."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 4. Obtener el ID de la cámara
+        id_camara = request.query_params.get("id_camara")
+
+        if not id_camara:
+            return Response(
+                {"error": "El parámetro id_camara es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            id_camara = int(id_camara)
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "El ID de la cámara debe ser un número válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Buscar la cámara y verificar que pertenezca a la sede
+        camara = Camaras.objects.filter(
+            id_camara=id_camara,
+            estado=True,
+            id_habitacion__estado=True,
+            id_habitacion__id_sede_id=sede_id
+        ).select_related(
+            "id_habitacion"
+        ).first()
+
+        if not camara:
+            return Response(
+                {
+                    "error": "La cámara no existe, está inactiva "
+                             "o no pertenece a tu sede."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 6. Obtener la habitación de la cámara
+        id_habitacion = camara.id_habitacion_id
+
+        if not id_habitacion:
+            return Response(
+                {"error": "La cámara no tiene una habitación asignada."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 7. Consultar registros faciales de pacientes activos
+        #    que pertenezcan a la habitación de esta cámara
+        registros = RegistrosFaciales.objects.filter(
+            activo=True,
+            id_paciente__estado=True,
+            id_paciente__habitacion=id_habitacion
+        ).select_related(
+            "id_paciente"
+        )
+
+        # 8. Preparar las plantillas para el programa local
+        plantillas = []
+
+        for registro in registros:
+
+            embedding_cifrado = bytes(registro.embedding)
+
+            plantillas.append({
+                "id_registro_facial": registro.id_registro_facial,
+                "id_paciente": registro.id_paciente_id,
+                "embedding_cifrado": base64.b64encode(
+                    embedding_cifrado
+                ).decode("ascii")
+            })
+
+        # 9. Responder
+        return Response(
+            {
+                "id_camara": camara.id_camara,
+                "id_habitacion": id_habitacion,
+                "total_plantillas": len(plantillas),
+                "plantillas": plantillas
+            },
+            status=status.HTTP_200_OK
+        )
+    
+    # ==========================================
+    # VALIDAR PACIENTE Y SEDE
+    # ==========================================
+
+    def _validar_paciente(self, id_paciente):
+
+        usuario = self.request.user
+
+        if self._obtener_id_rol(usuario) not in (1, 2, 3):
+            return None
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return None
+
+        # Obtener habitaciones de la sede del usuario
+        habitaciones_sede = Habitaciones.objects.filter(
+            id_sede_id=sede_id
+        ).values_list("id_habitacion", flat=True)
+
+        # Buscar paciente activo que esté en una habitación
+        # perteneciente a la sede del usuario
+        paciente = Pacientes.objects.filter(
+            id_paciente=id_paciente,
+            estado=True,
+            habitacion__in=habitaciones_sede
+        ).first()
+
+        return paciente
+
+    # ==========================================
+    # PROCESAR FOTOGRAFÍA Y GENERAR EMBEDDING
+    # ==========================================
+
+    def _procesar_fotografia(self, fotografia):
+
+        if not fotografia:
+            raise ValueError("Debe seleccionar una fotografía.")
+
+        reconocedor = ReconocedorFacial()
+
+        resultados = reconocedor.procesar_imagen(fotografia)
+
+        print(
+        f"[REGISTRO FACIAL] Archivo: {fotografia.name} | "
+        f"Detecciones: {len(resultados)}"
+)
+
+        if len(resultados) == 0:
+            raise ValueError(
+                "No se detectó ningún rostro en la fotografía."
+            )
+
+        if len(resultados) > 1:
+            raise ValueError(
+                "La fotografía debe contener únicamente un rostro."
+            )
+
+        embedding = resultados[0]["embedding"]
+
+        embedding_bytes = embedding.tobytes()
+
+        embedding_cifrado = cifrar_embedding(embedding_bytes)
+
+        fotografia.seek(0)
+
+        return embedding_cifrado
+
+    # ==========================================
+    # REGISTRAR ROSTRO
+    # ==========================================
+    @action(
+    detail=False,
+    methods=["post"],
+    url_path="registrar",
+    parser_classes=[MultiPartParser, FormParser]
+    )
+    def registrar(self, request):
+
+        id_paciente = request.data.get("id_paciente")
+
+        # Recibir todas las fotografías enviadas desde Angular
+        fotografias = request.FILES.getlist("fotografias")
+
+        # 1. Validar paciente
+        if not id_paciente:
+            return Response(
+                {"error": "El id_paciente es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Validar fotografías
+        if len(fotografias) < 3:
+            return Response(
+                {
+                    "error": (
+                        "Debe enviar al menos tres fotografías: "
+                        "frontal, perfil izquierdo y perfil derecho."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Validar que el paciente exista y pertenezca a la sede
+        paciente = self._validar_paciente(id_paciente)
+
+        if not paciente:
+            return Response(
+                {
+                    "error": (
+                        "El paciente no existe, está inactivo "
+                        "o no pertenece a tu sede."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 4. Procesar todas las fotografías antes de subirlas
+        embeddings = []
+
+        try:
+            for fotografia in fotografias:
+
+                embedding_cifrado = self._procesar_fotografia(
+                    fotografia
+                )
+
+                embeddings.append(embedding_cifrado)
+
+        except ValueError as error:
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception:
+            logger.exception(
+                "Error procesando las fotografías faciales."
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "No fue posible procesar una o varias "
+                        "fotografías."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # 5. Subir las fotografías a Cloudinary
+        imagenes_subidas = []
+        registros_creados = []
+
+        try:
+
+            for fotografia in fotografias:
+
+                fotografia.seek(0)
+
+                resultado_cloudinary = subir_imagen(
+                    fotografia,
+                    carpeta="geriapp/reconocimiento_facial"
+                )
+
+                if not resultado_cloudinary.get("secure_url"):
+                    raise RuntimeError(
+                        "Cloudinary no devolvió la URL de la fotografía."
+                    )
+
+                if not resultado_cloudinary.get("public_id"):
+                    raise RuntimeError(
+                        "Cloudinary no devolvió el public_id."
+                    )
+
+                imagenes_subidas.append(resultado_cloudinary)
+
+            # 6. Crear un registro independiente por fotografía
+            with transaction.atomic():
+
+                for embedding_cifrado, imagen in zip(
+                    embeddings,
+                    imagenes_subidas
+                ):
+
+                    registro = RegistrosFaciales.objects.create(
+                        id_paciente=paciente,
+                        embedding=embedding_cifrado,
+                        url_fotografia=imagen["secure_url"],
+                        public_id=imagen["public_id"],
+                        activo=True
+                    )
+
+                    registros_creados.append(registro)
+
+            # 7. Serializar todos los registros creados
+            serializer = self.get_serializer(
+                registros_creados,
+                many=True
+            )
+
+            return Response(
+                {
+                    "mensaje": (
+                        "Registro facial completado correctamente."
+                    ),
+                    "id_paciente": paciente.id_paciente,
+                    "total_fotografias": len(registros_creados),
+                    "registros": serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error guardando los registros faciales."
+            )
+
+            # 8. Limpiar las imágenes de Cloudinary si ocurre un error
+            for imagen in imagenes_subidas:
+
+                public_id = imagen.get("public_id")
+
+                if public_id:
+                    try:
+                        eliminar_imagen(public_id)
+
+                    except Exception:
+                        logger.exception(
+                            "No fue posible eliminar una imagen "
+                            "de Cloudinary."
+                        )
+
+            return Response(
+                {
+                    "error": (
+                        "No fue posible completar el registro facial. "
+                        "Verifique las fotografías e intente nuevamente."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    # ==========================================
+    # ACTUALIZAR ROSTRO
+    # ==========================================
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="actualizar",
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def actualizar(self, request):
+
+        id_paciente = request.data.get("id_paciente")
+        fotografia = request.FILES.get("fotografia")
+
+        if not id_paciente:
+            return Response(
+                {"error": "El id_paciente es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not fotografia:
+            return Response(
+                {"error": "Debe enviar una nueva fotografía."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        paciente = self._validar_paciente(id_paciente)
+
+        if not paciente:
+            return Response(
+                {
+                    "error": "El paciente no existe, está inactivo "
+                             "o no pertenece a tu sede."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Buscar registro facial activo del paciente
+        registro = RegistrosFaciales.objects.filter(
+            id_paciente=paciente,
+            activo=True
+        ).first()
+
+        if not registro:
+            return Response(
+                {
+                    "error": "El paciente no tiene un registro facial activo."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Procesar nueva fotografía
+        try:
+
+            embedding_cifrado = self._procesar_fotografia(fotografia)
+
+        except ValueError as error:
+
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception:
+
+            logger.exception("Error procesando nueva fotografía facial.")
+
+            return Response(
+                {"error": "No fue posible procesar la nueva fotografía."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        resultado_cloudinary = None
+
+        public_id_anterior = registro.public_id
+
+        try:
+
+            # Subir nueva fotografía
+            resultado_cloudinary = subir_imagen(
+                fotografia,
+                carpeta="geriapp/reconocimiento_facial"
+            )
+
+            if not resultado_cloudinary.get("secure_url"):
+                raise RuntimeError("Cloudinary no devolvió la URL.")
+
+            if not resultado_cloudinary.get("public_id"):
+                raise RuntimeError("Cloudinary no devolvió el public_id.")
+
+            # Actualizar registro facial
+            with transaction.atomic():
+
+                registro.embedding = embedding_cifrado
+
+                registro.url_fotografia = resultado_cloudinary["secure_url"]
+
+                registro.public_id = resultado_cloudinary["public_id"]
+
+                registro.save(
+                    update_fields=[
+                        "embedding",
+                        "url_fotografia",
+                        "public_id",
+                        "fecha_actualizacion"
+                    ]
+                )
+
+            # Eliminar fotografía anterior después de guardar la nueva
+            if public_id_anterior:
+
+                try:
+
+                    eliminar_imagen(public_id_anterior)
+
+                except Exception:
+
+                    logger.exception(
+                        "No fue posible eliminar la fotografía anterior."
+                    )
+
+            serializer = self.get_serializer(registro)
+
+            return Response(
+                {
+                    "mensaje": "Registro facial actualizado correctamente.",
+                    "registro": serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception:
+
+            logger.exception("Error actualizando el registro facial.")
+
+            # Si falla la actualización, eliminar la nueva imagen
+            if resultado_cloudinary and resultado_cloudinary.get("public_id"):
+
+                try:
+
+                    eliminar_imagen(resultado_cloudinary["public_id"])
+
+                except Exception:
+
+                    logger.exception(
+                        "No fue posible eliminar la nueva imagen de Cloudinary."
+                    )
+
+            return Response(
+                {"error": "No fue posible actualizar el registro facial."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )    
+
 
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE

@@ -57,12 +57,18 @@ from .models import (
     AsignacionHabitacion,
     GrupoMedicacion,
     FormulacionMedicamentos,
+    SeguimientoAdministracionMedicamento,
     CierreTurno,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
-    SeguimientoAdministracionMedicamento,
     RegistrosFaciales,
+    DocumentosHistoriaClinica,
 )
+
+class DocumentosHistoriaClinicaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DocumentosHistoriaClinica
+        fields = '__all__'
 
 class RegistrosFacialesSerializer(serializers.ModelSerializer):
     class Meta:
@@ -82,17 +88,14 @@ class RegistrosFacialesSerializer(serializers.ModelSerializer):
             'fecha_registro',
             'fecha_actualizacion'
         ]
-        
-class SeguimientoAdministracionMedicamentoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SeguimientoAdministracionMedicamento
-        fields = '__all__'     
+
 
 class PacientesSerializer(serializers.ModelSerializer):
     # Permite recibir una imagen desde FormData
     foto = serializers.CharField(
         required=False,
-        allow_null=True
+        allow_null=True,
+        allow_blank=True
     )
 
     class Meta:
@@ -126,11 +129,24 @@ class PacientesSerializer(serializers.ModelSerializer):
 
         from .models import Habitaciones, Camas, Pacientes, Sedes
 
-        # Obtener la sede seleccionada
-        sede = attrs.get(
-            'id_sede',
-            self.instance.id_sede if self.instance else None
-        )
+        # Obtener la sede del usuario autenticado
+        request = self.context.get('request')
+
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError({
+                'id_sede': 'No se pudo verificar la sede del usuario.'
+            })
+
+        sede = getattr(request.user, 'id_sede', None)
+
+        if sede is None:
+            raise serializers.ValidationError({
+                'id_sede': 'Tu usuario no tiene una sede asignada.'
+            })
+
+        # Forzar la sede autorizada, ignorando la enviada por Angular
+        attrs['id_sede'] = sede
+
 
         # Validar sede obligatoria
         if sede is None:
@@ -343,7 +359,7 @@ class UsuariosSerializer(serializers.ModelSerializer):
         instance.save()
 
         return instance
-    
+
 
 class DocumentosSerializer(serializers.ModelSerializer):
 
@@ -619,7 +635,7 @@ class EventosAdversosSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventosAdversos
         fields = '__all__'
-        
+
     def create(self, validated_data):
 
         evento = EventosAdversos.objects.create(**validated_data)
@@ -668,8 +684,8 @@ class EventosAdversosSerializer(serializers.ModelSerializer):
                 id_usuario=usuario
             )
 
-        return evento   
-        
+        return evento
+
 
 
 class ImagenesEventoAdversoSerializer(serializers.ModelSerializer):
@@ -779,19 +795,19 @@ class CamarasSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class TiposEventoIaSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = TiposEventoIa
         fields = '__all__'
 
 class EventosIaSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = EventosIa
         fields = '__all__'
 
 class EvidenciasIaSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = EvidenciasIa
         fields = '__all__'
@@ -807,6 +823,25 @@ class FormulacionMedicamentosSerializer(serializers.ModelSerializer):
     class Meta:
         model = FormulacionMedicamentos
         fields = '__all__'
+
+
+class SeguimientoAdministracionMedicamentoSerializer(
+    serializers.ModelSerializer
+):
+
+    class Meta:
+        model = SeguimientoAdministracionMedicamento
+        fields = '__all__'
+
+        read_only_fields = (
+            'id_seguimiento',
+            'estado',
+            'motivo_no_administracion',
+            'fecha_hora_registro',
+            'id_usuario',
+            'id_aplicacion'
+        )
+
 
 class CierreTurnoSerializer(serializers.ModelSerializer):
 
@@ -824,8 +859,8 @@ class ControlesPeriodicosBitacoraSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ControlesPeriodicosBitacora
-        fields = '__all__'  
-        
+        fields = '__all__'
+
 class CitasSerializer(serializers.ModelSerializer):
 
     class Meta:
@@ -957,7 +992,7 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
         return usuario
 #Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
 #este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
-#nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación. 
+#nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación.
 
 class CambiarContrasenaSerializer(serializers.Serializer):
     contrasena_actual = serializers.CharField(

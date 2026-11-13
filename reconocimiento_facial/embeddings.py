@@ -85,6 +85,18 @@ class GeneradorEmbeddings:
 
         embedding = embedding / norma
 
+        # Validar dimensiones del embedding
+        if embedding.shape != (128,):
+            raise ValueError(
+                "El embedding debe tener 128 dimensiones."
+            )
+
+        # Validar que no contenga valores inválidos
+        if not np.all(np.isfinite(embedding)):
+            raise ValueError(
+                "El embedding contiene valores inválidos."
+            )
+
         return embedding
 
     @staticmethod

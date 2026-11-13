@@ -341,6 +341,21 @@ class HistoriaClinicas(models.Model):
         managed = False
         db_table = 'historia_clinicas'
 
+class DocumentosHistoriaClinica(models.Model):
+    id_documento = models.AutoField(primary_key=True)
+    id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente')
+    archivo = models.FileField(
+    upload_to='documentos_historia_clinica/',
+    max_length=500
+)
+    nombre_archivo = models.CharField(max_length=255)
+    fecha_subida = models.DateTimeField(auto_now_add=True)
+    descripcion = models.CharField(max_length=500, blank=True, null=True)
+    estado = models.BooleanField()
+
+    class Meta:
+        managed = False
+        db_table = 'documentos_historia_clinica'
 
 class ImagenesEventoAdverso(models.Model):
     id_imagen = models.AutoField(primary_key=True)
@@ -502,7 +517,7 @@ class Pacientes(models.Model):
     eps = models.CharField()
     sede = models.CharField()
     fecha_ingreso = models.DateTimeField()
-    habitacion = models.IntegerField(blank=True, null=True)
+    habitacion = models.IntegerField()
     id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario', blank=True, null=True)
     tipo_documento = models.CharField()
     numero_documento = models.CharField()
@@ -510,9 +525,10 @@ class Pacientes(models.Model):
     genero = models.CharField()
     grupo_sanguineo = models.CharField(max_length=5, blank=True, null=True)
     rh = models.CharField(max_length=5, blank=True, null=True)
-    cama = models.IntegerField(blank=True, null=True)
+    cama = models.IntegerField()
     estado = models.BooleanField()
     foto = models.CharField(blank=True, null=True)
+    id_sede = models.ForeignKey('Sedes', models.DO_NOTHING, db_column='id_sede', blank=True, null=True)
 
     class Meta:
         managed = False

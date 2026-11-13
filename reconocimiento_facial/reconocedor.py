@@ -1,6 +1,8 @@
+
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 from reconocimiento_facial.detector_rostros import DetectorRostros
 from reconocimiento_facial.embeddings import GeneradorEmbeddings
@@ -15,27 +17,77 @@ class ReconocedorFacial:
 
         print("Reconocedor facial inicializado.")
 
-    def procesar_imagen(self, ruta_imagen):
+    def procesar_imagen(self, origen):
 
-        ruta = Path(ruta_imagen)
+        # ==========================================
+        # CARGAR IMAGEN DESDE RUTA O MEMORIA
+        # ==========================================
 
-        if not ruta.exists():
-            raise FileNotFoundError(
-                f"No existe la imagen: {ruta}"
+        if isinstance(origen, (str, Path)):
+
+            ruta = Path(origen)
+
+            if not ruta.exists():
+                raise FileNotFoundError(
+                    f"No existe la imagen: {ruta}"
+                )
+
+            imagen = cv2.imread(str(ruta))
+
+        else:
+
+            if hasattr(origen, 'read'):
+
+                if hasattr(origen, 'seek'):
+                    origen.seek(0)
+
+                contenido = origen.read()
+
+            elif isinstance(origen, (bytes, bytearray)):
+                contenido = origen
+
+            else:
+                raise TypeError(
+                    "El formato de imagen recibido no es válido."
+                )
+
+            if not contenido:
+                raise ValueError(
+                    "La imagen recibida está vacía."
+                )
+
+            datos = np.frombuffer(
+                contenido,
+                dtype=np.uint8
             )
 
-        imagen = cv2.imread(str(ruta))
+            imagen = cv2.imdecode(
+                datos,
+                cv2.IMREAD_COLOR
+            )
+
+        # ==========================================
+        # VALIDAR IMAGEN
+        # ==========================================
 
         if imagen is None:
             raise ValueError(
                 "No fue posible leer la imagen."
             )
 
+        # ==========================================
+        # DETECTAR ROSTROS CON YUNET
+        # ==========================================
+
         rostros = self.detector.detectar(imagen)
 
         print(f"Rostros detectados: {len(rostros)}")
 
         resultados = []
+
+        # ==========================================
+        # GENERAR EMBEDDINGS CON SFACE
+        # ==========================================
 
         for indice, rostro in enumerate(rostros):
 
@@ -46,17 +98,33 @@ class ReconocedorFacial:
 
             resultados.append({
                 "indice": indice,
+
+                # Coordenadas del rostro detectado por YuNet
+                "x": rostro["x"],
+                "y": rostro["y"],
+                "ancho": rostro["ancho"],
+                "alto": rostro["alto"],
+
+                # Puntos faciales
+                "puntos_faciales": rostro["puntos_faciales"],
+
+                # Confianza de detección
                 "confianza_deteccion": rostro["confianza"],
+
+                # Embedding generado por SFace
                 "embedding": embedding
             })
 
             print(
                 f"Rostro {indice + 1}: "
-                f"embedding generado correctamente."
+                "embedding generado correctamente."
             )
 
         return resultados
 
+# ==========================================
+# PRUEBA DEL RECONOCEDOR FACIAL
+# ==========================================
 
 if __name__ == "__main__":
 
@@ -74,6 +142,16 @@ if __name__ == "__main__":
 
     for resultado in resultados:
 
+        print(f"\nRostro {resultado['indice'] + 1}")
+
+        print(
+            "Coordenadas:",
+            resultado["x"],
+            resultado["y"],
+            resultado["ancho"],
+            resultado["alto"]
+        )
+
         print(
             "Dimensiones del embedding:",
             resultado["embedding"].shape
@@ -85,4 +163,6 @@ if __name__ == "__main__":
         )
 
     if not resultados:
-        print("No se encontraron rostros en la fotografía.")
+        print(
+            "No se encontraron rostros en la fotografía."
+        )

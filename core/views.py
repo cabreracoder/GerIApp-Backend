@@ -3138,11 +3138,21 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
 
         # Consultar registros faciales de pacientes activos
         # que estén ubicados en habitaciones de la sede
-        return RegistrosFaciales.objects.filter(
+        queryset = RegistrosFaciales.objects.filter(
             activo=True,
             id_paciente__estado=True,
             id_paciente__habitacion__in=habitaciones_sede
         ).select_related("id_paciente").distinct()
+
+        # Filtrar por paciente cuando se envíe el identificador
+        id_paciente = self.request.query_params.get("id_paciente")
+
+        if id_paciente:
+            queryset = queryset.filter(
+                id_paciente_id=id_paciente
+            )
+
+        return queryset
 
     # ==========================================
     # OBTENER PLANTILLAS FACIALES POR CÁMARA
@@ -3308,7 +3318,7 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
         print(
         f"[REGISTRO FACIAL] Archivo: {fotografia.name} | "
         f"Detecciones: {len(resultados)}"
-)
+    )
 
         if len(resultados) == 0:
             raise ValueError(
@@ -3412,6 +3422,17 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+        # Identificar el tipo de cada fotografía según su posición
+        tipos_fotografia = [
+            "FRONTAL",
+            "IZQUIERDA",
+            "DERECHA"
+        ]
+
+        tipos_fotografia.extend(
+            ["ADICIONAL"] * max(0, len(fotografias) - 3)
+        )
+
         # 5. Subir las fotografías a Cloudinary
         imagenes_subidas = []
         registros_creados = []
@@ -3442,9 +3463,10 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
             # 6. Crear un registro independiente por fotografía
             with transaction.atomic():
 
-                for embedding_cifrado, imagen in zip(
+                for embedding_cifrado, imagen, tipo in zip(
                     embeddings,
-                    imagenes_subidas
+                    imagenes_subidas,
+                    tipos_fotografia
                 ):
 
                     registro = RegistrosFaciales.objects.create(
@@ -3452,6 +3474,7 @@ class RegistrosFacialesViewSet(viewsets.ReadOnlyModelViewSet):
                         embedding=embedding_cifrado,
                         url_fotografia=imagen["secure_url"],
                         public_id=imagen["public_id"],
+                        tipo_fotografia=tipo,
                         activo=True
                     )
 

@@ -551,6 +551,13 @@ class RegistrosFaciales(models.Model):
     url_fotografia = models.TextField()
     public_id = models.CharField(max_length=255)
 
+    #tipo de fotografia (perfil, frontal, etc.)
+    tipo_fotografia = models.CharField(
+    max_length=20,
+    null=True,
+    blank=True
+)
+
     # Estado del registro
     activo = models.BooleanField(default=True)
 

@@ -78,6 +78,7 @@ class RegistrosFacialesSerializer(serializers.ModelSerializer):
             'id_paciente',
             'url_fotografia',
             'public_id',
+            'tipo_fotografia',
             'activo',
             'fecha_registro',
             'fecha_actualizacion'

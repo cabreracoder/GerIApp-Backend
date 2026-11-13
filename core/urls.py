@@ -26,10 +26,10 @@ from .views import (
     AplicacionMedicamentoViewSet,
     GrupoMedicacionViewSet,
     FormulacionMedicamentosViewSet,
+    SeguimientoAdministracionMedicamentoViewSet,
     CierreTurnoViewSet,
     ConfiguracionControlesPeriodicosViewSet,
     ControlesPeriodicosBitacoraViewSet,
-    SeguimientoAdministracionMedicamentoViewSet, 
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
     
@@ -282,13 +282,13 @@ router.register(r'grupo_medicacion', GrupoMedicacionViewSet)
 
 router.register(r'formulacion_medicamentos', FormulacionMedicamentosViewSet)
 
+router.register(r'seguimiento_administracion_medicamento',SeguimientoAdministracionMedicamentoViewSet,basename='seguimiento-administracion-medicamento')
+
 router.register(r'cierre_turno', CierreTurnoViewSet)
 
 router.register(r'configuracion_controles_periodicos', ConfiguracionControlesPeriodicosViewSet)
 
 router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraViewSet)
-
-router.register(r'seguimiento_administracion_medicamento', SeguimientoAdministracionMedicamentoViewSet)
 
 router.register(r'documentos_historia_clinica', DocumentosHistoriaClinicaViewSet)
 

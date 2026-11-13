@@ -142,9 +142,9 @@ from .models import (
     AsignacionHabitacion,
     GrupoMedicacion,
     FormulacionMedicamentos,
+    SeguimientoAdministracionMedicamento,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
-    SeguimientoAdministracionMedicamento,
     RegistrosFaciales,
     DocumentosHistoriaClinica, 
 )
@@ -211,10 +211,10 @@ from .serializers import (
     AsignacionHabitacionSerializer,
     GrupoMedicacionSerializer,
     FormulacionMedicamentosSerializer,
+    SeguimientoAdministracionMedicamentoSerializer,
     CierreTurnoSerializer,
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer,
-    SeguimientoAdministracionMedicamentoSerializer,
     RegistrosFacialesSerializer,
     DocumentosHistoriaClinicaSerializer,
 )
@@ -1462,6 +1462,96 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # =====================================================
+        # 1. IDENTIFICAR SI VIENE DE UN SEGUIMIENTO
+        # =====================================================
+
+        id_seguimiento = request.data.get('id_seguimiento')
+
+        seguimiento = None
+        usuario_cuidador = None
+        formulacion = None
+
+        if id_seguimiento not in (None, ''):
+
+            try:
+                id_seguimiento = int(id_seguimiento)
+            except (TypeError, ValueError):
+                return Response(
+                    {'error': 'El id_seguimiento no es válido.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            usuario_cuidador = getattr(
+                request.user,
+                'usuario',
+                request.user
+            )
+
+            if (
+                not getattr(request.user, 'is_authenticated', False)
+                or not getattr(usuario_cuidador, 'estado', False)
+                or getattr(usuario_cuidador, 'id_rol_id', None) != 3
+                or getattr(usuario_cuidador, 'id_usuario', None) is None
+            ):
+                return Response(
+                    {'error': 'Solo un cuidador activo puede administrar medicamentos.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            try:
+                seguimiento = (
+                    SeguimientoAdministracionMedicamento.objects
+                    .select_for_update()
+                    .select_related('id_formulacion')
+                    .get(pk=id_seguimiento)
+                )
+
+            except SeguimientoAdministracionMedicamento.DoesNotExist:
+                return Response(
+                    {'error': 'El seguimiento no existe.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Solo se puede administrar una dosis pendiente.
+            if seguimiento.estado != (
+                SeguimientoAdministracionMedicamento.Estado.PENDIENTE
+            ):
+                return Response(
+                    {
+                        'error':
+                            'Este seguimiento ya fue procesado. '
+                            'No se puede administrar nuevamente.'
+                    },
+                    status=status.HTTP_409_CONFLICT
+                )
+
+            formulacion = seguimiento.id_formulacion
+
+            id_paciente = formulacion.id_paciente_id
+
+            if id_paciente is None:
+                return Response(
+                    {'error': 'La formulación no tiene paciente asociado.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Verificar que el cuidador siga asignado al paciente.
+            asignacion_activa = (
+                AsignacionPacienteCuidador.objects.filter(
+                    id_usuario_id=usuario_cuidador.id_usuario,
+                    id_paciente_id=id_paciente,
+                    estado__iexact='Activo'
+                ).exists()
+            )
+
+            if not asignacion_activa:
+                return Response(
+                    {'error': 'No tienes asignado actualmente este paciente.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+
         # Obtener el ID del inventario enviado desde Android.
         inventario_id = (
             request.data.get('id_inventario')
@@ -1486,6 +1576,20 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
                 .select_for_update()
                 .get(pk=inventario_id)
             )
+            if seguimiento is not None :
+                if (
+                    item_inventario.id_paciente_id != formulacion.id_paciente_id
+                    or item_inventario.id_medicamentos_id !=formulacion.id_medicamentos_id
+                    or item_inventario.id_medicamentos_id is None
+                ):
+                    return Response(
+                        {
+                            'error':
+                            'El inventario no corresponde al paciente'
+                            'y medicamento de la formulacion'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
             # Cantidad que se va a administrar.
             cantidad_aplicada = serializer.validated_data.get(
@@ -1540,6 +1644,56 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
             # 3. Registrar la administración del medicamento.
             self.perform_create(serializer)
 
+            # Recuperar la aplicación recién creada.
+            aplicacion = serializer.instance
+
+            # Asociar el cuidador autenticado cuando
+            # la administración proviene de un seguimiento.
+            if usuario_cuidador is not None:
+                aplicacion.id_usuario = usuario_cuidador
+
+            # Garantizar que el medicamento registrado
+            # corresponda al inventario utilizado.
+            aplicacion.id_medicamento_medicamento = (
+                item_inventario.id_medicamentos_id
+            )
+
+            campos_actualizados = [
+                'id_medicamento_medicamento'
+            ]
+
+            if usuario_cuidador is not None:
+                campos_actualizados.append('id_usuario')
+
+            aplicacion.save(
+                update_fields=campos_actualizados
+            )
+
+            # Actualizar el seguimiento únicamente
+            # cuando la aplicación está asociada a uno.
+            if seguimiento is not None:
+
+                seguimiento.estado = (
+                    SeguimientoAdministracionMedicamento.Estado.ADMINISTRADO
+                )
+
+                seguimiento.motivo_no_administracion = None
+
+                seguimiento.fecha_hora_registro = timezone.now()
+
+                seguimiento.id_usuario = usuario_cuidador
+
+                seguimiento.id_aplicacion = aplicacion
+
+                seguimiento.save(
+                    update_fields=[
+                        'estado',
+                        'motivo_no_administracion',
+                        'fecha_hora_registro',
+                        'id_usuario',
+                        'id_aplicacion'
+                    ]
+                )
             headers = self.get_success_headers(serializer.data)
 
             # Devolver también las existencias confirmadas por Django.
@@ -1823,6 +1977,292 @@ class FormulacionMedicamentosViewSet(viewsets.ModelViewSet):
     queryset = FormulacionMedicamentos.objects.all()
     serializer_class = FormulacionMedicamentosSerializer
 
+class SeguimientoAdministracionMedicamentoViewSet(
+    viewsets.GenericViewSet
+):
+    queryset = SeguimientoAdministracionMedicamento.objects.all()
+    serializer_class = SeguimientoAdministracionMedicamentoSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _obtener_cuidador(self, request):
+
+        usuario = getattr(
+            request.user,
+            'usuario',
+            request.user
+        )
+
+        if (
+            not getattr(usuario, 'estado', False)
+            or getattr(usuario, 'id_rol_id', None) != 3
+            or getattr(usuario, 'id_usuario', None) is None
+        ):
+            return None
+
+        return usuario
+
+    # =====================================================
+    # VERIFICAR ASIGNACIÓN ACTIVA
+    # =====================================================
+
+    def _tiene_asignacion_activa(self, usuario, id_paciente):
+
+        return AsignacionPacienteCuidador.objects.filter(
+            id_usuario_id=usuario.id_usuario,
+            id_paciente_id=id_paciente,
+            estado__iexact='Activo'
+        ).exists()
+
+    # =====================================================
+    # CONSULTAR SEGUIMIENTOS DE UN PACIENTE
+    # GET ?id_paciente=1
+    # =====================================================
+
+    def list(self, request, *args, **kwargs):
+
+        usuario = self._obtener_cuidador(request)
+
+        if usuario is None:
+            return Response(
+                {'error': 'No tienes permisos para consultar seguimientos.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            id_paciente = int(
+                request.query_params.get('id_paciente')
+            )
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Debes proporcionar un id_paciente válido.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not self._tiene_asignacion_activa(
+            usuario,
+            id_paciente
+        ):
+            return Response(
+                {'error': 'No tienes asignado este paciente.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        seguimientos = (
+            self.get_queryset()
+            .filter(
+                id_formulacion__id_paciente_id=id_paciente
+            )
+            .order_by(
+                'fecha_hora_programada',
+                'id_seguimiento'
+            )
+        )
+
+        serializer = self.get_serializer(
+            seguimientos,
+            many=True
+        )
+
+        return Response(serializer.data)
+
+    # =====================================================
+    # CREAR SEGUIMIENTO PENDIENTE
+    # POST
+    # =====================================================
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+
+        usuario = self._obtener_cuidador(request)
+
+        if usuario is None:
+            return Response(
+                {'error': 'Solo un cuidador activo puede crear seguimientos.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = self.get_serializer(
+            data=request.data
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        formulacion = serializer.validated_data.get(
+            'id_formulacion'
+        )
+
+        fecha_programada = serializer.validated_data.get(
+            'fecha_hora_programada'
+        )
+
+        try:
+            # Bloquear la formulación para evitar
+            # duplicados en solicitudes simultáneas.
+            formulacion_bloqueada = (
+                FormulacionMedicamentos.objects
+                .select_for_update()
+                .get(pk=formulacion.pk)
+            )
+
+        except FormulacionMedicamentos.DoesNotExist:
+            return Response(
+                {'error': 'La formulación no existe.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        id_paciente = formulacion_bloqueada.id_paciente_id
+
+        if id_paciente is None:
+            return Response(
+                {'error': 'La formulación no tiene paciente asociado.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not self._tiene_asignacion_activa(
+            usuario,
+            id_paciente
+        ):
+            return Response(
+                {'error': 'No tienes asignado este paciente.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Comprobar si ya existe el seguimiento.
+        existente = SeguimientoAdministracionMedicamento.objects.filter(
+            id_formulacion_id=formulacion_bloqueada.id_formulacion,
+            fecha_hora_programada=fecha_programada
+        ).first()
+
+        if existente:
+
+            return Response(
+                self.get_serializer(existente).data,
+                status=status.HTTP_200_OK
+            )
+
+        # Crear el seguimiento pendiente.
+        seguimiento = serializer.save(
+
+            id_formulacion=formulacion_bloqueada,
+
+            estado=SeguimientoAdministracionMedicamento.Estado.PENDIENTE,
+
+            motivo_no_administracion=None,
+
+            fecha_hora_registro=None,
+
+            id_usuario=usuario,
+
+            id_aplicacion=None
+        )
+
+        return Response(
+            self.get_serializer(seguimiento).data,
+            status=status.HTTP_201_CREATED
+        )
+
+    # =====================================================
+    # REGISTRAR DOSIS NO ADMINISTRADA
+    # POST /{id}/no-administrado/
+    # =====================================================
+
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='no-administrado'
+    )
+    @transaction.atomic
+    def no_administrado(self, request, pk=None):
+
+        usuario = self._obtener_cuidador(request)
+
+        if usuario is None:
+            return Response(
+                {'error': 'No tienes permisos para realizar esta operación.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            seguimiento = (
+                SeguimientoAdministracionMedicamento.objects
+                .select_for_update()
+                .select_related('id_formulacion')
+                .get(pk=pk)
+            )
+
+        except SeguimientoAdministracionMedicamento.DoesNotExist:
+            return Response(
+                {'error': 'El seguimiento no existe.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        id_paciente = seguimiento.id_formulacion.id_paciente_id
+
+        if id_paciente is None:
+            return Response(
+                {'error': 'La formulación no tiene paciente asociado.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not self._tiene_asignacion_activa(
+            usuario,
+            id_paciente
+        ):
+            return Response(
+                {'error': 'No tienes asignado este paciente.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Solo se pueden modificar seguimientos pendientes.
+        if seguimiento.estado != (
+            SeguimientoAdministracionMedicamento.Estado.PENDIENTE
+        ):
+            return Response(
+                {
+                    'error':
+                        'Solo se pueden registrar como no administrados '
+                        'los seguimientos pendientes.'
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+
+        motivo = request.data.get(
+            'motivo_no_administracion'
+        )
+
+        if not isinstance(motivo, str) or not motivo.strip():
+            return Response(
+                {'error': 'Debes proporcionar el motivo de no administración.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Actualizar el seguimiento.
+        seguimiento.estado = (
+            SeguimientoAdministracionMedicamento.Estado.NO_ADMINISTRADO
+        )
+
+        seguimiento.motivo_no_administracion = motivo.strip()
+
+        seguimiento.fecha_hora_registro = timezone.now()
+
+        seguimiento.id_usuario = usuario
+
+        seguimiento.id_aplicacion = None
+
+        seguimiento.save(
+            update_fields=[
+                'estado',
+                'motivo_no_administracion',
+                'fecha_hora_registro',
+                'id_usuario',
+                'id_aplicacion'
+            ]
+        )
+
+        return Response(
+            self.get_serializer(seguimiento).data,
+            status=status.HTTP_200_OK
+        )
 class FcmTokensViewSet(viewsets.ModelViewSet):
     queryset = FcmTokens.objects.all()
     serializer_class = FcmTokensSerializer

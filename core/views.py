@@ -335,6 +335,7 @@ def login_usuario(request):
                 'correo': usuario.correo,
                 'id_rol': usuario.id_rol_id,
                 'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+                'id_sede': usuario.id_sede_id,
                 'estado': usuario.estado,
 
                 # URL de la foto almacenada en Cloudinary
@@ -973,11 +974,17 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                 id_sede_id=sede_id
             )
 
-        # Encargado: puede consultar su perfil y los cuidadores.
+        # Encargado: puede consultar su perfil
+        # y los cuidadores de su propia sede.
         if rol_id == 2:
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if sede_id is None:
+                return Usuarios.objects.none()
+
             return Usuarios.objects.filter(
                 Q(id_usuario=usuario.id_usuario)
-                | Q(id_rol_id=3)
+                | Q(id_rol_id=3, id_sede_id=sede_id)
             ).distinct()
 
         # Los demás roles solo consultan su propio perfil.
@@ -988,6 +995,196 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     # =====================================================
     # CREAR USUARIO
     # =====================================================
+
+    # =====================================================
+    # CREAR ENCARGADO O CUIDADOR POR ADMINISTRADOR DE SEDE
+    # =====================================================
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='crear-usuario-sede',
+        permission_classes=[IsAuthenticated],
+        parser_classes=[
+            parsers.MultiPartParser,
+            parsers.FormParser,
+            parsers.JSONParser,
+        ]
+    )
+    @transaction.atomic
+    def crear_usuario_sede(self, request):
+
+        # 1. Validar que quien registra sea administrador
+        rol_actual = self._obtener_id_rol(request.user)
+
+        if rol_actual != 1:
+            return Response(
+                {
+                    "error": "Solo el administrador de sede puede crear encargados y cuidadores."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 2. Obtener automáticamente la sede del administrador
+        sede_id = getattr(request.user, 'id_sede_id', None)
+
+        if not sede_id:
+            return Response(
+                {
+                    "error": "El administrador no tiene una sede asignada."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Validar datos obligatorios
+        campos_obligatorios = [
+            'id_rol',
+            'tipo_documento',
+            'numero_documento',
+            'nombres',
+            'apellidos',
+            'correo',
+        ]
+
+        for campo in campos_obligatorios:
+            valor = request.data.get(campo)
+
+            if valor is None or not str(valor).strip():
+                return Response(
+                    {
+                        "error": f"El campo {campo} es obligatorio."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # 4. Validar rol solicitado
+        try:
+            rol_id = int(request.data.get('id_rol'))
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "El rol seleccionado no es válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if rol_id not in (2, 3):
+            return Response(
+                {
+                    "error": "Solo puedes crear usuarios con rol Encargado o Cuidador."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        rol = Roles.objects.filter(
+            id_rol=rol_id,
+            estado=True
+        ).first()
+
+        if not rol:
+            return Response(
+                {"error": "El rol seleccionado no existe o está inactivo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Obtener y limpiar información
+        tipo_documento = str(
+            request.data.get('tipo_documento')
+        ).strip()
+
+        numero_documento = str(
+            request.data.get('numero_documento')
+        ).strip()
+
+        nombres = str(request.data.get('nombres')).strip()
+        apellidos = str(request.data.get('apellidos')).strip()
+        correo = str(request.data.get('correo')).strip()
+
+        # 6. Verificar documentos duplicados
+        if Usuarios.objects.filter(
+            numero_documento=numero_documento
+        ).exists():
+            return Response(
+                {"error": "Este número de documento ya está registrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 7. Verificar correos duplicados
+        if Usuarios.objects.filter(
+            correo__iexact=correo
+        ).exists():
+            return Response(
+                {"error": "Este correo ya está registrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 8. Validar experiencia profesional
+        experiencia = request.data.get('experiencia')
+
+        if experiencia in ('', None):
+            experiencia = None
+        else:
+            try:
+                experiencia = int(experiencia)
+
+                if experiencia < 0:
+                    raise ValueError
+
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "La experiencia debe ser un número válido."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # 9. Procesar fotografía
+        imagen = request.FILES.get('foto')
+        foto_url = None
+
+        if imagen:
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+            foto_url = resultado['secure_url']
+
+        # 10. Crear usuario
+        usuario = Usuarios.objects.create(
+            id_rol=rol,
+            id_sede_id=sede_id,
+            tipo_documento=tipo_documento,
+            numero_documento=numero_documento,
+            nombres=nombres,
+            apellidos=apellidos,
+            correo=correo,
+            telefono=request.data.get('telefono') or None,
+            fecha_ingreso=timezone.now(),
+            estado=True,
+            contrasena=None,
+            foto=foto_url
+        )
+
+        # 11. Crear perfil profesional para encargados y cuidadores
+        perfil = None
+
+        if rol_id in (2, 3):
+            perfil = PerfilProfesional.objects.create(
+                id_usuario=usuario,
+                especialidad=request.data.get('especialidad') or None,
+                licencia=request.data.get('licencia') or None,
+                experiencia=experiencia,
+                institucion=request.data.get('institucion') or None
+            )
+
+        # 12. Responder a Angular
+        return Response(
+            {
+                "mensaje": "Usuario creado correctamente.",
+                "usuario": UsuariosSerializer(usuario).data,
+                "perfil_profesional": (
+                    PerfilProfesionalSerializer(perfil).data
+                    if perfil else None
+                )
+            },
+            status=status.HTTP_201_CREATED
+        )
 
     def create(self, request, *args, **kwargs):
         """El registro debe pasar por el endpoint específico."""

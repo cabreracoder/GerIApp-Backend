@@ -30,7 +30,6 @@ from .views import (
     CierreTurnoViewSet,
     ConfiguracionControlesPeriodicosViewSet,
     ControlesPeriodicosBitacoraViewSet,
-    SeguimientoAdministracionMedicamentoViewSet, 
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
     
@@ -290,8 +289,6 @@ router.register(r'cierre_turno', CierreTurnoViewSet)
 router.register(r'configuracion_controles_periodicos', ConfiguracionControlesPeriodicosViewSet)
 
 router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraViewSet)
-
-router.register(r'seguimiento_administracion_medicamento', SeguimientoAdministracionMedicamentoViewSet)
 
 router.register(r'documentos_historia_clinica', DocumentosHistoriaClinicaViewSet)
 

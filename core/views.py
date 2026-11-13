@@ -145,7 +145,6 @@ from .models import (
     SeguimientoAdministracionMedicamento,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
-    SeguimientoAdministracionMedicamento,
     RegistrosFaciales,
     DocumentosHistoriaClinica, 
 )
@@ -216,7 +215,6 @@ from .serializers import (
     CierreTurnoSerializer,
     ConfiguracionControlesPeriodicosSerializer,
     ControlesPeriodicosBitacoraSerializer,
-    SeguimientoAdministracionMedicamentoSerializer,
     RegistrosFacialesSerializer,
     DocumentosHistoriaClinicaSerializer,
 )

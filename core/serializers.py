@@ -61,7 +61,6 @@ from .models import (
     CierreTurno,
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
-    SeguimientoAdministracionMedicamento,
     RegistrosFaciales,
     DocumentosHistoriaClinica,
 )
@@ -89,12 +88,6 @@ class RegistrosFacialesSerializer(serializers.ModelSerializer):
             'fecha_registro',
             'fecha_actualizacion'
         ]
-        
-class SeguimientoAdministracionMedicamentoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SeguimientoAdministracionMedicamento
-        fields = '__all__'     
-
 class PacientesSerializer(serializers.ModelSerializer):
     # Permite recibir una imagen desde FormData
     foto = serializers.CharField(

@@ -551,6 +551,13 @@ class RegistrosFaciales(models.Model):
     url_fotografia = models.TextField()
     public_id = models.CharField(max_length=255)
 
+    #tipo de fotografia (perfil, frontal, etc.)
+    tipo_fotografia = models.CharField(
+    max_length=20,
+    null=True,
+    blank=True
+)
+
     # Estado del registro
     activo = models.BooleanField(default=True)
 
@@ -1024,13 +1031,27 @@ class ControlesPeriodicosBitacora(models.Model):
 
 class SeguimientoAdministracionMedicamento(models.Model):
     id_seguimiento = models.AutoField(primary_key=True)
-    id_formulacion = models.ForeignKey('FormulacionMedicamentos', models.DO_NOTHING, db_column='id_formulacion')
+    id_formulacion = models.ForeignKey(
+        'FormulacionMedicamentos',
+        models.DO_NOTHING,
+        db_column='id_formulacion'
+    )
     fecha_hora_programada = models.DateTimeField()
     estado = models.CharField(max_length=20)
-    motivo_no_administracion = models.CharField(max_length=255, blank=True, null=True)
+    motivo_no_administracion = models.CharField(
+        max_length=255, blank=True, null=True
+    )
     fecha_hora_registro = models.DateTimeField(blank=True, null=True)
-    id_usuario = models.ForeignKey('Usuarios', models.DO_NOTHING, db_column='id_usuario')
-    id_aplicacion = models.ForeignKey('AplicacionMedicamento', models.DO_NOTHING, db_column='id_aplicacion', blank=True, null=True)
+    id_usuario = models.ForeignKey(
+        'Usuarios', models.DO_NOTHING, db_column='id_usuario'
+    )
+    id_aplicacion = models.ForeignKey(
+        'AplicacionMedicamento',
+        models.DO_NOTHING,
+        db_column='id_aplicacion',
+        blank=True,
+        null=True
+    )
 
     class Meta:
         managed = False

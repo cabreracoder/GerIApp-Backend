@@ -78,6 +78,7 @@ class RegistrosFacialesSerializer(serializers.ModelSerializer):
             'id_paciente',
             'url_fotografia',
             'public_id',
+            'tipo_fotografia',
             'activo',
             'fecha_registro',
             'fecha_actualizacion'
@@ -121,9 +122,7 @@ class PacientesSerializer(serializers.ModelSerializer):
 
         return super().to_internal_value(data)
 
-    # =====================================================
     # VALIDAR HABITACIÓN Y CAMA DEL PACIENTE
-    # =====================================================
 
     def validate(self, attrs):
 
@@ -506,24 +505,18 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
 
-        # =====================================================
         # OBTENER NUEVO ESTADO
-        # =====================================================
 
         nueva_leida = validated_data.get(
             'leida',
             instance.leida
         )
 
-        # =====================================================
         # ACTUALIZAR ESTADO
-        # =====================================================
 
         instance.leida = nueva_leida
 
-        # =====================================================
         # ACTUALIZAR FECHA DE LECTURA
-        # =====================================================
 
         if nueva_leida:
 
@@ -536,9 +529,7 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
             # Si vuelve a no leída, quitar fecha
             instance.fecha_lectura = None
 
-        # =====================================================
         # ACTUALIZAR OTROS CAMPOS
-        # =====================================================
 
         for atributo, valor in validated_data.items():
 
@@ -553,9 +544,7 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
                     valor
                 )
 
-        # =====================================================
         # GUARDAR
-        # =====================================================
 
         instance.save()
 

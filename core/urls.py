@@ -30,7 +30,6 @@ from .views import (
     CierreTurnoViewSet,
     ConfiguracionControlesPeriodicosViewSet,
     ControlesPeriodicosBitacoraViewSet,
-    SeguimientoAdministracionMedicamentoViewSet, 
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
     

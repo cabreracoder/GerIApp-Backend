@@ -120,16 +120,23 @@ cola_eventos = queue.Queue()
 
 
 # ============================================================
-# ESTADO INDEPENDIENTE PARA CADA CÁMARA
+# ESTADOS INDEPENDIENTES DE CÁMARA Y PACIENTES
 # ============================================================
 
-def crear_estado():
+def crear_estado_paciente(id_paciente):
+    """
+    Crea un estado completamente independiente para cada paciente.
+    Cada paciente conserva su propia identidad, postura,
+    seguimiento corporal y ciclo de alertas.
+    """
+
     return {
-        "camara": None,
-        "frame": None,
-        "frame_mostrar": None,
-        "frame_lock": threading.Lock(),
-        "activa": False,
+        "id_paciente": id_paciente,
+        "nombre_paciente": f"Paciente {id_paciente}",
+
+        # ----------------------------------------
+        # ESTADO DE POSTURA
+        # ----------------------------------------
 
         "postura_actual": "DESCONOCIDO",
         "postura_candidata": "DESCONOCIDO",
@@ -141,39 +148,201 @@ def crear_estado():
         "contador_sin_persona": 0,
         "ultima_confianza": 0.0,
         "ultimo_frame_valido": time.time(),
+
+        # ----------------------------------------
+        # CONTROL DE PRESENCIA
+        # ----------------------------------------
+
         "persona_detectada": False,
         "inicio_sin_personas": None,
         "inicio_sin_asociacion_paciente": None,
-        "reinicio_por_ausencia_realizado": False,
+
+        # ----------------------------------------
+        # RECONOCIMIENTO FACIAL
+        # ----------------------------------------
+
+        "ultimo_procesamiento_facial": 0.0,
+        "candidato_id_paciente": None,
+        "contador_coincidencias_facial": 0,
+        "ultima_coincidencia_facial": 0.0,
+        "ultima_similitud_facial": 0.0,
+
+        "estado_reconocimiento_facial": "SIN INICIAR",
+
+        "rostro_paciente_bbox": None,
+        "ultima_deteccion_rostro_paciente": 0.0,
+
+        # ----------------------------------------
+        # SEGUIMIENTO CORPORAL
+        # ----------------------------------------
+
+        "bbox_cuerpo_paciente": None,
+        "ultima_deteccion_cuerpo_paciente": 0.0,
+        "metodo_asociacion_cuerpo": "SIN ASOCIAR",
+
+        # ----------------------------------------
+        # IDENTIFICACIÓN DEL CUERPO
+        # ----------------------------------------
+
+        "track_id": None,
+        "ultimo_track_id": None,
+
+        # ----------------------------------------
+        # CONTROL DE LEVANTAMIENTOS
+        # ----------------------------------------
 
         "levantamiento_en_proceso": False,
         "levantamiento_detectado": False,
         "tipo_alerta_levantamiento": "",
 
         "contador_levantamientos": 0,
-        "tiempo_levantamiento": 0,
+        "tiempo_levantamiento": 0.0,
 
-        "ultimo_procesamiento": 0,
+        # ----------------------------------------
+        # CONTROL TEMPORAL
+        # ----------------------------------------
 
-        # Estado independiente del reconocimiento facial.
-        "ultimo_procesamiento_facial": 0,
+        "ultimo_procesamiento": 0.0,
+        "ultima_actualizacion": time.time(),
+
+        # ----------------------------------------
+        # CONTROL DE SEGURIDAD
+        # ----------------------------------------
+
+        "identidad_confirmada": False,
+        "activo": True,
+    }
+
+
+def crear_estado():
+    """
+    Crea el estado general de una cámara.
+
+    La cámara conserva sus datos de captura y transmisión,
+    mientras que cada paciente tendrá su propio estado
+    dentro del diccionario 'pacientes'.
+    """
+
+    return {
+        # ----------------------------------------
+        # INFORMACIÓN DE CÁMARA
+        # ----------------------------------------
+
+        "camara": None,
+        "frame": None,
+        "frame_mostrar": None,
+        "frame_lock": threading.Lock(),
+        "activa": False,
+
+        # ----------------------------------------
+        # PACIENTES RECONOCIDOS EN ESTA CÁMARA
+        # ----------------------------------------
+
+        "pacientes": {},
+        "candidatos_faciales": {},
+
+        # ----------------------------------------
+        # CONTROL GENERAL DE DETECCIONES
+        # ----------------------------------------
+
+        "persona_detectada": False,
+        "inicio_sin_personas": None,
+        "reinicio_por_ausencia_realizado": False,
+
+        # ----------------------------------------
+        # CONTROL DE PROCESAMIENTO
+        # ----------------------------------------
+
+        "ultimo_procesamiento": 0.0,
+
+        # ----------------------------------------
+        # COMPATIBILIDAD TEMPORAL
+        # ----------------------------------------
+        # Estos campos se conservarán mientras reemplazamos
+        # las funciones antiguas por las nuevas versiones
+        # que trabajan con estados independientes.
+
+        "postura_actual": "DESCONOCIDO",
+        "postura_candidata": "DESCONOCIDO",
+        "ultima_postura_valida": "DESCONOCIDO",
+        "postura_anterior": "DESCONOCIDO",
+
+        "contador_postura": 0,
+        "ultimo_frame_candidato": 0.0,
+        "contador_sin_persona": 0,
+        "ultima_confianza": 0.0,
+        "ultimo_frame_valido": time.time(),
+
+        "inicio_sin_asociacion_paciente": None,
+
+        "levantamiento_en_proceso": False,
+        "levantamiento_detectado": False,
+        "tipo_alerta_levantamiento": "",
+
+        "contador_levantamientos": 0,
+        "tiempo_levantamiento": 0.0,
+
+        "ultimo_procesamiento_facial": 0.0,
         "candidato_id_paciente": None,
         "contador_coincidencias_facial": 0,
         "ultima_coincidencia_facial": 0.0,
         "ultima_similitud_facial": 0.0,
         "estado_reconocimiento_facial": "SIN INICIAR",
+
         "rostro_paciente_bbox": None,
         "ultima_deteccion_rostro_paciente": 0.0,
 
-        # Seguimiento corporal independiente por cámara.
         "bbox_cuerpo_paciente": None,
         "ultima_deteccion_cuerpo_paciente": 0.0,
         "metodo_asociacion_cuerpo": "SIN ASOCIAR",
     }
 
 
-estados = {}
+def obtener_estado_paciente(nombre, id_paciente):
+    """
+    Obtiene el estado de un paciente.
+    Si todavía no existe, lo crea.
+    """
 
+    estado_camara = estados[nombre]
+
+    pacientes = estado_camara["pacientes"]
+
+    if id_paciente not in pacientes:
+
+        pacientes[id_paciente] = crear_estado_paciente(
+            id_paciente
+        )
+
+        print(
+            f"[{nombre}] Estado independiente creado "
+            f"para el paciente {id_paciente}."
+        )
+
+    return pacientes[id_paciente]
+
+
+def eliminar_estado_paciente(nombre, id_paciente):
+    """
+    Elimina únicamente el estado del paciente indicado.
+    No afecta a los demás pacientes de la cámara.
+    """
+
+    estado_camara = estados.get(nombre)
+
+    if estado_camara is None:
+        return
+
+    pacientes = estado_camara.get("pacientes", {})
+
+    if id_paciente in pacientes:
+
+        del pacientes[id_paciente]
+
+        print(
+            f"[{nombre}] Estado del paciente "
+            f"{id_paciente} eliminado."
+        )
 
 # ============================================================
 # SERVIDOR LOCAL PARA TRANSMITIR LAS CÁMARAS
@@ -772,18 +941,39 @@ def capturar_camara(nombre):
 
 def registrar_evento(
     nombre,
+    id_paciente,
     tipo_evento,
     imagen,
     confianza=None,
 ):
+    """
+    Registra un evento asociado explícitamente a un paciente.
+    Evita utilizar un ID global de paciente por cámara.
+    """
 
     config = CAMARAS_CONFIG[nombre]
 
-    if config["id_paciente"] is None:
+    if id_paciente is None:
 
         print(
             f"[{nombre}] Evento no registrado: "
-            "no hay un paciente identificado de forma segura."
+            "no se proporcionó un paciente identificado."
+        )
+
+        return
+
+    estado_paciente = estados[nombre]["pacientes"].get(
+        id_paciente
+    )
+
+    if (
+        estado_paciente is None
+        or not estado_paciente.get("identidad_confirmada", False)
+    ):
+
+        print(
+            f"[{nombre}] Evento no registrado: "
+            f"el paciente {id_paciente} no tiene identidad confirmada."
         )
 
         return
@@ -792,7 +982,7 @@ def registrar_evento(
         "nombre_camara": nombre,
         "id_camara": config["id_camara"],
         "id_habitacion": config["id_habitacion"],
-        "id_paciente": config["id_paciente"],
+        "id_paciente": id_paciente,
         "id_tipo_evento": tipo_evento,
         "confianza": round(
             float(
@@ -809,7 +999,7 @@ def registrar_evento(
 
     print(
         f"[{nombre}] Evento tipo {tipo_evento} agregado a la cola. "
-        f"ID GerIApp: {config['id_camara']}"
+        f"Paciente: {id_paciente}."
     )
 
 
@@ -946,11 +1136,65 @@ def enviar_eventos_backend():
 # RECONOCIMIENTO FACIAL POR CÁMARA
 # ============================================================
 
-def limpiar_identidad_camara(nombre, motivo):
-    """Retira la identidad asociada cuando ya no es confiable."""
+def limpiar_identidad_camara(nombre, motivo, id_paciente=None):
 
     estado = estados[nombre]
     config = CAMARAS_CONFIG[nombre]
+
+    # --------------------------------------------------------
+    # LIMPIAR UN PACIENTE ESPECÍFICO
+    # --------------------------------------------------------
+    if id_paciente is not None:
+
+        estado_paciente = estado.get("pacientes", {}).get(id_paciente)
+
+        if estado_paciente is None:
+            print(
+                f"[{nombre}] No existe estado para el paciente "
+                f"{id_paciente}."
+            )
+            return
+
+        estado_paciente["identidad_confirmada"] = False
+        estado_paciente["activo"] = False
+
+        estado_paciente["candidato_id_paciente"] = None
+        estado_paciente["contador_coincidencias_facial"] = 0
+        estado_paciente["ultima_similitud_facial"] = 0.0
+
+        estado_paciente["rostro_paciente_bbox"] = None
+        estado_paciente["ultima_deteccion_rostro_paciente"] = 0.0
+
+        estado_paciente["bbox_cuerpo_paciente"] = None
+        estado_paciente["ultima_deteccion_cuerpo_paciente"] = 0.0
+
+        estado_paciente["metodo_asociacion_cuerpo"] = "SIN ASOCIAR"
+
+        estado_paciente["track_id"] = None
+        estado_paciente["ultimo_track_id"] = None
+
+        estado_paciente["persona_detectada"] = False
+        estado_paciente["estado_reconocimiento_facial"] = motivo
+
+        # Reiniciar el ciclo de levantamiento de este paciente.
+        estado_paciente["levantamiento_en_proceso"] = False
+        estado_paciente["levantamiento_detectado"] = False
+        estado_paciente["tipo_alerta_levantamiento"] = ""
+        estado_paciente["tiempo_levantamiento"] = 0
+
+        # Eliminar solamente su candidato facial.
+        estado["candidatos_faciales"].pop(id_paciente, None)
+
+        print(
+            f"[{nombre}] Identidad del paciente {id_paciente} "
+            f"limpiada: {motivo}"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # LIMPIEZA DE CAMPOS ANTIGUOS DE LA CÁMARA
+    # --------------------------------------------------------
 
     config["id_paciente"] = None
 
@@ -961,121 +1205,194 @@ def limpiar_identidad_camara(nombre, motivo):
 
     estado["rostro_paciente_bbox"] = None
     estado["ultima_deteccion_rostro_paciente"] = 0.0
+
     estado["bbox_cuerpo_paciente"] = None
     estado["ultima_deteccion_cuerpo_paciente"] = 0.0
+
     estado["metodo_asociacion_cuerpo"] = "SIN ASOCIAR"
 
-
-def reiniciar_ciclo_camara(nombre, motivo="AUSENCIA DE PERSONAS"):
-    """Reinicia la identidad y el ciclo de posturas de una cámara.
-
-    Conserva el contador histórico de levantamientos, la cámara y la
-    transmisión. Elimina toda asociación activa para que la siguiente
-    persona deba ser reconocida desde cero.
+def reiniciar_ciclo_camara(nombre, motivo="AUSENCIA DE PERSONAS",
+                           id_paciente=None):
     """
+    Reinicia el ciclo de un paciente específico o de toda la cámara.
+
+    Si se proporciona id_paciente, solamente se reinicia ese paciente.
+    Si no se proporciona, se reinician todos los pacientes de la cámara.
+    """
+
     estado = estados[nombre]
 
-    limpiar_identidad_camara(nombre, "SIN INICIAR - NUEVO CICLO")
+    # --------------------------------------------------------
+    # REINICIAR UN PACIENTE ESPECÍFICO
+    # --------------------------------------------------------
+    if id_paciente is not None:
 
+        estado_paciente = estado.get("pacientes", {}).get(id_paciente)
+
+        if estado_paciente is None:
+            return
+
+        limpiar_identidad_camara(
+            nombre,
+            "SIN INICIAR - NUEVO CICLO",
+            id_paciente
+        )
+
+        estado_paciente["postura_actual"] = "SIN PERSONA"
+        estado_paciente["postura_candidata"] = "DESCONOCIDO"
+        estado_paciente["ultima_postura_valida"] = "SIN PERSONA"
+        estado_paciente["postura_anterior"] = "DESCONOCIDO"
+
+        estado_paciente["contador_postura"] = 0
+        estado_paciente["ultimo_frame_candidato"] = 0.0
+        estado_paciente["contador_sin_persona"] = 0
+
+        estado_paciente["ultima_confianza"] = 0.0
+        estado_paciente["ultimo_frame_valido"] = time.time()
+
+        estado_paciente["levantamiento_en_proceso"] = False
+        estado_paciente["levantamiento_detectado"] = False
+        estado_paciente["tipo_alerta_levantamiento"] = ""
+        estado_paciente["tiempo_levantamiento"] = 0
+
+        estado_paciente["inicio_sin_asociacion_paciente"] = None
+        estado_paciente["ultima_actualizacion"] = time.time()
+
+        print(
+            f"[{nombre}] Ciclo del paciente {id_paciente} "
+            f"reiniciado: {motivo}"
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # REINICIAR TODA LA CÁMARA
+    # --------------------------------------------------------
+    limpiar_identidad_camara(
+        nombre,
+        "SIN INICIAR - NUEVO CICLO"
+    )
+
+    # Reiniciar el procesamiento facial de la cámara.
     estado["ultima_coincidencia_facial"] = 0.0
     estado["ultimo_procesamiento_facial"] = 0.0
+
     estado["ultima_similitud_facial"] = 0.0
     estado["candidato_id_paciente"] = None
     estado["contador_coincidencias_facial"] = 0
 
-    estado["postura_actual"] = "SIN PERSONA"
-    estado["postura_candidata"] = "DESCONOCIDO"
-    estado["ultima_postura_valida"] = "SIN PERSONA"
-    estado["postura_anterior"] = "DESCONOCIDO"
-    estado["contador_postura"] = 0
-    estado["ultimo_frame_candidato"] = 0.0
-    estado["contador_sin_persona"] = 0
-    estado["ultima_confianza"] = 0.0
-    estado["ultimo_frame_valido"] = time.time()
+    # Limpiar candidatos faciales.
+    estado["candidatos_faciales"].clear()
 
-    estado["levantamiento_en_proceso"] = False
-    estado["levantamiento_detectado"] = False
-    estado["tipo_alerta_levantamiento"] = ""
-    estado["tiempo_levantamiento"] = 0
+    # Reiniciar todos los pacientes.
+    for id_actual, estado_paciente in estado.get("pacientes", {}).items():
+
+        estado_paciente["identidad_confirmada"] = False
+        estado_paciente["activo"] = False
+
+        estado_paciente["rostro_paciente_bbox"] = None
+        estado_paciente["ultima_deteccion_rostro_paciente"] = 0.0
+
+        estado_paciente["bbox_cuerpo_paciente"] = None
+        estado_paciente["ultima_deteccion_cuerpo_paciente"] = 0.0
+
+        estado_paciente["metodo_asociacion_cuerpo"] = "SIN ASOCIAR"
+
+        estado_paciente["track_id"] = None
+        estado_paciente["ultimo_track_id"] = None
+
+        estado_paciente["postura_actual"] = "SIN PERSONA"
+        estado_paciente["postura_candidata"] = "DESCONOCIDO"
+        estado_paciente["ultima_postura_valida"] = "SIN PERSONA"
+        estado_paciente["postura_anterior"] = "DESCONOCIDO"
+
+        estado_paciente["contador_postura"] = 0
+        estado_paciente["ultimo_frame_candidato"] = 0.0
+        estado_paciente["contador_sin_persona"] = 0
+
+        estado_paciente["ultima_confianza"] = 0.0
+        estado_paciente["ultimo_frame_valido"] = time.time()
+
+        estado_paciente["levantamiento_en_proceso"] = False
+        estado_paciente["levantamiento_detectado"] = False
+        estado_paciente["tipo_alerta_levantamiento"] = ""
+        estado_paciente["tiempo_levantamiento"] = 0
+
+        estado_paciente["persona_detectada"] = False
+        estado_paciente["inicio_sin_asociacion_paciente"] = None
+
+        estado_paciente["estado_reconocimiento_facial"] = (
+            "SIN PERSONA - ESPERANDO INGRESO"
+        )
+
+        estado_paciente["ultima_actualizacion"] = time.time()
 
     estado["persona_detectada"] = False
     estado["inicio_sin_asociacion_paciente"] = None
-    estado["estado_reconocimiento_facial"] = "SIN PERSONA - ESPERANDO INGRESO"
 
     print(
-        f"[{nombre}] Ciclo reiniciado: {motivo}. "
-        "La próxima persona deberá identificarse nuevamente."
+        f"[{nombre}] Ciclo completo de cámara reiniciado: {motivo}. "
+        "Todos los pacientes deberán identificarse nuevamente."
     )
 
-
 def actualizar_identidad_facial(nombre, frame):
-    """
-    Reconoce múltiples rostros por cámara.
-
-    - Procesa todos los rostros detectados.
-    - Compara cada embedding contra las plantillas disponibles.
-    - Permite identificar un paciente aunque haya acompañantes.
-    - Si aparecen varios pacientes registrados, evita asignar
-      una identidad ambigua.
-    - Requiere coincidencias consecutivas para confirmar.
-    - Conserva temporalmente la última identidad si no hay rostros.
-    """
 
     estado = estados[nombre]
     config = CAMARAS_CONFIG[nombre]
     ahora = time.time()
 
+    # Contadores independientes para validar cada identidad.
+    candidatos = estado.setdefault("candidatos_faciales", {})
+
     if reconocedor_facial is None:
-        config["id_paciente"] = None
-        estado["rostro_paciente_bbox"] = None
-        estado["ultima_deteccion_rostro_paciente"] = 0.0
-        estado["estado_reconocimiento_facial"] = "RECONOCEDOR NO DISPONIBLE"
+        estado["estado_reconocimiento_facial"] = (
+            "RECONOCEDOR NO DISPONIBLE"
+        )
         return
 
     plantillas = config.get("plantillas_faciales", [])
 
     if not plantillas:
-        config["id_paciente"] = None
-        estado["rostro_paciente_bbox"] = None
-        estado["ultima_deteccion_rostro_paciente"] = 0.0
         estado["estado_reconocimiento_facial"] = "SIN PLANTILLAS"
         return
 
-    # Al no existir una identidad confirmada, buscar rostros con mayor
-    # frecuencia. Una vez identificado el paciente, volver al FPS normal.
-    intervalo_facial = (
-        INTERVALO_RECONOCIMIENTO_SIN_IDENTIDAD
-        if config.get("id_paciente") is None
-        else 1 / FPS_RECONOCIMIENTO_FACIAL
-    )
-    if (
-        ahora - estado["ultimo_procesamiento_facial"]
-        < intervalo_facial
-    ):
+    # --------------------------------------------------
+    # CONTROL DE FRECUENCIA
+    # --------------------------------------------------
+
+    intervalo_facial = INTERVALO_RECONOCIMIENTO_SIN_IDENTIDAD
+
+    if ahora - estado.get("ultimo_procesamiento_facial", 0.0) < intervalo_facial:
         return
 
     estado["ultimo_procesamiento_facial"] = ahora
 
+    # --------------------------------------------------
+    # CODIFICAR IMAGEN
+    # --------------------------------------------------
+
     correcto, imagen_jpg = cv2.imencode(".jpg", frame)
 
     if not correcto:
-        estado["rostro_paciente_bbox"] = None
-        estado["ultima_deteccion_rostro_paciente"] = 0.0
         estado["estado_reconocimiento_facial"] = (
             "ERROR AL CODIFICAR IMAGEN"
         )
         return
+
+    # --------------------------------------------------
+    # DETECTAR ROSTROS
+    # --------------------------------------------------
 
     try:
         rostros = reconocedor_facial.procesar_imagen(
             imagen_jpg.tobytes()
         )
 
-        # Segundo intento con imagen ampliada: puede ayudar cuando el rostro
-        # ocupa pocos píxeles. Las coordenadas se convierten de vuelta al
-        # tamaño original para mantener la asociación con YOLO.
+        # Segundo intento con imagen ampliada.
         if not rostros:
+
             escala = 1.5
+
             frame_ampliado = cv2.resize(
                 frame,
                 None,
@@ -1083,100 +1400,115 @@ def actualizar_identidad_facial(nombre, frame):
                 fy=escala,
                 interpolation=cv2.INTER_CUBIC,
             )
+
             correcto_ampliado, jpg_ampliado = cv2.imencode(
-                ".jpg", frame_ampliado
+                ".jpg",
+                frame_ampliado
             )
+
             if correcto_ampliado:
-                rostros_ampliados = reconocedor_facial.procesar_imagen(
+
+                rostros = reconocedor_facial.procesar_imagen(
                     jpg_ampliado.tobytes()
-                )
-                rostros = rostros_ampliados or []
+                ) or []
+
+                # Regresar coordenadas al tamaño original.
                 for rostro in rostros:
+
                     for clave in ("x", "y", "ancho", "alto"):
+
                         if rostro.get(clave) is not None:
-                            rostro[clave] = int(round(
-                                float(rostro[clave]) / escala
-                            ))
+
+                            rostro[clave] = int(
+                                round(
+                                    float(rostro[clave]) / escala
+                                )
+                            )
 
     except Exception as error:
-
-        # No utilizar coordenadas antiguas si falla el reconocimiento.
-        estado["rostro_paciente_bbox"] = None
-        estado["ultima_deteccion_rostro_paciente"] = 0.0
 
         estado["estado_reconocimiento_facial"] = (
             "ERROR DE RECONOCIMIENTO"
         )
 
-        if (
-            config["id_paciente"] is not None
-            and ahora - estado["ultima_coincidencia_facial"]
-            > TIEMPO_RETENCION_IDENTIDAD
-        ):
-            limpiar_identidad_camara(
-                nombre,
-                "IDENTIDAD VENCIDA"
-            )
-
         print(
             f"[{nombre}] Error en reconocimiento facial: {error}"
         )
+
         return
 
-    # ==================================================
-    # 1. CUANDO NO SE DETECTAN ROSTROS
-    # ==================================================
+    # --------------------------------------------------
+    # SI NO HAY ROSTROS
+    # --------------------------------------------------
 
-    if len(rostros) == 0:
+    if not rostros:
 
-        # Limpiar las coordenadas del último rostro detectado.
-        # La identidad puede conservarse temporalmente, pero no
-        # se debe asociar un cuerpo usando un rostro antiguo.
-        estado["rostro_paciente_bbox"] = None
-        estado["ultima_deteccion_rostro_paciente"] = 0.0
-
-        estado["candidato_id_paciente"] = None
-        estado["contador_coincidencias_facial"] = 0
-
-        seguimiento_corporal_reciente = (
-            estado.get("bbox_cuerpo_paciente") is not None
-            and estado.get("ultima_deteccion_cuerpo_paciente", 0.0) > 0
-            and ahora - estado["ultima_deteccion_cuerpo_paciente"]
-            <= TIEMPO_MAXIMO_PERDIDA_CUERPO
-        )
-
-        retencion_facial_vigente = (
-            ahora - estado["ultima_coincidencia_facial"]
-            <= TIEMPO_RETENCION_IDENTIDAD
-        )
-
-        if (
-            config["id_paciente"] is not None
-            and (retencion_facial_vigente or seguimiento_corporal_reciente)
+        for id_paciente, estado_paciente in list(
+            estado["pacientes"].items()
         ):
 
-            estado["estado_reconocimiento_facial"] = (
-                "IDENTIDAD CONSERVADA POR SEGUIMIENTO CORPORAL"
-                if seguimiento_corporal_reciente and not retencion_facial_vigente
-                else "IDENTIDAD CONSERVADA TEMPORALMENTE"
+            tiempo_desde_rostro = (
+                ahora
+                - estado_paciente.get(
+                    "ultima_coincidencia_facial",
+                    0.0
+                )
             )
 
-        else:
-
-            limpiar_identidad_camara(
-                nombre,
-                "ROSTRO NO DETECTADO"
+            tiempo_desde_cuerpo = (
+                ahora
+                - estado_paciente.get(
+                    "ultima_deteccion_cuerpo_paciente",
+                    0.0
+                )
             )
+
+            cuerpo_reciente = (
+                estado_paciente.get("bbox_cuerpo_paciente") is not None
+                and tiempo_desde_cuerpo <= TIEMPO_MAXIMO_PERDIDA_CUERPO
+            )
+
+            identidad_vigente = (
+                tiempo_desde_rostro <= TIEMPO_RETENCION_IDENTIDAD
+            )
+
+            # No utilizar coordenadas faciales antiguas.
+            estado_paciente["rostro_paciente_bbox"] = None
+            estado_paciente["ultima_deteccion_rostro_paciente"] = 0.0
+
+            if cuerpo_reciente or identidad_vigente:
+
+                estado_paciente["estado_reconocimiento_facial"] = (
+                    "IDENTIDAD CONSERVADA TEMPORALMENTE"
+                )
+
+            else:
+
+                estado_paciente["identidad_confirmada"] = False
+                estado_paciente["estado_reconocimiento_facial"] = (
+                    "IDENTIDAD VENCIDA"
+                )
+
+                estado_paciente["bbox_cuerpo_paciente"] = None
+                estado_paciente["ultima_deteccion_cuerpo_paciente"] = 0.0
+                estado_paciente["metodo_asociacion_cuerpo"] = "SIN ASOCIAR"
+
+                print(
+                    f"[{nombre}] Identidad vencida para paciente "
+                    f"{id_paciente}."
+                )
+
+        estado["estado_reconocimiento_facial"] = (
+            "SIN ROSTROS DETECTADOS"
+        )
 
         return
 
-    # ==================================================
-    # 2. COMPARAR TODOS LOS ROSTROS DETECTADOS
-    # ==================================================
+    # --------------------------------------------------
+    # COMPARAR TODOS LOS ROSTROS CON LAS PLANTILLAS
+    # --------------------------------------------------
 
     pacientes_reconocidos = {}
-
-    rostros_ambiguos = 0
 
     for rostro in rostros:
 
@@ -1193,7 +1525,6 @@ def actualizar_identidad_facial(nombre, frame):
 
         mejores_por_paciente = {}
 
-        # Comparar el rostro actual con todas las plantillas.
         for plantilla in plantillas:
 
             id_paciente = plantilla.get("id_paciente")
@@ -1221,6 +1552,7 @@ def actualizar_identidad_facial(nombre, frame):
                 id_paciente not in mejores_por_paciente
                 or similitud > mejores_por_paciente[id_paciente]
             ):
+
                 mejores_por_paciente[id_paciente] = similitud
 
         if not mejores_por_paciente:
@@ -1234,29 +1566,25 @@ def actualizar_identidad_facial(nombre, frame):
 
         mejor_id, mejor_similitud = ordenados[0]
 
-        # Descartar rostros que no superen el umbral.
         if mejor_similitud < UMBRAL_SIMILITUD_FACIAL:
             continue
 
-        # Comprobar si la identidad de este rostro es ambigua.
+        # Descartar identificaciones ambiguas.
         if (
             len(ordenados) > 1
             and ordenados[0][1] - ordenados[1][1]
             < MARGEN_AMBIGUEDAD_FACIAL
         ):
 
-            rostros_ambiguos += 1
-
             print(
-                f"[{nombre}] Rostro {rostro.get('indice')} "
-                "con identidad ambigua."
+                f"[{nombre}] Rostro "
+                f"{rostro.get('indice')} ambiguo."
             )
 
             continue
 
-        # Guardar el paciente reconocido.
-        # Si hay varias detecciones asociadas al mismo paciente,
-        # conservar la que tenga mayor similitud.
+        # Si hay varios rostros del mismo paciente,
+        # conservar el de mayor similitud.
         if (
             mejor_id not in pacientes_reconocidos
             or mejor_similitud
@@ -1265,275 +1593,451 @@ def actualizar_identidad_facial(nombre, frame):
 
             pacientes_reconocidos[mejor_id] = {
                 "similitud": mejor_similitud,
-                "rostro": rostro
+                "rostro": rostro,
             }
 
-    # ==================================================
-    # 3. EVALUAR LOS PACIENTES RECONOCIDOS
-    # ==================================================
+    # --------------------------------------------------
+    # VALIDAR CADA PACIENTE INDEPENDIENTEMENTE
+    # --------------------------------------------------
 
-    if len(pacientes_reconocidos) == 0:
+    pacientes_confirmados_en_frame = set()
 
-        estado["candidato_id_paciente"] = None
-        estado["contador_coincidencias_facial"] = 0
+    for id_paciente, datos in pacientes_reconocidos.items():
 
-        # Si solo aparecen rostros de acompañantes/no registrados, no
-        # borrar inmediatamente la identidad ya confirmada del paciente.
-        # Se conserva únicamente dentro de la ventana de retención facial
-        # o mientras el cuerpo previamente asociado siga siendo seguido.
-        seguimiento_corporal_reciente = (
-            estado.get("bbox_cuerpo_paciente") is not None
-            and estado.get("ultima_deteccion_cuerpo_paciente", 0.0) > 0
-            and ahora - estado["ultima_deteccion_cuerpo_paciente"]
-            <= TIEMPO_MAXIMO_PERDIDA_CUERPO
-        )
-        retencion_facial_vigente = (
-            config.get("id_paciente") is not None
-            and ahora - estado["ultima_coincidencia_facial"]
-            <= TIEMPO_RETENCION_IDENTIDAD
+        similitud = datos["similitud"]
+        rostro = datos["rostro"]
+
+        candidato = candidatos.setdefault(
+            id_paciente,
+            {
+                "contador": 0,
+                "ultima_coincidencia": 0.0,
+                "ultima_similitud": 0.0,
+            }
         )
 
-        if config.get("id_paciente") is not None and (
-            seguimiento_corporal_reciente or retencion_facial_vigente
+        # Si pasó demasiado tiempo desde la última coincidencia,
+        # reiniciar únicamente el contador de este paciente.
+        if (
+            candidato["ultima_coincidencia"] > 0
+            and ahora - candidato["ultima_coincidencia"] > 2.0
         ):
-            estado["estado_reconocimiento_facial"] = (
-                "ROSTRO NO RECONOCIDO; IDENTIDAD RETENIDA"
+
+            candidato["contador"] = 0
+
+        candidato["contador"] += 1
+        candidato["ultima_coincidencia"] = ahora
+        candidato["ultima_similitud"] = similitud
+
+        if (
+            candidato["contador"]
+            < COINCIDENCIAS_FACIALES_REQUERIDAS
+        ):
+
+            print(
+                f"[{nombre}] Validando paciente {id_paciente}: "
+                f"{candidato['contador']}/"
+                f"{COINCIDENCIAS_FACIALES_REQUERIDAS}"
             )
-            return
 
-        limpiar_identidad_camara(
+            continue
+
+        # Obtener o crear el estado individual.
+        estado_paciente = obtener_estado_paciente(
             nombre,
-            "NINGUN PACIENTE RECONOCIDO"
-        )
-        return
-
-    # Si se reconocen dos o más pacientes distintos,
-    # no se asigna ninguna identidad a la cámara.
-    if len(pacientes_reconocidos) > 1:
-
-        estado["candidato_id_paciente"] = None
-        estado["contador_coincidencias_facial"] = 0
-
-        limpiar_identidad_camara(
-            nombre,
-            "VARIOS PACIENTES RECONOCIDOS"
+            id_paciente
         )
 
-        print(
-            f"[{nombre}] Se reconocieron varios pacientes "
-            "en el mismo fotograma."
+        # Confirmar identidad.
+        era_otro = not estado_paciente.get(
+            "identidad_confirmada",
+            False
         )
 
-        return
+        # Buscar el nombre del paciente en las plantillas faciales.
+        nombre_paciente = next(
+            (
+                plantilla.get("nombre_paciente")
+                for plantilla in plantillas
+                if str(plantilla.get("id_paciente")) == str(id_paciente)
+                and plantilla.get("nombre_paciente")
+            ),
+            f"Paciente {id_paciente}"
+        )
 
-    # ==================================================
-    # 4. OBTENER EL ÚNICO PACIENTE RECONOCIDO
-    # ==================================================
+        estado_paciente["identidad_confirmada"] = True
+        estado_paciente["id_paciente"] = id_paciente
+        estado_paciente["nombre_paciente"] = nombre_paciente
 
-    mejor_id, datos_reconocimiento = next(
-        iter(pacientes_reconocidos.items())
-    )
+        estado_paciente["ultima_coincidencia_facial"] = ahora
+        estado_paciente["ultima_similitud_facial"] = similitud
 
-    mejor_similitud = datos_reconocimiento["similitud"]
+        estado_paciente["estado_reconocimiento_facial"] = (
+            "PACIENTE IDENTIFICADO"
+        )
 
-    rostro_identificado = datos_reconocimiento["rostro"]
-
-    estado["ultima_similitud_facial"] = mejor_similitud
-
-    # Renovar tiempo de coincidencia.
-    estado["ultima_coincidencia_facial"] = ahora
-
-    # ==================================================
-    # 5. VALIDAR COINCIDENCIAS CONSECUTIVAS
-    # ==================================================
-
-    if estado["candidato_id_paciente"] == mejor_id:
-
-        estado["contador_coincidencias_facial"] += 1
-
-    else:
-
-        estado["candidato_id_paciente"] = mejor_id
-        estado["contador_coincidencias_facial"] = 1
-
-    # Evitar conservar la identidad de otro paciente.
-    if (
-        config["id_paciente"] is not None
-        and config["id_paciente"] != mejor_id
-    ):
-
-        config["id_paciente"] = None
-
-    # ==================================================
-    # 6. CONFIRMAR IDENTIDAD
-    # ==================================================
-
-    if (
-        estado["contador_coincidencias_facial"]
-        >= COINCIDENCIAS_FACIALES_REQUERIDAS
-    ):
-
-        era_otro = config["id_paciente"] != mejor_id
-
-        config["id_paciente"] = mejor_id
-
-        # Guardar el recuadro facial solamente cuando la identidad
-        # ya está confirmada. Si se está validando otro paciente,
-        # no se habilita la asociación con YOLO.
-        x = rostro_identificado.get("x")
-        y = rostro_identificado.get("y")
-        ancho = rostro_identificado.get("ancho")
-        alto = rostro_identificado.get("alto")
+        # Guardar coordenadas del rostro.
+        x = rostro.get("x")
+        y = rostro.get("y")
+        ancho = rostro.get("ancho")
+        alto = rostro.get("alto")
 
         if all(
             valor is not None
             for valor in (x, y, ancho, alto)
         ):
-            estado["rostro_paciente_bbox"] = (
+
+            estado_paciente["rostro_paciente_bbox"] = (
                 int(x),
                 int(y),
                 int(x + ancho),
                 int(y + alto),
             )
-            estado["ultima_deteccion_rostro_paciente"] = ahora
-        else:
-            estado["rostro_paciente_bbox"] = None
-            estado["ultima_deteccion_rostro_paciente"] = 0.0
 
-        estado["estado_reconocimiento_facial"] = (
-            "PACIENTE IDENTIFICADO"
-        )
+            estado_paciente["ultima_deteccion_rostro_paciente"] = ahora
+
+        else:
+
+            estado_paciente["rostro_paciente_bbox"] = None
+            estado_paciente["ultima_deteccion_rostro_paciente"] = 0.0
+
+        pacientes_confirmados_en_frame.add(id_paciente)
 
         if era_otro:
 
             print(
-                f"[{nombre}] Identidad confirmada: paciente "
-                f"{mejor_id} | "
-                f"similitud {mejor_similitud:.3f} | "
-                f"rostro {rostro_identificado.get('indice')}"
+                f"[{nombre}] Paciente {id_paciente} identificado. "
+                f"Similitud: {similitud:.3f}"
             )
+
+    # --------------------------------------------------
+    # CONSERVAR IDENTIDADES DE PACIENTES YA CONFIRMADOS
+    # --------------------------------------------------
+
+    for id_paciente, estado_paciente in list(
+        estado["pacientes"].items()
+    ):
+
+        if id_paciente in pacientes_confirmados_en_frame:
+            continue
+
+        tiempo_desde_rostro = (
+            ahora
+            - estado_paciente.get(
+                "ultima_coincidencia_facial",
+                0.0
+            )
+        )
+
+        tiempo_desde_cuerpo = (
+            ahora
+            - estado_paciente.get(
+                "ultima_deteccion_cuerpo_paciente",
+                0.0
+            )
+        )
+
+        cuerpo_reciente = (
+            estado_paciente.get("bbox_cuerpo_paciente") is not None
+            and tiempo_desde_cuerpo <= TIEMPO_MAXIMO_PERDIDA_CUERPO
+        )
+
+        identidad_vigente = (
+            tiempo_desde_rostro <= TIEMPO_RETENCION_IDENTIDAD
+        )
+
+        estado_paciente["rostro_paciente_bbox"] = None
+        estado_paciente["ultima_deteccion_rostro_paciente"] = 0.0
+
+        if cuerpo_reciente or identidad_vigente:
+
+            estado_paciente["estado_reconocimiento_facial"] = (
+                "IDENTIDAD CONSERVADA TEMPORALMENTE"
+            )
+
+        else:
+
+            estado_paciente["identidad_confirmada"] = False
+
+            estado_paciente["estado_reconocimiento_facial"] = (
+                "IDENTIDAD VENCIDA"
+            )
+
+            estado_paciente["bbox_cuerpo_paciente"] = None
+            estado_paciente["ultima_deteccion_cuerpo_paciente"] = 0.0
+            estado_paciente["metodo_asociacion_cuerpo"] = "SIN ASOCIAR"
+
+    # --------------------------------------------------
+    # ACTUALIZAR ESTADO GENERAL DE LA CÁMARA
+    # --------------------------------------------------
+
+    cantidad_confirmados = sum(
+        1
+        for paciente in estado["pacientes"].values()
+        if paciente.get("identidad_confirmada", False)
+    )
+
+    if cantidad_confirmados > 1:
+
+        estado["estado_reconocimiento_facial"] = (
+            f"{cantidad_confirmados} PACIENTES IDENTIFICADOS"
+        )
+
+    elif cantidad_confirmados == 1:
+
+        estado["estado_reconocimiento_facial"] = (
+            "UN PACIENTE IDENTIFICADO"
+        )
 
     else:
 
         estado["estado_reconocimiento_facial"] = (
-            f"VALIDANDO "
-            f"{estado['contador_coincidencias_facial']}/"
-            f"{COINCIDENCIAS_FACIALES_REQUERIDAS}"
+            "BUSCANDO PACIENTES"
         )
+
+    # Mantener compatibilidad temporal con las funciones antiguas.
+    # Este campo ya no debe utilizarse para procesar varios pacientes.
+    pacientes_activos = [
+        id_paciente
+        for id_paciente, paciente in estado["pacientes"].items()
+        if paciente.get("identidad_confirmada", False)
+    ]
+
+    config["id_paciente"] = (
+        pacientes_activos[0]
+        if len(pacientes_activos) == 1
+        else None
+    )
 
 # ============================================================
 # ACTUALIZAR LA POSTURA DE UNA CÁMARA
 # ============================================================
 
+
 def actualizar_postura(
     nombre,
+    id_paciente,
     postura_detectada,
     imagen,
     confianza=0.0,
-):
+    ):
     """
-    Confirma posturas mediante estabilidad temporal y registra eventos
-    únicamente cuando se cumple la secuencia ACOSTADA -> SENTADA -> DE PIE.
+    Actualiza la postura de un paciente de forma independiente.
+    Secuencia de alertas:
+        ACOSTADA -> SENTADA = inicio del levantamiento.
+        SENTADA -> DE PIE = levantamiento completado.
+    El estado de otros pacientes no se modifica.
     """
-    estado = estados[nombre]
+
+    estado = obtener_estado_paciente(
+        nombre,
+        id_paciente
+    )
+
     ahora = time.time()
 
+    # --------------------------------------------------
+    # CONTROL DE AUSENCIA
+    # --------------------------------------------------
+
     if postura_detectada == "SIN PERSONA":
+
         estado["contador_sin_persona"] += 1
         estado["contador_postura"] = 0
         estado["postura_candidata"] = "SIN PERSONA"
         estado["ultimo_frame_candidato"] = ahora
 
         if estado["contador_sin_persona"] >= MAX_SIN_PERSONA:
+
             anterior = estado["ultima_postura_valida"]
+
             estado["postura_actual"] = "SIN PERSONA"
             estado["ultima_postura_valida"] = "SIN PERSONA"
             estado["postura_anterior"] = anterior
+
             estado["levantamiento_en_proceso"] = False
+            estado["levantamiento_detectado"] = False
+            estado["tipo_alerta_levantamiento"] = None
+            estado["tiempo_levantamiento"] = None
+
         return
 
     estado["contador_sin_persona"] = 0
 
+    # --------------------------------------------------
+    # CONTROL DE POSTURA DESCONOCIDA
+    # --------------------------------------------------
+
     if postura_detectada == "DESCONOCIDO":
-        if ahora - estado["ultimo_frame_valido"] > TIEMPO_MAXIMO_DESCONOCIDO:
+
+        if (
+            ahora - estado["ultimo_frame_valido"]
+            > TIEMPO_MAXIMO_DESCONOCIDO
+        ):
+
             estado["postura_actual"] = "DESCONOCIDO"
+
         estado["contador_postura"] = 0
         estado["postura_candidata"] = "DESCONOCIDO"
         estado["ultimo_frame_candidato"] = 0.0
+
         return
 
-    # No aceptar una postura si la confianza agregada es insuficiente.
+    # --------------------------------------------------
+    # VALIDAR CONFIANZA
+    # --------------------------------------------------
+
     if confianza < CONFIANZA_MINIMA_CUERPO:
+
         estado["contador_postura"] = 0
         estado["postura_candidata"] = "DESCONOCIDO"
         estado["ultimo_frame_candidato"] = 0.0
+
         return
 
     estado["ultimo_frame_valido"] = ahora
     estado["ultima_confianza"] = confianza
 
-    # Reiniciar la secuencia si hubo un intervalo excesivo entre frames.
+    # --------------------------------------------------
+    # VALIDAR ESTABILIDAD TEMPORAL
+    # --------------------------------------------------
+
     if (
         estado["ultimo_frame_candidato"] > 0
-        and ahora - estado["ultimo_frame_candidato"] > INTERVALO_MAXIMO_ESTABILIDAD
+        and ahora - estado["ultimo_frame_candidato"]
+        > INTERVALO_MAXIMO_ESTABILIDAD
     ):
+
         estado["contador_postura"] = 0
         estado["postura_candidata"] = "DESCONOCIDO"
 
     estado["ultimo_frame_candidato"] = ahora
 
     if postura_detectada == estado["postura_candidata"]:
+
         estado["contador_postura"] += 1
+
     else:
+
         estado["postura_candidata"] = postura_detectada
         estado["contador_postura"] = 1
 
     if estado["contador_postura"] < FRAMES_ESTABILIDAD:
         return
 
+    # --------------------------------------------------
+    # COMPROBAR SI LA POSTURA CAMBIÓ
+    # --------------------------------------------------
+
     if postura_detectada == estado["ultima_postura_valida"]:
+
         estado["postura_actual"] = postura_detectada
         return
 
     anterior = estado["ultima_postura_valida"]
+
     estado["postura_anterior"] = anterior
     estado["ultima_postura_valida"] = postura_detectada
     estado["postura_actual"] = postura_detectada
+
     estado["contador_postura"] = 0
     estado["ultimo_frame_candidato"] = 0.0
 
+    # --------------------------------------------------
+    # PACIENTE ACOSTADO
+    # --------------------------------------------------
+
     if postura_detectada == "ACOSTADA":
+
         if estado["levantamiento_en_proceso"]:
-            print(f"[{nombre}] Regresó a ACOSTADA; levantamiento cancelado.")
+
+            print(
+                f"[{nombre}] Paciente {id_paciente} "
+                "regresó a ACOSTADA. Levantamiento cancelado."
+            )
+
         estado["levantamiento_en_proceso"] = False
-        print(f"[{nombre}] Postura ACOSTADA confirmada.")
+        estado["levantamiento_detectado"] = False
+        estado["tipo_alerta_levantamiento"] = None
+        estado["tiempo_levantamiento"] = None
+
+        print(
+            f"[{nombre}] Paciente {id_paciente}: "
+            "postura ACOSTADA confirmada. "
+            "Ciclo de levantamiento reiniciado."
+        )
+
         return
 
+    # --------------------------------------------------
+    # PRIMERA ALERTA: ACOSTADA -> SENTADA
+    # --------------------------------------------------
+
     if anterior == "ACOSTADA" and postura_detectada == "SENTADA":
+
         estado["levantamiento_en_proceso"] = True
         estado["levantamiento_detectado"] = True
         estado["tipo_alerta_levantamiento"] = "INICIO"
         estado["tiempo_levantamiento"] = ahora
-        registrar_evento(nombre, TIPO_PACIENTE_SENTADO, imagen, confianza)
-        print(f"[{nombre}] ACOSTADA -> SENTADA: inicio confirmado.")
+
+        registrar_evento(
+            nombre,
+            id_paciente,
+            TIPO_PACIENTE_SENTADO,
+            imagen,
+            confianza
+        )
+
+        print(
+            f"[{nombre}] Paciente {id_paciente}: "
+            "ACOSTADA -> SENTADA. Inicio confirmado."
+        )
+
         return
 
+    # --------------------------------------------------
+    # SEGUNDA ALERTA: SENTADA -> DE PIE
+    # --------------------------------------------------
+
     if postura_detectada == "DE PIE":
-        if anterior == "SENTADA" and estado["levantamiento_en_proceso"]:
+
+        if (
+            anterior == "SENTADA"
+            and estado["levantamiento_en_proceso"]
+        ):
+
             estado["levantamiento_en_proceso"] = False
             estado["levantamiento_detectado"] = True
             estado["tipo_alerta_levantamiento"] = "COMPLETADO"
             estado["tiempo_levantamiento"] = ahora
+
             estado["contador_levantamientos"] += 1
-            registrar_evento(nombre, TIPO_LEVANTAMIENTO_COMPLETO, imagen, confianza)
-            print(f"[{nombre}] SENTADA -> DE PIE: levantamiento completado.")
+
+            registrar_evento(
+                nombre,
+                id_paciente,
+                TIPO_LEVANTAMIENTO_COMPLETO,
+                imagen,
+                confianza,
+            )
+
+            print(
+                f"[{nombre}] Paciente {id_paciente}: "
+                "SENTADA -> DE PIE. Levantamiento completado."
+            )
+
         elif anterior == "ACOSTADA":
-            # No registrar un levantamiento completo saltándose SENTADA.
-            estado["levantamiento_en_proceso"] = False
-            print(f"[{nombre}] ACOSTADA -> DE PIE: transición ignorada; falta SENTADA.")
-        else:
+
             estado["levantamiento_en_proceso"] = False
 
+            print(
+                f"[{nombre}] Paciente {id_paciente}: "
+                "ACOSTADA -> DE PIE ignorado; falta SENTADA."
+            )
+
+        else:
+
+            estado["levantamiento_en_proceso"] = False
 
 # ============================================================
 # PROCESAR UNA IMAGEN CON YOLO POSE
@@ -1541,16 +2045,16 @@ def actualizar_postura(
 
 transmisor_livekit = None
 
-
 def procesar_camara(nombre, modelo):
 
     estado = estados[nombre]
     ahora = time.time()
 
-    if (
-        ahora - estado["ultimo_procesamiento"]
-        < 1 / FPS_YOLO
-    ):
+    # ==================================================
+    # CONTROL DE FRECUENCIA
+    # ==================================================
+
+    if ahora - estado["ultimo_procesamiento"] < 1 / FPS_YOLO:
         return
 
     estado["ultimo_procesamiento"] = ahora
@@ -1562,35 +2066,41 @@ def procesar_camara(nombre, modelo):
 
         frame = estado["frame"].copy()
 
-    resultados = modelo.predict(
-        source=frame,
-        verbose=False,
-        conf=CONFIANZA_DETECCION,
-        imgsz=TAMANO_YOLO,
-    )
+    # ==================================================
+    # RECONOCIMIENTO FACIAL
+    # ==================================================
 
-    resultado = resultados[0]
-
-    frame_mostrar = resultado.plot()
-
-    postura_detectada = "DESCONOCIDO"
-    confianza = 0.0
+    actualizar_identidad_facial(nombre, frame)
 
     # ==================================================
-    # ASOCIAR EL CUERPO AL PACIENTE RECONOCIDO
+    # DETECCIÓN YOLO POSE
     # ==================================================
-    # Nunca seleccionar simplemente el cuerpo más grande: podría
-    # pertenecer a un acompañante y generar una postura incorrecta.
 
-    config = CAMARAS_CONFIG[nombre]
+    try:
 
-    hay_detecciones = (
-        resultado.boxes is not None
-        and len(resultado.boxes) > 0
-        and resultado.keypoints is not None
-    )
+        resultados = modelo.predict(
+            source=frame,
+            verbose=False,
+            conf=CONFIANZA_DETECCION,
+            imgsz=TAMANO_YOLO,
+        )
 
-    # Validar específicamente las detecciones de YOLO Pose.
+        resultado = resultados[0]
+
+        frame_mostrar = resultado.plot()
+
+    except Exception as error:
+
+        print(
+            f"[{nombre}] Error ejecutando YOLO: {error}"
+        )
+
+        return
+
+    # ==================================================
+    # VALIDAR DETECCIONES
+    # ==================================================
+
     hay_detecciones_pose = (
         resultado is not None
         and resultado.boxes is not None
@@ -1599,130 +2109,120 @@ def procesar_camara(nombre, modelo):
         and len(resultado.keypoints) > 0
     )
 
-    estado["persona_detectada"] = bool(hay_detecciones)
+    estado["persona_detectada"] = bool(hay_detecciones_pose)
 
-    identidad_confirmada = False
-    bbox_rostro = None
-    rostro_reciente = False
-    indice = None
+    pacientes = estado.get("pacientes", {})
 
-    # ==================================================
-    # DETECTAR HABITACIÓN VACÍA Y REINICIAR EL CICLO
-    # ==================================================
+    # Índices de cuerpos que ya fueron asignados.
+    # Un mismo cuerpo no puede pertenecer a dos pacientes.
+    cuerpos_asignados = set()
 
-    if not hay_detecciones:
+    pacientes_activos = [
+        (id_paciente, estado_paciente)
+        for id_paciente, estado_paciente in pacientes.items()
+        if estado_paciente.get("identidad_confirmada", False)
+    ]
 
-        if estado.get("inicio_sin_personas") is None:
-
-            estado["inicio_sin_personas"] = time.time()
-
-            estado["bbox_cuerpo_paciente"] = None
-            estado["ultima_deteccion_cuerpo_paciente"] = 0.0
-
-            estado["metodo_asociacion_cuerpo"] = (
-                "SIN PERSONAS EN IMAGEN"
-            )
-
-            estado["rostro_paciente_bbox"] = None
-            estado["ultima_deteccion_rostro_paciente"] = 0.0
-
-            estado["ultimo_procesamiento_facial"] = 0.0
-
-        tiempo_ausencia = (
-            time.time() - estado["inicio_sin_personas"]
+    # Primero procesamos pacientes con rostro visible.
+    # Después intentamos recuperar los que conservan identidad
+    # mediante su seguimiento corporal.
+    pacientes_activos.sort(
+        key=lambda item: (
+            item[1].get("rostro_paciente_bbox") is None,
+            item[0]
         )
+    )
 
-        if (
-            tiempo_ausencia >= TIEMPO_AUSENCIA_PARA_REINICIAR
-            and not estado.get(
-                "reinicio_por_ausencia_realizado", False
-            )
-        ):
+    # ==================================================
+    # PROCESAR CADA PACIENTE INDEPENDIENTEMENTE
+    # ==================================================
 
-            reiniciar_ciclo_camara(
-                nombre,
-                f"ninguna persona detectada durante "
-                f"{tiempo_ausencia:.1f} s",
-            )
+    for indice_visual, (id_paciente, estado_paciente) in enumerate(pacientes_activos):
 
-            estado["reinicio_por_ausencia_realizado"] = True
-
-        postura_detectada = "SIN PERSONA"
+        postura_detectada = "DESCONOCIDO"
         confianza = 0.0
         indice = None
 
-    else:
-
-        # La presencia de una persona reinicia el temporizador.
-        estado["inicio_sin_personas"] = None
-        estado["reinicio_por_ausencia_realizado"] = False
-
-        # ==================================================
-        # RECONOCIMIENTO FACIAL
-        # ==================================================
-
-        actualizar_identidad_facial(nombre, frame)
-
-        # Consultar nuevamente la identidad después del reconocimiento.
-        identidad_confirmada = (
-            config.get("id_paciente") is not None
+        bbox_rostro = estado_paciente.get(
+            "rostro_paciente_bbox"
         )
 
-        bbox_rostro = estado.get("rostro_paciente_bbox")
-
-        tiempo_rostro = estado.get(
-            "ultima_deteccion_rostro_paciente", 0.0
+        tiempo_rostro = estado_paciente.get(
+            "ultima_deteccion_rostro_paciente",
+            0.0
         )
 
         rostro_reciente = (
             bbox_rostro is not None
             and tiempo_rostro > 0
-            and (time.time() - tiempo_rostro) <= 2.0
+            and ahora - tiempo_rostro <= 2.0
         )
 
-        indice = None
+        # ----------------------------------------------
+        # 1. ASOCIAR CUERPO MEDIANTE EL ROSTRO
+        # ----------------------------------------------
 
-    # ==================================================
-    # ASOCIACIÓN CORPORAL EXCLUSIVAMENTE POR ROSTRO
-    # ==================================================
+        if rostro_reciente and hay_detecciones_pose:
 
-    # Inicializar variables para evitar referencias sin definir.
-    indice = None
-    puntos = None
-    confianzas = None
-    caja_persona = None
-
-    confianza = 0.0
-    postura_detectada = "DESCONOCIDO"
-
-    asociacion_facial_activa = False
-    cuerpo_asociado = False
-
-    # ==================================================
-    # 1. VALIDAR IDENTIDAD Y VISIBILIDAD DEL ROSTRO
-    # ==================================================
-
-    if identidad_confirmada and rostro_reciente:
-
-        asociacion_facial_activa = True
-
-        estado["metodo_asociacion_cuerpo"] = "ROSTRO"
-
-        # Solo buscar el cuerpo cuando hay detecciones de pose.
-        if hay_detecciones_pose:
-
-            indice = seleccionar_persona_asociada(
+            indice_candidato = seleccionar_persona_asociada(
                 resultado,
                 bbox_rostro
             )
 
-        # ==================================================
-        # 2. PROCESAR CUERPO ASOCIADO AL ROSTRO
-        # ==================================================
+            if (
+                indice_candidato is not None
+                and indice_candidato not in cuerpos_asignados
+            ):
+
+                indice = indice_candidato
+
+                estado_paciente["metodo_asociacion_cuerpo"] = (
+                    "ROSTRO"
+                )
+
+        # ----------------------------------------------
+        # 2. RECUPERAR CUERPO MEDIANTE SEGUIMIENTO
+        # ----------------------------------------------
+
+        if (
+            indice is None
+            and not rostro_reciente
+            and hay_detecciones_pose
+        ):
+
+            indice_candidato = seleccionar_cuerpo_por_seguimiento(
+                resultado,
+                estado_paciente,
+                ahora
+            )
+
+            if (
+                indice_candidato is not None
+                and indice_candidato not in cuerpos_asignados
+            ):
+
+                indice = indice_candidato
+
+                estado_paciente["metodo_asociacion_cuerpo"] = (
+                    "SEGUIMIENTO CORPORAL"
+                )
+
+        # ----------------------------------------------
+        # 3. PROCESAR EL CUERPO ASIGNADO
+        # ----------------------------------------------
 
         if indice is not None:
 
-            puntos = resultado.keypoints.xy[indice].cpu().numpy()
+            cuerpos_asignados.add(indice)
+
+            # El paciente volvió a tener un cuerpo asociado.
+            estado_paciente["inicio_sin_asociacion_paciente"] = None
+
+            puntos = (
+                resultado.keypoints.xy[indice]
+                .cpu()
+                .numpy()
+            )
 
             confianzas = (
                 resultado.keypoints.conf[indice].cpu().numpy()
@@ -1731,16 +2231,18 @@ def procesar_camara(nombre, modelo):
             )
 
             caja_persona = (
-                resultado.boxes.xyxy[indice].cpu().numpy()
+                resultado.boxes.xyxy[indice]
+                .cpu()
+                .numpy()
             )
 
-            # Confianza general del cuerpo.
             confianza = confianza_cuerpo(confianzas)
 
             # En postura acostada algunas partes del cuerpo
             # pueden estar ocultas.
             indices_torso = [
-                i for i in (5, 6, 11, 12)
+                i
+                for i in (5, 6, 11, 12)
                 if confianzas is not None
                 and len(confianzas) > i
                 and float(confianzas[i]) >= 0.25
@@ -1758,21 +2260,16 @@ def procesar_camara(nombre, modelo):
             )
 
             if confianza < CONFIANZA_MINIMA_CUERPO:
+
                 confianza = max(
                     confianza,
                     confianza_torso
                 )
 
-            # ==================================================
-            # 3. VALIDAR CUERPO
-            # ==================================================
-
             if (
                 cuerpo_valido(puntos, confianzas)
                 and confianza >= 0.30
             ):
-
-                cuerpo_asociado = True
 
                 postura_detectada = detectar_postura(
                     puntos,
@@ -1780,18 +2277,18 @@ def procesar_camara(nombre, modelo):
                     caja_persona
                 )
 
-                # Actualizar referencia corporal únicamente
-                # cuando existe asociación facial.
-                estado["bbox_cuerpo_paciente"] = tuple(
+                estado_paciente["bbox_cuerpo_paciente"] = tuple(
                     float(valor)
                     for valor in caja_persona
                 )
 
-                estado["ultima_deteccion_cuerpo_paciente"] = (
-                    time.time()
-                )
+                estado_paciente[
+                    "ultima_deteccion_cuerpo_paciente"
+                ] = ahora
 
-                estado["metodo_asociacion_cuerpo"] = "ROSTRO"
+                estado_paciente["persona_detectada"] = True
+
+                estado_paciente["ultima_actualizacion"] = ahora
 
             else:
 
@@ -1799,201 +2296,307 @@ def procesar_camara(nombre, modelo):
 
         else:
 
-            # El rostro está reconocido, pero no se encontró
-            # un cuerpo que corresponda a su posición.
-            postura_detectada = "DESCONOCIDO"
+            estado_paciente["persona_detectada"] = False
 
-    # ==================================================
-    # 4. SI EL ROSTRO DEJA DE ESTAR VISIBLE
-    # ==================================================
+            # No borrar inmediatamente la referencia corporal.
+            # Se conserva para intentar recuperar el seguimiento.
+            if (
+                ahora
+                - estado_paciente.get(
+                    "ultima_deteccion_cuerpo_paciente",
+                    0.0
+                )
+                > TIEMPO_MAXIMO_PERDIDA_CUERPO
+            ):
 
-    elif identidad_confirmada and not rostro_reciente:
+                estado_paciente["bbox_cuerpo_paciente"] = None
+                estado_paciente[
+                    "ultima_deteccion_cuerpo_paciente"
+                ] = 0.0
 
-        # Eliminar inmediatamente la asociación del paciente.
-        limpiar_identidad_camara(
-            nombre,
-            "ROSTRO NO VISIBLE"
+                estado_paciente["metodo_asociacion_cuerpo"] = (
+                    "SIN ASOCIAR"
+                )
+
+        # ----------------------------------------------
+        # 4. ACTUALIZAR POSTURA DEL PACIENTE
+        # ----------------------------------------------
+
+        if indice is not None:
+
+            actualizar_postura(
+                nombre,
+                id_paciente,
+                postura_detectada,
+                frame,
+                confianza,
+            )
+
+                # ----------------------------------------------
+        # 5. CONTROLAR DURACIÓN DE LA ALERTA
+        # ----------------------------------------------
+
+        if (
+            estado_paciente.get("levantamiento_detectado", False)
+            and ahora - estado_paciente.get(
+                "tiempo_levantamiento",
+                0.0
+            ) >= DURACION_AVISO_LEVANTAMIENTO
+        ):
+
+            estado_paciente["levantamiento_detectado"] = False
+            estado_paciente["tipo_alerta_levantamiento"] = ""
+
+        # ----------------------------------------------
+        # 6. DIBUJAR INFORMACIÓN DEL PACIENTE
+        # ----------------------------------------------
+
+        caja = estado_paciente.get("bbox_cuerpo_paciente")
+
+        # Color según el estado de la alerta.
+        if estado_paciente.get("levantamiento_detectado", False):
+            color = (0, 0, 255)
+
+        elif estado_paciente.get("levantamiento_en_proceso", False):
+            color = (0, 165, 255)
+
+        else:
+            color = (0, 255, 0)
+
+        # Dibujar el cuerpo cuando exista asociación.
+        if caja is not None:
+
+            x1, y1, x2, y2 = map(int, caja)
+
+            cv2.rectangle(
+                frame_mostrar,
+                (x1, y1),
+                (x2, y2),
+                color,
+                2
+            )
+
+        # Obtener el estado de la alerta.
+        if estado_paciente.get("levantamiento_detectado", False):
+
+            texto_alerta = estado_paciente.get(
+                "tipo_alerta_levantamiento",
+                "ALERTA"
+            )
+
+        elif estado_paciente.get("levantamiento_en_proceso", False):
+
+            texto_alerta = "LEVANTAMIENTO EN PROCESO"
+
+        else:
+
+            texto_alerta = "SIN ALERTA"
+
+        # Información permanente del paciente.
+        nombre_paciente = estado_paciente.get(
+            "nombre_paciente",
+            f"Paciente {id_paciente}"
         )
 
-        identidad_confirmada = False
-        asociacion_facial_activa = False
-        cuerpo_asociado = False
+        # Información organizada en líneas independientes.
+        lineas_paciente = [
+            nombre_paciente,
+            f"POSTURA: {estado_paciente.get('postura_actual', 'DESCONOCIDO')}",
+            texto_alerta
+        ]
 
-        indice = None
-        postura_detectada = "DESCONOCIDO"
-        confianza = 0.0
+        # Posición inicial de la información.
+        x_texto = 20
+        y_texto = 115 + (indice_visual * 100)
 
-        estado["bbox_cuerpo_paciente"] = None
-        estado["ultima_deteccion_cuerpo_paciente"] = 0.0
+        # Dibujar cada dato debajo del anterior.
+        for numero_linea, linea in enumerate(lineas_paciente):
 
-        estado["metodo_asociacion_cuerpo"] = (
-            "ROSTRO NO VISIBLE"
-        )
+            cv2.putText(
+                frame_mostrar,
+                linea,
+                (
+                    x_texto,
+                    y_texto + (numero_linea * 30)
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                color,
+                2,
+                cv2.LINE_AA
+            )
 
-        estado["postura_actual"] = "DESCONOCIDO"
-        estado["contador_postura"] = 0
-        estado["postura_candidata"] = "DESCONOCIDO"
-        estado["ultimo_frame_candidato"] = 0.0
+        # Dibujar el rostro asociado cuando esté disponible.
+        if rostro_reciente and bbox_rostro is not None:
 
-        estado["inicio_sin_asociacion_paciente"] = None
+            rx1, ry1, rx2, ry2 = map(int, bbox_rostro)
 
-    else:
+            cv2.rectangle(
+                frame_mostrar,
+                (rx1, ry1),
+                (rx2, ry2),
+                (255, 255, 0),
+                2
+            )
 
-        # No existe una identidad facial confirmada.
-        postura_detectada = "DESCONOCIDO"
-        confianza = 0.0
-
-        estado["bbox_cuerpo_paciente"] = None
-        estado["ultima_deteccion_cuerpo_paciente"] = 0.0
-
-        estado["metodo_asociacion_cuerpo"] = (
-            "SIN IDENTIDAD FACIAL"
-        )
-
-    # ==================================================
-    # 5. ACTUALIZAR POSTURA ÚNICAMENTE DEL PACIENTE
-    # ==================================================
-
-    if asociacion_facial_activa and cuerpo_asociado:
-
-        actualizar_postura(
-            nombre,
-            postura_detectada,
-            frame,
-            confianza,
-        )
-
-    else:
-
-        # No generar posturas ni eventos de acompañantes.
-        estado["postura_actual"] = "DESCONOCIDO"
-        estado["contador_postura"] = 0
-        estado["postura_candidata"] = "DESCONOCIDO"
-        estado["ultimo_frame_candidato"] = 0.0
-
-        postura_detectada = "DESCONOCIDO"
-        confianza = 0.0
+            cv2.putText(
+                frame_mostrar,
+                nombre_paciente,
+                (rx1, max(20, ry1 - 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (255, 255, 0),
+                2,
+                cv2.LINE_AA
+            )
 
     # ==================================================
-    # 6. CONTROL DE ALERTA DE LEVANTAMIENTO
+    # CONTROL DE PACIENTES SIN DETECCIONES
     # ==================================================
 
-    if (
-        estado["levantamiento_detectado"]
-        and time.time() - estado["tiempo_levantamiento"]
-        >= DURACION_AVISO_LEVANTAMIENTO
+    if not hay_detecciones_pose:
+
+        for indice_visual, (id_paciente, estado_paciente) in enumerate(pacientes_activos):
+
+            estado_paciente["persona_detectada"] = False
+
+            tiempo_sin_cuerpo = (
+                ahora
+                - estado_paciente.get(
+                    "ultima_deteccion_cuerpo_paciente",
+                    0.0
+                )
+            )
+
+            if tiempo_sin_cuerpo > TIEMPO_MAXIMO_PERDIDA_CUERPO:
+
+                estado_paciente["bbox_cuerpo_paciente"] = None
+
+                estado_paciente[
+                    "ultima_deteccion_cuerpo_paciente"
+                ] = 0.0
+
+                estado_paciente["metodo_asociacion_cuerpo"] = (
+                    "SIN DETECCIONES YOLO"
+                )
+
+
+    # ==================================================
+    # CONTROL DE AUSENCIA INDIVIDUAL POR PACIENTE
+    # ==================================================
+
+    for id_paciente, estado_paciente in list(
+        estado.get("pacientes", {}).items()
     ):
 
-        estado["levantamiento_detectado"] = False
-        estado["tipo_alerta_levantamiento"] = ""
+        # Si el paciente todavía está identificado,
+        # no reiniciamos su ciclo.
+        if estado_paciente.get("identidad_confirmada", False):
 
-    # ==================================================
-    # 7. PREPARAR INFORMACIÓN VISUAL
-    # ==================================================
+            estado_paciente[
+                "inicio_sin_asociacion_paciente"
+            ] = None
 
-    postura_actual = estado["postura_actual"]
+            continue
 
-    if estado["levantamiento_detectado"]:
-
-        texto_levantamiento = (
-            estado["tipo_alerta_levantamiento"]
+        # Comprobar si todavía existe una detección corporal reciente.
+        ultima_deteccion_cuerpo = estado_paciente.get(
+            "ultima_deteccion_cuerpo_paciente",
+            0.0
         )
 
-    elif estado["levantamiento_en_proceso"]:
+        cuerpo_reciente = (
+            ultima_deteccion_cuerpo > 0
+            and ahora - ultima_deteccion_cuerpo
+            <= TIEMPO_MAXIMO_PERDIDA_CUERPO
+        )
 
-        texto_levantamiento = "EN PROCESO"
+        # Comprobar si el rostro todavía tiene una coincidencia reciente.
+        ultima_coincidencia = estado_paciente.get(
+            "ultima_coincidencia_facial",
+            0.0
+        )
 
-    else:
+        rostro_reciente = (
+            ultima_coincidencia > 0
+            and ahora - ultima_coincidencia
+            <= TIEMPO_RETENCION_IDENTIDAD
+        )
 
-        texto_levantamiento = "NO"
+        # Si todavía hay cuerpo o rostro reciente,
+        # no se considera una ausencia definitiva.
+        if cuerpo_reciente or rostro_reciente:
 
-    color_alerta = (
-        (0, 0, 255)
-        if estado["levantamiento_detectado"]
-        else (255, 255, 255)
+            estado_paciente[
+                "inicio_sin_asociacion_paciente"
+            ] = None
+
+            continue
+
+        # Iniciar el temporizador individual.
+        if estado_paciente.get(
+            "inicio_sin_asociacion_paciente"
+        ) is None:
+
+            estado_paciente[
+                "inicio_sin_asociacion_paciente"
+            ] = ahora
+
+            continue
+
+        tiempo_sin_asociacion = (
+            ahora
+            - estado_paciente[
+                "inicio_sin_asociacion_paciente"
+            ]
+        )
+
+        # Reiniciar únicamente el ciclo de este paciente.
+        if (
+            tiempo_sin_asociacion
+            >= TIEMPO_MAXIMO_SIN_ASOCIACION_PACIENTE
+        ):
+
+            reiniciar_ciclo_camara(
+                nombre,
+                motivo=(
+                    "IDENTIDAD VENCIDA Y "
+                    "SIN CUERPO ASOCIADO"
+                ),
+                id_paciente=id_paciente
+            )
+            
+    # ==================================================
+    # INFORMACIÓN GENERAL DE LA CÁMARA
+    # ==================================================
+
+    cantidad_pacientes = len(pacientes_activos)
+
+    cv2.putText(
+        frame_mostrar,
+        f"{nombre} | ID CAMARA: "
+        f"{CAMARAS_CONFIG[nombre]['id_camara']}",
+        (20, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (0, 255, 0),
+        2,
+        cv2.LINE_AA
+    )
+
+    cv2.putText(
+        frame_mostrar,
+        f"PACIENTES IDENTIFICADOS: {cantidad_pacientes}",
+        (20, 60),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.60,
+        (255, 255, 0),
+        2,
+        cv2.LINE_AA
     )
 
     # ==================================================
-    # 8. INFORMACIÓN QUE SE MOSTRARÁ EN LA CÁMARA
-    # ==================================================
-
-    lineas = [
-
-        (
-            f"{nombre} | ID: "
-            f"{CAMARAS_CONFIG[nombre]['id_camara']}",
-            30, 0.7, (0, 255, 0)
-        ),
-
-        (
-            f"POSTURA: {postura_actual}",
-            65, 0.9, (0, 255, 0)
-        ),
-
-        (
-            f"DETECTANDO: {postura_detectada}",
-            100, 0.7, (255, 255, 0)
-        ),
-
-        (
-            f"CONFIRMACION: "
-            f"{estado['contador_postura']}/{FRAMES_ESTABILIDAD}",
-            135, 0.65, (255, 255, 255)
-        ),
-
-        (
-            f"CONFIANZA: {confianza * 100:.1f}%",
-            170, 0.65, (255, 255, 255)
-        ),
-
-        (
-            f"LEVANTAMIENTO: {texto_levantamiento}",
-            205, 0.65, color_alerta
-        ),
-
-        (
-            f"TOTAL: {estado['contador_levantamientos']}",
-            240, 0.65, (0, 165, 255)
-        ),
-
-        (
-            f"PACIENTE: "
-            f"{CAMARAS_CONFIG[nombre]['id_paciente'] or 'NO IDENTIFICADO'}",
-            275, 0.60, (0, 255, 255)
-        ),
-
-        (
-            f"FACIAL: {estado['estado_reconocimiento_facial']} "
-            f"({estado['ultima_similitud_facial']:.2f})",
-            305, 0.50, (0, 255, 255)
-        ),
-
-        (
-            f"CUERPO: {estado['metodo_asociacion_cuerpo']}",
-            335, 0.55, (255, 200, 0)
-        ),
-
-    ]
-
-    # ==================================================
-    # 9. DIBUJAR INFORMACIÓN SOBRE EL FOTOGRAMA
-    # ==================================================
-
-    for texto, y, escala, color in lineas:
-
-        cv2.putText(
-            frame_mostrar,
-            texto,
-            (25, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            escala,
-            color,
-            2,
-            cv2.LINE_AA,
-        )
-
-    # ==================================================
-    # 10. GUARDAR FOTOGRAMA PROCESADO
+    # GUARDAR FOTOGRAMA PROCESADO
     # ==================================================
 
     with estado["frame_lock"]:
@@ -2001,7 +2604,7 @@ def procesar_camara(nombre, modelo):
         estado["frame_mostrar"] = frame_mostrar.copy()
 
     # ==================================================
-    # 11. PUBLICAR FOTOGRAMA EN LIVEKIT
+    # PUBLICAR FOTOGRAMA EN LIVEKIT
     # ==================================================
 
     if transmisor_livekit is not None:
@@ -2012,7 +2615,7 @@ def procesar_camara(nombre, modelo):
         )
 
     # ==================================================
-    # 12. MOSTRAR VENTANA DE OPENCV
+    # MOSTRAR VENTANA OPENCV
     # ==================================================
 
     cv2.imshow(nombre, frame_mostrar)
@@ -2023,10 +2626,15 @@ def procesar_camara(nombre, modelo):
 
 def main():
 
-    global transmisor_livekit, reconocedor_facial
+    global transmisor_livekit
+    global reconocedor_facial
+    global estados
 
     hilos_captura = []
     hilo_backend = None
+
+    # Estados compartidos por todas las cámaras.
+    estados = {}
 
     try:
 
@@ -2441,11 +3049,18 @@ def main():
 
         for estado in estados.values():
 
-            camara = estado["camara"]
+            camara = estado.get("camara")
 
             if camara is not None:
 
-                camara.release()
+                try:
+                    camara.release()
+
+                except Exception as error:
+
+                    print(
+                        f"[AVISO] Error liberando cámara: {error}"
+                    )
 
         # ----------------------------------------------------
         # CERRAR HILOS
@@ -2478,7 +3093,7 @@ def main():
 
             print(
                 f"{nombre}: levantamientos detectados = "
-                f"{estado['contador_levantamientos']}"
+                f"{estado.get('contador_levantamientos', 0)}"
             )
 
 

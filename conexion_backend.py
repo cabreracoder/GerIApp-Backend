@@ -192,6 +192,46 @@ def obtener_pacientes_activos():
         ) from error
 
 # ============================================================
+# OBTENER NOMBRE DE LOS PACIENTES
+# ============================================================
+
+def obtener_nombre_paciente(paciente):
+    """
+    Obtiene el nombre completo del paciente desde
+    la información recibida del backend.
+    """
+
+    nombres = (
+        paciente.get("nombres")
+        or paciente.get("nombre")
+        or paciente.get("primer_nombre")
+        or ""
+    )
+
+    apellidos = (
+        paciente.get("apellidos")
+        or paciente.get("apellido")
+        or paciente.get("primer_apellido")
+        or ""
+    )
+
+    nombre_completo = f"{nombres} {apellidos}".strip()
+
+    # Intentar obtener el nombre desde un objeto relacionado.
+    if not nombre_completo:
+        usuario = paciente.get("usuario", {})
+
+        if isinstance(usuario, dict):
+            nombre_completo = (
+                usuario.get("nombre_completo")
+                or usuario.get("nombre")
+                or ""
+            )
+
+    return nombre_completo or f"Paciente {paciente.get('id_paciente', '')}"
+
+
+# ============================================================
 # CONSULTAR Y DESCIFRAR PLANTILLAS FACIALES POR CÁMARA
 # ============================================================
 
@@ -199,30 +239,33 @@ def obtener_plantillas_faciales(id_camara):
     """
     Consulta las plantillas faciales asociadas a una cámara.
 
-    Los embeddings llegan cifrados desde Django.
-    Se descifran localmente y se convierten en vectores
-    NumPy de 128 dimensiones.
-
-    Retorna una lista de diccionarios:
-    [
-        {
-            "id_registro_facial": 1,
-            "id_paciente": 1,
-            "embedding": numpy.ndarray
-        }
-    ]
+    Descifra los embeddings y relaciona cada plantilla
+    con el nombre del paciente correspondiente.
     """
 
     asegurar_autenticacion()
 
     try:
+        # Obtener pacientes activos
+        pacientes = obtener_pacientes_activos()
+
+        # Crear un diccionario para relacionar ID y nombre
+        pacientes_por_id = {}
+
+        for paciente in pacientes:
+            id_paciente = paciente.get("id_paciente") or paciente.get("id")
+
+            if id_paciente is not None:
+                pacientes_por_id[str(id_paciente)] = (
+                    obtener_nombre_paciente(paciente)
+                )
+
         respuesta = sesion.get(
             API_PLANTILLAS,
             params={"id_camara": id_camara},
             timeout=(5, 30)
         )
 
-        # Renovar autenticación si el token expiró
         if respuesta.status_code == 401:
             autenticar_geriapp()
 
@@ -253,9 +296,14 @@ def obtener_plantillas_faciales(id_camara):
         for registro in registros:
 
             try:
-                # 1. Obtener los datos del paciente
                 id_paciente = registro.get("id_paciente")
                 id_registro = registro.get("id_registro_facial")
+
+                # Obtener nombre del paciente
+                nombre_paciente = pacientes_por_id.get(
+                    str(id_paciente),
+                    f"Paciente {id_paciente}"
+                )
 
                 embedding_base64 = registro.get(
                     "embedding_cifrado"
@@ -268,24 +316,24 @@ def obtener_plantillas_faciales(id_camara):
                     )
                     continue
 
-                # 2. Decodificar Base64
+                # Decodificar Base64
                 embedding_cifrado = base64.b64decode(
                     embedding_base64,
                     validate=True
                 )
 
-                # 3. Descifrar localmente con Fernet
+                # Descifrar embedding
                 embedding_bytes = descifrar_embedding(
                     embedding_cifrado
                 )
 
-                # 4. Convertir bytes a vector NumPy
+                # Convertir a vector NumPy
                 embedding = np.frombuffer(
                     embedding_bytes,
                     dtype=np.float32
                 ).copy()
 
-                # 5. Validar dimensiones
+                # Validar dimensiones
                 if embedding.shape != (128,):
                     print(
                         f"Dimensiones incorrectas en el registro "
@@ -293,7 +341,7 @@ def obtener_plantillas_faciales(id_camara):
                     )
                     continue
 
-                # 6. Validar valores numéricos
+                # Validar valores numéricos
                 if not np.all(np.isfinite(embedding)):
                     print(
                         f"Embedding inválido en el registro "
@@ -301,12 +349,17 @@ def obtener_plantillas_faciales(id_camara):
                     )
                     continue
 
-                # 7. Guardar plantilla descifrada
+                # Guardar plantilla con ID y nombre
                 plantillas_descifradas.append({
                     "id_registro_facial": id_registro,
                     "id_paciente": id_paciente,
+                    "nombre_paciente": nombre_paciente,
                     "embedding": embedding
                 })
+
+                print(
+                    f"Plantilla cargada: {nombre_paciente}"
+                )
 
             except (ValueError, TypeError) as error:
                 print(
@@ -317,8 +370,8 @@ def obtener_plantillas_faciales(id_camara):
 
         print(
             f"Cámara {id_camara}: "
-            f"{len(plantillas_descifradas)} plantillas faciales "
-            "descifradas correctamente."
+            f"{len(plantillas_descifradas)} plantillas "
+            "faciales descifradas correctamente."
         )
 
         return plantillas_descifradas

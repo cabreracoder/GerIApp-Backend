@@ -27,3 +27,11 @@ secrets/
 
 # Archivos locales de reconocimiento facial
 embeddings_locales/
+
+.venv/
+.venv312/
+__pycache__/
+*.pyc
+
+# Archivos estáticos generados por Django
+staticfiles/

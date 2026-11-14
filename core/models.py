@@ -356,7 +356,7 @@ class DocumentosHistoriaClinica(models.Model):
     class Meta:
         managed = False
         db_table = 'documentos_historia_clinica'
-        
+
 class ImagenesEventoAdverso(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     id_evento_adverso = models.ForeignKey(EventosAdversos, models.DO_NOTHING, db_column='id_evento_adverso', blank=True, null=True)
@@ -469,58 +469,7 @@ class FormulacionMedicamentos(models.Model):
         managed = False
         db_table = 'formulacion_medicamentos'
 
-class SeguimientoAdministracionMedicamento(models.Model):
 
-    class Estado(models.TextChoices):
-        PENDIENTE = 'PENDIENTE', 'Pendiente'
-        ADMINISTRADO = 'ADMINISTRADO', 'Administrado'
-        NO_ADMINISTRADO = 'NO_ADMINISTRADO', 'No administrado'
-
-    id_seguimiento = models.AutoField(
-        primary_key=True
-    )
-
-    id_formulacion = models.ForeignKey(
-        'FormulacionMedicamentos',
-        models.DO_NOTHING,
-        db_column='id_formulacion'
-    )
-
-    fecha_hora_programada = models.DateTimeField()
-
-    estado = models.CharField(
-        max_length=20,
-        choices=Estado.choices
-    )
-
-    motivo_no_administracion = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True
-    )
-
-    fecha_hora_registro = models.DateTimeField(
-        blank=True,
-        null=True
-    )
-
-    id_usuario = models.ForeignKey(
-        'Usuarios',
-        models.DO_NOTHING,
-        db_column='id_usuario'
-    )
-
-    id_aplicacion = models.ForeignKey(
-        'AplicacionMedicamento',
-        models.DO_NOTHING,
-        db_column='id_aplicacion',
-        blank=True,
-        null=True
-    )
-
-    class Meta:
-        managed = False
-        db_table = 'seguimiento_administracion_medicamento'
 class MovimientoMedicamento(models.Model):
     id_movimiento = models.AutoField(primary_key=True)
     id_inventario = models.ForeignKey(Inventario, models.DO_NOTHING, db_column='id_inventario', blank=True, null=True)
@@ -584,7 +533,7 @@ class Pacientes(models.Model):
     class Meta:
         managed = False
         db_table = 'pacientes'
-         
+
 class RegistrosFaciales(models.Model):
     id_registro_facial = models.AutoField(primary_key=True)
 
@@ -1079,6 +1028,59 @@ class ControlesPeriodicosBitacora(models.Model):
     class Meta:
         managed = False
         db_table = 'controles_periodicos_bitacora'
+
+class SeguimientoAdministracionMedicamento(models.Model):
+
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        ADMINISTRADO = 'ADMINISTRADO', 'Administrado'
+        NO_ADMINISTRADO = 'NO_ADMINISTRADO', 'No administrado'
+
+    id_seguimiento = models.AutoField(
+        primary_key=True
+    )
+
+    id_formulacion = models.ForeignKey(
+        'FormulacionMedicamentos',
+        models.DO_NOTHING,
+        db_column='id_formulacion'
+    )
+
+    fecha_hora_programada = models.DateTimeField()
+
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices
+    )
+
+    motivo_no_administracion = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True
+    )
+
+    fecha_hora_registro = models.DateTimeField(
+        blank=True,
+        null=True
+    )
+
+    id_usuario = models.ForeignKey(
+        'Usuarios',
+        models.DO_NOTHING,
+        db_column='id_usuario'
+    )
+
+    id_aplicacion = models.ForeignKey(
+        'AplicacionMedicamento',
+        models.DO_NOTHING,
+        db_column='id_aplicacion',
+        blank=True,
+        null=True
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'seguimiento_administracion_medicamento'
 
 class ConfiguracionControlesPeriodicos(models.Model):
     id_configuracion = models.AutoField(primary_key=True)

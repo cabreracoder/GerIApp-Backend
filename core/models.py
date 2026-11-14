@@ -906,6 +906,9 @@ class Sedes(models.Model):
     estado = models.BooleanField()
     fecha_registro = models.DateTimeField()
     id_fundacion = models.ForeignKey('Fundaciones', models.DO_NOTHING, db_column='id_fundacion', blank=True, null=True)
+    longitud = models.FloatField(blank=True, null=True)
+    radio_verificacion = models.FloatField(blank=True, null=True)
+    latitud = models.FloatField(blank=True, null=True)
 
     class Meta:
         managed = False

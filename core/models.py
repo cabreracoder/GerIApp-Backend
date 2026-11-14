@@ -1030,21 +1030,46 @@ class ControlesPeriodicosBitacora(models.Model):
         db_table = 'controles_periodicos_bitacora'
 
 class SeguimientoAdministracionMedicamento(models.Model):
-    id_seguimiento = models.AutoField(primary_key=True)
+
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        ADMINISTRADO = 'ADMINISTRADO', 'Administrado'
+        NO_ADMINISTRADO = 'NO_ADMINISTRADO', 'No administrado'
+
+    id_seguimiento = models.AutoField(
+        primary_key=True
+    )
+
     id_formulacion = models.ForeignKey(
         'FormulacionMedicamentos',
         models.DO_NOTHING,
         db_column='id_formulacion'
     )
+
     fecha_hora_programada = models.DateTimeField()
-    estado = models.CharField(max_length=20)
+
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices
+    )
+
     motivo_no_administracion = models.CharField(
-        max_length=255, blank=True, null=True
+        max_length=255,
+        blank=True,
+        null=True
     )
-    fecha_hora_registro = models.DateTimeField(blank=True, null=True)
+
+    fecha_hora_registro = models.DateTimeField(
+        blank=True,
+        null=True
+    )
+
     id_usuario = models.ForeignKey(
-        'Usuarios', models.DO_NOTHING, db_column='id_usuario'
+        'Usuarios',
+        models.DO_NOTHING,
+        db_column='id_usuario'
     )
+
     id_aplicacion = models.ForeignKey(
         'AplicacionMedicamento',
         models.DO_NOTHING,

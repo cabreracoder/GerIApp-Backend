@@ -3732,10 +3732,16 @@ class RegistrosFacialesViewSet(
     mixins.DestroyModelMixin,
     viewsets.GenericViewSet
 ):
+
     serializer_class = RegistrosFacialesSerializer
 
-    authentication_classes = [GeriAppTokenAuthentication]
-    permission_classes = [IsAuthenticated]
+    authentication_classes = [
+        GeriAppTokenAuthentication
+    ]
+
+    permission_classes = [
+        IsAuthenticated
+    ]
 
     http_method_names = [
         "get",
@@ -4184,6 +4190,202 @@ class RegistrosFacialesViewSet(
             )
 
     # ==========================================
+    # AGREGAR UNA FOTOGRAFÍA FACIAL INDIVIDUAL
+    # ==========================================
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="agregar",
+        parser_classes=[MultiPartParser, FormParser]
+    )
+    def agregar(self, request):
+
+        id_paciente = request.data.get("id_paciente")
+        tipo_fotografia = request.data.get("tipo_fotografia")
+        fotografia = request.FILES.get("fotografia")
+
+        # 1. Validar datos obligatorios
+        if not id_paciente:
+            return Response(
+                {"error": "El id_paciente es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not tipo_fotografia:
+            return Response(
+                {"error": "El tipo de fotografía es obligatorio."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not fotografia:
+            return Response(
+                {"error": "Debe seleccionar una fotografía."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Normalizar tipo de fotografía
+        tipo_fotografia = str(tipo_fotografia).strip().upper()
+
+        tipos_permitidos = [
+            "FRONTAL",
+            "IZQUIERDA",
+            "DERECHA",
+            "ADICIONAL"
+        ]
+
+        if tipo_fotografia not in tipos_permitidos:
+            return Response(
+                {
+                    "error": "El tipo de fotografía no es válido."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Validar paciente y sede
+        paciente = self._validar_paciente(id_paciente)
+
+        if not paciente:
+            return Response(
+                {
+                    "error": (
+                        "El paciente no existe, está inactivo "
+                        "o no pertenece a tu sede."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # 4. Evitar duplicar fotografías obligatorias
+        if tipo_fotografia != "ADICIONAL":
+
+            existe = RegistrosFaciales.objects.filter(
+                id_paciente=paciente,
+                tipo_fotografia=tipo_fotografia,
+                activo=True
+            ).exists()
+
+            if existe:
+                return Response(
+                    {
+                        "error": (
+                            f"El paciente ya tiene una fotografía "
+                            f"activa de tipo {tipo_fotografia}. "
+                            "Utiliza el endpoint de actualización."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT
+                )
+
+        # 5. Procesar fotografía y generar embedding
+        try:
+
+            embedding_cifrado = self._procesar_fotografia(
+                fotografia
+            )
+
+        except ValueError as error:
+
+            return Response(
+                {"error": str(error)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error procesando fotografía facial individual."
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "No fue posible procesar la fotografía."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # 6. Subir fotografía a Cloudinary
+        resultado_cloudinary = None
+
+        try:
+
+            fotografia.seek(0)
+
+            resultado_cloudinary = subir_imagen(
+                fotografia,
+                carpeta="geriapp/reconocimiento_facial"
+            )
+
+            if not resultado_cloudinary.get("secure_url"):
+                raise RuntimeError(
+                    "Cloudinary no devolvió la URL de la fotografía."
+                )
+
+            if not resultado_cloudinary.get("public_id"):
+                raise RuntimeError(
+                    "Cloudinary no devolvió el public_id."
+                )
+
+            # 7. Crear registro en MySQL
+            with transaction.atomic():
+
+                registro = RegistrosFaciales.objects.create(
+                    id_paciente=paciente,
+                    embedding=embedding_cifrado,
+                    url_fotografia=resultado_cloudinary["secure_url"],
+                    public_id=resultado_cloudinary["public_id"],
+                    tipo_fotografia=tipo_fotografia,
+                    activo=True
+                )
+
+            # 8. Devolver registro creado
+            serializer = self.get_serializer(registro)
+
+            return Response(
+                {
+                    "mensaje": (
+                        "Fotografía facial agregada correctamente."
+                    ),
+                    "registro": serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error guardando fotografía facial individual."
+            )
+
+            # Eliminar imagen de Cloudinary si falla el registro
+            if resultado_cloudinary:
+
+                public_id = resultado_cloudinary.get("public_id")
+
+                if public_id:
+
+                    try:
+                        eliminar_imagen(public_id)
+
+                    except Exception:
+
+                        logger.exception(
+                            "No fue posible eliminar la imagen "
+                            "de Cloudinary después del error."
+                        )
+
+            return Response(
+                {
+                    "error": (
+                        "No fue posible agregar la fotografía facial."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+           
+    # ==========================================
     # ACTUALIZAR ROSTRO
     # ==========================================
 
@@ -4195,24 +4397,31 @@ class RegistrosFacialesViewSet(
     )
     def actualizar(self, request):
 
-        id_registro_facial = request.data.get("id_registro_facial")
+        id_registro_facial = request.data.get(
+            "id_registro_facial"
+        )
+
         fotografia = request.FILES.get("fotografia")
 
-        # 1. Validar identificador del registro facial
+        # 1. Validar identificador
         if not id_registro_facial:
             return Response(
-                {"error": "El id_registro_facial es obligatorio."},
+                {
+                    "error": "El id_registro_facial es obligatorio."
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         # 2. Validar fotografía
         if not fotografia:
             return Response(
-                {"error": "Debe enviar una nueva fotografía."},
+                {
+                    "error": "Debe enviar una nueva fotografía."
+                },
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 3. Buscar el registro facial específico
+        # 3. Buscar registro facial
         registro = self.get_queryset().filter(
             id_registro_facial=id_registro_facial,
             activo=True
@@ -4229,14 +4438,14 @@ class RegistrosFacialesViewSet(
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # 4. Guardar el public_id anterior
+        # 4. Guardar información anterior
         public_id_anterior = registro.public_id
 
         resultado_cloudinary = None
 
+        # 5. Procesar nueva fotografía
         try:
 
-            # 5. Procesar nueva fotografía y generar embedding
             embedding_cifrado = self._procesar_fotografia(
                 fotografia
             )
@@ -4256,14 +4465,16 @@ class RegistrosFacialesViewSet(
 
             return Response(
                 {
-                    "error": "No fue posible procesar la nueva fotografía."
+                    "error": (
+                        "No fue posible procesar la nueva fotografía."
+                    )
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+        # 6. Subir nueva fotografía a Cloudinary
         try:
 
-            # 6. Subir nueva fotografía a Cloudinary
             fotografia.seek(0)
 
             resultado_cloudinary = subir_imagen(
@@ -4281,7 +4492,7 @@ class RegistrosFacialesViewSet(
                     "Cloudinary no devolvió el public_id."
                 )
 
-            # 7. Actualizar únicamente el registro seleccionado
+            # 7. Actualizar registro en MySQL
             with transaction.atomic():
 
                 registro.embedding = embedding_cifrado
@@ -4309,7 +4520,7 @@ class RegistrosFacialesViewSet(
                 "Error actualizando el registro facial."
             )
 
-            # 8. Eliminar la nueva imagen si falló la actualización
+            # Eliminar nueva imagen si falla la actualización
             if resultado_cloudinary:
 
                 public_id_nuevo = resultado_cloudinary.get(
@@ -4325,86 +4536,46 @@ class RegistrosFacialesViewSet(
                     except Exception:
 
                         logger.exception(
-                            "No fue posible eliminar la nueva imagen de Cloudinary."
+                            "No fue posible eliminar la nueva imagen."
                         )
 
-
             return Response(
-                    {
-                        "error": "No fue posible actualizar el registro facial."
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-    # 9. Eliminar fotografía anterior de Cloudinary
-            advertencia = None
-
-            if public_id_anterior:
-                try:
-                    eliminar_imagen(public_id_anterior)
-                except Exception:
-                    logger.exception(
-                        "No fue posible eliminar la fotografía anterior."
+                {
+                    "error": (
+                        "No fue posible actualizar el registro facial."
                     )
-                    advertencia = (
-                        "La fotografía fue actualizada, pero no se pudo "
-                        "eliminar la imagen anterior de Cloudinary."
-                    )
-
-            # 10. Devolver registro actualizado
-            serializer = self.get_serializer(registro)
-
-            respuesta = {
-                "mensaje": "Registro facial actualizado correctamente.",
-                "registro": serializer.data
-            }
-
-            if advertencia:
-                respuesta["advertencia"] = advertencia
-
-            return Response(
-                respuesta,
-                status=status.HTTP_200_OK
-            )
-
-        # ==========================================
-        # ELIMINAR UNA FOTOGRAFÍA FACIAL
-        # ==========================================
-
-    def destroy(self, request, *args, **kwargs):
-
-        registro = self.get_object()
-        public_id = registro.public_id
-
-        try:
-            registro.activo = False
-            registro.save(update_fields=["activo"])
-
-        except Exception:
-            logger.exception(
-                "Error desactivando el registro facial."
-            )
-            return Response(
-                {"error": "No fue posible eliminar la fotografía."},
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+        # 8. Eliminar fotografía anterior de Cloudinary
         advertencia = None
 
-        if public_id:
+        if public_id_anterior:
+
             try:
-                eliminar_imagen(public_id)
+
+                eliminar_imagen(public_id_anterior)
+
             except Exception:
+
                 logger.exception(
-                    "No fue posible eliminar la imagen de Cloudinary."
-                )
-                advertencia = (
-                    "El registro fue desactivado, pero la imagen "
-                    "no pudo eliminarse de Cloudinary."
+                    "No fue posible eliminar la fotografía anterior."
                 )
 
+                advertencia = (
+                    "La fotografía fue actualizada, pero no se pudo "
+                    "eliminar la imagen anterior de Cloudinary."
+                )
+
+        # 9. Devolver registro actualizado
+        serializer = self.get_serializer(registro)
+
         respuesta = {
-            "mensaje": "Fotografía facial eliminada correctamente."
+            "mensaje": (
+                "Registro facial actualizado correctamente."
+            ),
+            "registro": serializer.data
         }
 
         if advertencia:
@@ -4415,6 +4586,74 @@ class RegistrosFacialesViewSet(
             status=status.HTTP_200_OK
         )
 
+    # ==========================================
+    # ELIMINAR UNA FOTOGRAFÍA FACIAL
+    # ==========================================
+
+    def destroy(self, request, *args, **kwargs):
+
+        registro = self.get_object()
+
+        public_id = registro.public_id
+
+        # 1. Desactivar registro en MySQL
+        try:
+
+            registro.activo = False
+
+            registro.save(
+                update_fields=["activo"]
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error desactivando el registro facial."
+            )
+
+            return Response(
+                {
+                    "error": (
+                        "No fue posible eliminar la fotografía."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+        # 2. Eliminar fotografía de Cloudinary
+        advertencia = None
+
+        if public_id:
+
+            try:
+
+                eliminar_imagen(public_id)
+
+            except Exception:
+
+                logger.exception(
+                    "No fue posible eliminar la imagen de Cloudinary."
+                )
+
+                advertencia = (
+                    "El registro fue desactivado, pero la imagen "
+                    "no pudo eliminarse de Cloudinary."
+                )
+
+        # 3. Respuesta
+        respuesta = {
+            "mensaje": (
+                "Fotografía facial eliminada correctamente."
+            )
+        }
+
+        if advertencia:
+            respuesta["advertencia"] = advertencia
+
+        return Response(
+            respuesta,
+            status=status.HTTP_200_OK
+        )
 
 # ============================================================
 # VIEWSET DE ELEMENTOS DEL PACIENTE

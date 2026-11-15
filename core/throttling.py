@@ -28,6 +28,14 @@ def obtener_identificador_ip(request):
 
     identificador = BaseThrottle().get_ident(request)
 
+    print("\n========== DIAGNÓSTICO LOGIN FACIAL ==========")
+    print("Identificador DRF:", repr(identificador))
+    print("REMOTE_ADDR:", repr(request.META.get('REMOTE_ADDR')))
+    print("HTTP_X_FORWARDED_FOR:", repr(
+        request.META.get('HTTP_X_FORWARDED_FOR')
+    ))
+    print("===============================================\n")
+
     return hashlib.sha256(
         identificador.encode('utf-8')
     ).hexdigest()

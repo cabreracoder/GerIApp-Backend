@@ -532,25 +532,29 @@ def registrar_rostro_usuario(request):
                 codigo = status.HTTP_200_OK
             else:
                 RegistrosFacialesUsuarios.objects.create(
-                    id_usuario=usuario,
-                    embedding=embedding_cifrado,
-                    activo=True,
-                    fecha_registro=ahora,
-                    fecha_actualizacion=ahora
-                )
+                id_usuario_id=usuario.id_usuario,
+                embedding=embedding_cifrado,
+                activo=True,
+                fecha_registro=ahora,
+                fecha_actualizacion=ahora
+            )
                 mensaje = 'Rostro registrado correctamente.'
                 codigo = status.HTTP_201_CREATED
 
         return Response({'mensaje': mensaje}, status=codigo)
 
     except (FileNotFoundError, TypeError, ValueError) as error:
-        logger.warning(
-            'Imagen facial no válida para el usuario %s: %s',
+        logger.exception(
+            'ERROR PROCESANDO EL ROSTRO DEL USUARIO %s: %s',
             usuario.id_usuario,
             error
         )
+
         return Response(
-            {'error': 'No fue posible procesar la fotografía enviada.'},
+            {
+                'error': 'No fue posible procesar la fotografía enviada.',
+                'detalle': str(error)
+            },
             status=status.HTTP_400_BAD_REQUEST
         )
     except Exception:

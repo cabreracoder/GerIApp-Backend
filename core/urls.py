@@ -291,6 +291,11 @@ urlpatterns = [
         registrar_rostro_usuario,
         name='registrar_rostro_usuario'
     ),
+    path(
+    'usuarios/estado-rostro/',
+    consultar_estado_rostro,
+    name='consultar_estado_rostro'
+    ),
 
     # Login mediante reconocimiento facial
     path(

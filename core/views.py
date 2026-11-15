@@ -765,8 +765,23 @@ def login_facial(request):
                 )
                 continue
 
+        # Registrar información de comparación para diagnóstico.
+        logger.info(
+            "LOGIN FACIAL | Usuario encontrado: %s | "
+            "Similitud obtenida: %.4f | Umbral configurado: %.4f",
+            mejor_usuario.id_usuario if mejor_usuario else None,
+            mejor_similitud,
+            umbral
+        )
+
         # Validar si se encontró una coincidencia suficiente.
         if mejor_usuario is None or mejor_similitud < umbral:
+            logger.warning(
+                "LOGIN FACIAL RECHAZADO | Similitud: %.4f | Umbral: %.4f",
+                mejor_similitud,
+                umbral
+            )
+
             return registrar_fallo_login_facial(request)
 
         usuario = mejor_usuario

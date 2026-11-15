@@ -644,6 +644,36 @@ def registrar_rostro_usuario(request):
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+# ============================================================
+# CONSULTAR ESTADO DEL REGISTRO FACIAL
+# ============================================================
+
+@api_view(['GET'])
+@authentication_classes([GeriAppTokenAuthentication])
+@permission_classes([IsAuthenticated])
+def consultar_estado_rostro(request):
+
+    usuario = request.user
+
+    registro = RegistrosFacialesUsuarios.objects.filter(
+        id_usuario_id=usuario.id_usuario,
+        activo=True
+    ).exists()
+
+    return Response(
+        {
+            'registrado': registro,
+            'mensaje': (
+                'El usuario tiene un rostro registrado.'
+                if registro
+                else 'El usuario no tiene un rostro registrado.'
+            )
+        },
+        status=status.HTTP_200_OK
+    )
+
+    
 # ============================================================
 # LOGIN MEDIANTE RECONOCIMIENTO FACIAL
 # ============================================================

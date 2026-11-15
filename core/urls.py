@@ -118,6 +118,7 @@ from .views import (
 # ==============================
 # Autenticación
 # ==============================
+
 from .views import (
     registro_usuario,
     login_usuario,
@@ -127,6 +128,7 @@ from .views import (
     cambiar_password_recuperacion,
     login_google,
     registrar_rostro_usuario,
+    consultar_estado_rostro,
     login_facial,
 )
 
@@ -364,4 +366,10 @@ urlpatterns = [
         obtener_token_livekit,
         name='livekit-token'
     ),
+
+    path(
+    'usuarios/estado-rostro/',
+    consultar_estado_rostro,
+    name='consultar_estado_rostro'
+),
 ]

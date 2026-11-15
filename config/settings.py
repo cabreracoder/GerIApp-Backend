@@ -225,4 +225,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+
+    # Configuración de identificación de IP detrás del proxy
+    'NUM_PROXIES': 3,
 }

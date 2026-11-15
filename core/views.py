@@ -754,7 +754,184 @@ def registrar_rostro_usuario(request):
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+# ============================================================
+# LOGIN MEDIANTE RECONOCIMIENTO FACIAL
+# ============================================================
 
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser])
+@throttle_classes([LoginFacialThrottle])
+def login_facial(request):
+    """Autentica al usuario mediante reconocimiento facial."""
+
+    serializer = ImagenFacialSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Obtener el umbral configurado en las variables de entorno.
+    umbral_configurado = os.getenv(
+        'UMBRAL_SIMILITUD_FACIAL_USUARIOS'
+    )
+
+    if not umbral_configurado:
+        return Response(
+            {
+                'error': 'El reconocimiento facial no está configurado correctamente.'
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    try:
+        umbral = float(umbral_configurado)
+
+        if not np.isfinite(umbral) or not -1.0 <= umbral <= 1.0:
+            raise ValueError
+
+    except (TypeError, ValueError):
+        return Response(
+            {'error': 'El umbral de reconocimiento facial no es válido.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    try:
+        reconocedor = ReconocedorFacial()
+
+        resultados = reconocedor.procesar_imagen(
+            serializer.validated_data['imagen']
+        )
+
+        # Debe existir exactamente un rostro.
+        if len(resultados) != 1:
+            return Response(
+                {'error': 'No fue posible validar la identidad.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        embedding_capturado = np.asarray(
+            resultados[0]['embedding'],
+            dtype=np.float32
+        ).reshape(-1)
+
+        if (
+            embedding_capturado.size != 128
+            or not np.isfinite(embedding_capturado).all()
+            or np.linalg.norm(embedding_capturado) == 0
+        ):
+            return Response(
+                {'error': 'No fue posible validar la identidad.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        # Consultar registros faciales activos de usuarios activos.
+        registros = (
+            RegistrosFacialesUsuarios.objects
+            .filter(
+                activo=True,
+                id_usuario__estado=True
+            )
+            .select_related('id_usuario')
+        )
+
+        mejor_usuario = None
+        mejor_similitud = -1.0
+
+        for registro in registros:
+
+            try:
+                embedding_bytes = descifrar_embedding(
+                    bytes(registro.embedding)
+                )
+
+                embedding_guardado = np.frombuffer(
+                    embedding_bytes,
+                    dtype=np.float32
+                )
+
+                if (
+                    embedding_guardado.size != 128
+                    or not np.isfinite(embedding_guardado).all()
+                    or np.linalg.norm(embedding_guardado) == 0
+                ):
+                    continue
+
+                similitud = reconocedor.generador.comparar_embeddings(
+                    embedding_capturado,
+                    embedding_guardado
+                )
+
+                similitud = float(similitud)
+
+                if not np.isfinite(similitud):
+                    continue
+
+                if similitud > mejor_similitud:
+                    mejor_similitud = similitud
+                    mejor_usuario = registro.id_usuario
+
+            except Exception:
+                logger.exception(
+                    'Error al comparar el registro facial %s.',
+                    registro.id_registro_facial_usuario
+                )
+                continue
+
+        # Validar si se encontró una coincidencia suficiente.
+        if mejor_usuario is None or mejor_similitud < umbral:
+            return Response(
+                {'error': 'No fue posible validar la identidad.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        usuario = mejor_usuario
+
+        # Generar el mismo token utilizado en el login tradicional.
+        return Response(
+            {
+                'mensaje': 'Inicio de sesión exitoso.',
+                'token': crear_token_usuario(usuario),
+                'usuario': {
+                    'id_usuario': usuario.id_usuario,
+                    'nombres': usuario.nombres,
+                    'apellidos': usuario.apellidos,
+                    'correo': usuario.correo,
+                    'id_rol': usuario.id_rol_id,
+                    'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+                    'id_sede': usuario.id_sede_id,
+                    'estado': usuario.estado,
+                    'foto': usuario.foto
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+    except (FileNotFoundError, TypeError, ValueError) as error:
+        logger.warning(
+            'Error procesando imagen del login facial: %s',
+            error
+        )
+
+        return Response(
+            {'error': 'No fue posible procesar la fotografía enviada.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    except Exception:
+        logger.exception(
+            'Error durante el inicio de sesión facial.'
+        )
+
+        return Response(
+            {'error': 'No fue posible realizar el reconocimiento facial.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+        
 # ============================================================
 # CAMBIAR CONTRASEÑA
 # ============================================================

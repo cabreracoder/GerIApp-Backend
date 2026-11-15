@@ -11,7 +11,10 @@ from rest_framework.decorators import (
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from .throttling import (
+    LoginFacialThrottle,
+    registrar_fallo_login_facial
+)
 from rest_framework.parsers import (
     MultiPartParser,
     FormParser,
@@ -60,7 +63,6 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 
 from livekit import api
-
 
 # ==========================================
 # SERVICIOS DEL PROYECTO
@@ -235,12 +237,6 @@ from .serializers import (
 # ==========================================
 
 logger = logging.getLogger(__name__)
-
-
-class LoginFacialThrottle(AnonRateThrottle):
-    """Limita intentos anónimos de autenticación facial."""
-    rate = '5/min'
-
 
 # ============================================================
 # REGISTRO DE USUARIO
@@ -702,10 +698,7 @@ def login_facial(request):
 
         # Debe existir exactamente un rostro.
         if len(resultados) != 1:
-            return Response(
-                {'error': 'No fue posible validar la identidad.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            return registrar_fallo_login_facial(request)
 
         embedding_capturado = np.asarray(
             resultados[0]['embedding'],
@@ -717,10 +710,7 @@ def login_facial(request):
             or not np.isfinite(embedding_capturado).all()
             or np.linalg.norm(embedding_capturado) == 0
         ):
-            return Response(
-                {'error': 'No fue posible validar la identidad.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            return registrar_fallo_login_facial(request)
 
         # Consultar registros faciales activos de usuarios activos.
         registros = (
@@ -777,10 +767,7 @@ def login_facial(request):
 
         # Validar si se encontró una coincidencia suficiente.
         if mejor_usuario is None or mejor_similitud < umbral:
-            return Response(
-                {'error': 'No fue posible validar la identidad.'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
+            return registrar_fallo_login_facial(request)
 
         usuario = mejor_usuario
 

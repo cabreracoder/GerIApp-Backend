@@ -600,7 +600,7 @@ def registrar_rostro_usuario(request):
             else:
 
                 RegistrosFacialesUsuarios.objects.create(
-                    id_usuario=usuario,
+                    id_usuario_id=usuario.id_usuario,
                     embedding=embedding_cifrado,
                     activo=True,
                     fecha_registro=ahora,

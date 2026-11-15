@@ -63,7 +63,13 @@ from .models import (
     ControlesPeriodicosBitacora,
     RegistrosFaciales,
     DocumentosHistoriaClinica,
+    RegistrosFacialesUsuarios,
 )
+
+class RegistrosFacialesUsuariosSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RegistrosFacialesUsuarios
+        fields = '__all__'
 
 class DocumentosHistoriaClinicaSerializer(serializers.ModelSerializer):
     class Meta:

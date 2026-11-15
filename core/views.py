@@ -147,6 +147,7 @@ from .models import (
     ControlesPeriodicosBitacora,
     RegistrosFaciales,
     DocumentosHistoriaClinica,
+    RegistrosFacialesUsuarios,
 )
 
 
@@ -217,6 +218,7 @@ from .serializers import (
     ControlesPeriodicosBitacoraSerializer,
     RegistrosFacialesSerializer,
     DocumentosHistoriaClinicaSerializer,
+    RegistrosFacialesUsuariosSerializer
 )
 
 
@@ -898,6 +900,11 @@ class RolesViewSet(viewsets.ModelViewSet):
     queryset = Roles.objects.all()
     serializer_class = RolesSerializer
     permission_classes = [EsSuperadministradorOMetodoLectura]
+
+class RegistrosFacialesUsuariosViewSet(viewsets.ModelViewSet):
+    queryset = RegistrosFacialesUsuarios.objects.all()
+    serializer_class = RegistrosFacialesUsuariosSerializer
+    permission_classes = [IsAuthenticated]
 
 
 class SeguimientoAdministracionMedicamentoViewSet(viewsets.ModelViewSet):

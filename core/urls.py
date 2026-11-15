@@ -32,6 +32,7 @@ from .views import (
     ControlesPeriodicosBitacoraViewSet,
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
+    RegistrosFacialesUsuariosViewSet,
     
 )
 
@@ -291,6 +292,8 @@ router.register(r'configuracion_controles_periodicos', ConfiguracionControlesPer
 router.register(r'controles_periodicos_bitacora', ControlesPeriodicosBitacoraViewSet)
 
 router.register(r'documentos_historia_clinica', DocumentosHistoriaClinicaViewSet)
+
+router.register(r'registros_faciales_usuarios', RegistrosFacialesUsuariosViewSet, basename='registros-faciales-usuarios')   
 
 router.register(
     r'registros_faciales',

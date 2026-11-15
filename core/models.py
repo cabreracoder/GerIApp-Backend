@@ -2,6 +2,18 @@ from django.core.serializers import python
 from django.db import models
 
 
+class RegistrosFacialesUsuarios(models.Model):
+    id_registro_facial_usuario = models.AutoField(primary_key=True)
+    id_usuario = models.OneToOneField('Usuarios', models.DB_CASCADE, db_column='id_usuario')
+    embedding = models.BinaryField()
+    activo = models.BooleanField()
+    fecha_registro = models.DateTimeField()
+    fecha_actualizacion = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'registros_faciales_usuarios'
+        
 class Actividades(models.Model):
     id_actividad = models.AutoField(primary_key=True)
     id_bitacora = models.ForeignKey('Bitacora', models.DO_NOTHING, db_column='id_bitacora', blank=True, null=True)

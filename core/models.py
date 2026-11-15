@@ -3,11 +3,24 @@ from django.db import models
 
 
 class RegistrosFacialesUsuarios(models.Model):
-    id_registro_facial_usuario = models.AutoField(primary_key=True)
-    id_usuario = models.OneToOneField('Usuarios', models.DB_CASCADE, db_column='id_usuario')
+
+    id_registro_facial_usuario = models.AutoField(
+        primary_key=True
+    )
+
+    id_usuario = models.OneToOneField(
+        'Usuarios',
+        models.CASCADE,
+        db_column='id_usuario',
+        related_name='registro_facial'
+    )
+
     embedding = models.BinaryField()
-    activo = models.BooleanField()
+
+    activo = models.BooleanField(default=True)
+
     fecha_registro = models.DateTimeField()
+
     fecha_actualizacion = models.DateTimeField()
 
     class Meta:

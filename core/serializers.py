@@ -63,6 +63,7 @@ from .models import (
     ControlesPeriodicosBitacora,
     RegistrosFaciales,
     DocumentosHistoriaClinica,
+    EstadoPosturaPaciente,
 )
 
 class ImagenFacialSerializer(serializers.Serializer):
@@ -801,6 +802,34 @@ class EventosIaSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventosIa
         fields = '__all__'
+
+
+class EstadoPosturaPacienteSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = EstadoPosturaPaciente
+        fields = '__all__'
+        read_only_fields = [
+            'id_estado_postura',
+            'fecha_actualizacion'
+        ]
+
+    def validate_postura_actual(self, value):
+        posturas_permitidas = [
+            'ACOSTADO',
+            'SENTADO',
+            'DE_PIE',
+            'SIN_PERSONA',
+            'DESCONOCIDO'
+        ]
+
+        if value not in posturas_permitidas:
+            raise serializers.ValidationError(
+                'La postura enviada no es válida.'
+            )
+
+        return value
+
 
 class EvidenciasIaSerializer(serializers.ModelSerializer):
 

@@ -158,6 +158,7 @@ from .models import (
     RegistrosFaciales,
     DocumentosHistoriaClinica,
     RegistrosFacialesUsuarios,
+    EstadoPosturaPaciente,
 )
 
 
@@ -229,6 +230,7 @@ from .serializers import (
     RegistrosFacialesSerializer,
     DocumentosHistoriaClinicaSerializer,
     ImagenFacialSerializer,
+    EstadoPosturaPacienteSerializer,
 )
 
 
@@ -2377,6 +2379,8 @@ class TipoEventoViewSet(viewsets.ModelViewSet):
     serializer_class = TipoEventoSerializer
 
 
+
+
 class TipoEmergenciaViewSet(viewsets.ModelViewSet):
     queryset = TipoEmergencia.objects.all()
     serializer_class = TipoEmergenciaSerializer
@@ -3998,6 +4002,68 @@ class EventosIaViewSet(viewsets.ModelViewSet):
 class EvidenciasIaViewSet(viewsets.ModelViewSet):
     queryset = EvidenciasIa.objects.all()
     serializer_class = EvidenciasIaSerializer
+
+
+class EstadoPosturaPacienteViewSet(viewsets.ModelViewSet):
+
+    queryset = EstadoPosturaPaciente.objects.all()
+    serializer_class = EstadoPosturaPacienteSerializer
+
+    def get_queryset(self):
+        queryset = EstadoPosturaPaciente.objects.all()
+
+        id_paciente = self.request.query_params.get('id_paciente')
+
+        if id_paciente:
+            queryset = queryset.filter(
+                id_paciente_id=id_paciente
+            )
+
+        return queryset
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+
+        serializer = self.get_serializer(data=request.data)
+
+        serializer.is_valid(raise_exception=True)
+
+        datos = serializer.validated_data
+
+        paciente = datos['id_paciente']
+
+        estado_postura, creado = (
+            EstadoPosturaPaciente.objects.update_or_create(
+                id_paciente=paciente,
+                defaults={
+                    'id_camara': datos['id_camara'],
+                    'id_habitacion': datos['id_habitacion'],
+                    'postura_actual': datos['postura_actual'],
+                    'confianza': datos.get('confianza'),
+                    'fecha_actualizacion': timezone.now()
+                }
+            )
+        )
+
+        respuesta = self.get_serializer(estado_postura)
+
+        return Response(
+            {
+                'mensaje': (
+                    'Postura registrada correctamente.'
+                    if creado
+                    else 'Postura actualizada correctamente.'
+                ),
+                'creado': creado,
+                'estado_postura': respuesta.data
+            },
+            status=(
+                status.HTTP_201_CREATED
+                if creado
+                else status.HTTP_200_OK
+            )
+        )
+
 
 class ConfiguracionControlesPeriodicosViewSet(viewsets.ModelViewSet):
     queryset = ConfiguracionControlesPeriodicos.objects.all()

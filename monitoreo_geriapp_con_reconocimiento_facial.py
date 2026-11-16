@@ -491,11 +491,9 @@ def cuerpo_valido(keypoints, confianzas):
         for i in (12, 14, 16)
     )
 
-    # Para ACOSTADA no exigimos una pierna completa: las cobijas,
-    # el ángulo lateral y la oclusión suelen ocultar rodillas/tobillos.
-    # Basta con detectar al menos un hombro y una cadera.
-    return hombros and caderas
-
+    return hombros and caderas and (
+        pierna_izq or pierna_der
+    )
 
 def confianza_cuerpo(confianzas):
     """Promedio de confianza de los puntos importantes."""
@@ -558,18 +556,8 @@ def detectar_postura(puntos, confianzas, caja=None):
     """
     Clasifica ACOSTADA, SENTADA o DE PIE.
 
-    DE PIE:
-    - Cabeza visible.
-    - Ambos hombros visibles.
-    - Ambas caderas visibles.
-    - Ambas rodillas visibles.
-    - Ambos tobillos visibles.
-    - Tronco vertical.
-    - Ambas piernas verticales.
-    - Ambas rodillas extendidas.
-    - Caja de detección vertical.
-
-    Las condiciones estrictas solamente se aplican a DE PIE.
+    La lógica geométrica se restaura a la versión anterior
+    que ya funcionaba correctamente.
     """
 
     hombros = punto_medio(
@@ -616,7 +604,7 @@ def detectar_postura(puntos, confianzas, caja=None):
             angulos_pierna.append(ang_pierna)
 
     # --------------------------------------------------------
-    # VALIDAR PROPORCIÓN DE LA CAJA
+    # VALIDAR PROPORCIÓN DE LA CAJA PARA DE PIE
     # --------------------------------------------------------
 
     caja_vertical = False
@@ -631,15 +619,8 @@ def detectar_postura(puntos, confianzas, caja=None):
         caja_vertical = alto / ancho >= 1.15
 
     # --------------------------------------------------------
-    # VALIDAR CUERPO COMPLETO
+    # VALIDAR CUERPO COMPLETO PARA DE PIE
     # --------------------------------------------------------
-
-    # COCO:
-    # 0-4: cabeza
-    # 5-6: hombros
-    # 11-12: caderas
-    # 13-14: rodillas
-    # 15-16: tobillos
 
     cabeza_visible = any(
         punto_visible(confianzas, i)
@@ -693,29 +674,12 @@ def detectar_postura(puntos, confianzas, caja=None):
     # DETECTAR ACOSTADA
     # --------------------------------------------------------
 
-    # ACOSTADA: priorizar la orientación del tronco y la geometría
-    # horizontal de la detección. No exigir rodillas ni tobillos visibles.
-    caja_horizontal = False
-    if caja is not None:
-        x1, y1, x2, y2 = map(float, caja)
-        ancho = max(1.0, x2 - x1)
-        alto = max(1.0, y2 - y1)
-        caja_horizontal = ancho / alto >= 1.20
-
-    hombros_visibles = (
-        punto_visible(confianzas, 5)
-        or punto_visible(confianzas, 6)
-    )
-    caderas_visibles = (
-        punto_visible(confianzas, 11)
-        or punto_visible(confianzas, 12)
-    )
-
+    # Se restaura el criterio original: ángulo del tronco y
+    # orientación de al menos una pierna. No se exige caja horizontal.
     if (
         angulo_tronco >= 55
-        and caja_horizontal
-        and hombros_visibles
-        and caderas_visibles
+        and angulos_pierna
+        and max(angulos_pierna) >= 50
     ):
         return "ACOSTADA"
 
@@ -733,7 +697,6 @@ def detectar_postura(puntos, confianzas, caja=None):
         return "SENTADA"
 
     return "DESCONOCIDO"
-
 
 # ============================================================
 # SELECCIONAR PERSONA DETECTADA
@@ -2157,6 +2120,13 @@ def procesar_camara(nombre, modelo):
             and tiempo_rostro > 0
             and ahora - tiempo_rostro <= 2.0
         )
+        print(
+            f"[{nombre}] PACIENTE: {id_paciente} | "
+            f"ROSTRO RECIENTE: {rostro_reciente} | "
+            f"BBOX ROSTRO: {bbox_rostro} | "
+            f"DETECCIONES YOLO: "
+            f"{len(resultado.boxes) if hay_detecciones_pose else 0}"
+        )
 
         # ----------------------------------------------
         # 1. ASOCIAR CUERPO MEDIANTE EL ROSTRO
@@ -2167,6 +2137,11 @@ def procesar_camara(nombre, modelo):
             indice_candidato = seleccionar_persona_asociada(
                 resultado,
                 bbox_rostro
+            )
+
+            print(
+                f"[{nombre}] PACIENTE {id_paciente} | "
+                f"ASOCIACIÓN POR ROSTRO: {indice_candidato}"
             )
 
             if (
@@ -2196,6 +2171,11 @@ def procesar_camara(nombre, modelo):
                 ahora
             )
 
+            print(
+                f"[{nombre}] PACIENTE {id_paciente} | "
+                f"ASOCIACIÓN POR SEGUIMIENTO: {indice_candidato}"
+            )
+
             if (
                 indice_candidato is not None
                 and indice_candidato not in cuerpos_asignados
@@ -2210,6 +2190,12 @@ def procesar_camara(nombre, modelo):
         # ----------------------------------------------
         # 3. PROCESAR EL CUERPO ASIGNADO
         # ----------------------------------------------
+
+        print(
+            f"[{nombre}] PACIENTE {id_paciente} | "
+            f"CUERPO ASOCIADO: {indice} | "
+            f"MÉTODO: {estado_paciente.get('metodo_asociacion_cuerpo')}"
+        )
 
         if indice is not None:
 
@@ -2236,45 +2222,33 @@ def procesar_camara(nombre, modelo):
                 .numpy()
             )
 
+            # Se conserva el cálculo original de confianza corporal.
+            # El filtro por puntos visibles ya exige una confianza mínima
+            # de CONFIANZA_MINIMA_PUNTO para las articulaciones utilizadas.
             confianza = confianza_cuerpo(confianzas)
-
-            # En postura acostada algunas partes del cuerpo
-            # pueden estar ocultas.
-            indices_torso = [
-                i
-                for i in (5, 6, 11, 12)
-                if confianzas is not None
-                and len(confianzas) > i
-                and float(confianzas[i]) >= 0.25
-            ]
-
-            confianza_torso = (
-                float(
-                    np.mean([
-                        float(confianzas[i])
-                        for i in indices_torso
-                    ])
-                )
-                if indices_torso
-                else 0.0
-            )
-
-            if confianza < CONFIANZA_MINIMA_CUERPO:
-
-                confianza = max(
-                    confianza,
-                    confianza_torso
-                )
 
             if (
                 cuerpo_valido(puntos, confianzas)
-                and confianza >= 0.30
+                and confianza >= CONFIANZA_MINIMA_CUERPO
             ):
+                print(
+                    f"[{nombre}] PACIENTE {id_paciente} | "
+                    f"CUERPO VÁLIDO: {cuerpo_valido(puntos, confianzas)} | "
+                    f"CONFIANZA: {confianza:.3f}"
+                )
 
                 postura_detectada = detectar_postura(
                     puntos,
                     confianzas,
                     caja_persona
+                )
+
+                print(
+                    f"[{nombre}] PACIENTE {id_paciente} | "
+                    f"POSTURA DETECTADA: {postura_detectada} | "
+                    f"CONFIANZA: {confianza:.3f} | "
+                    f"ASOCIACIÓN: "
+                    f"{estado_paciente.get('metodo_asociacion_cuerpo')}"
                 )
 
                 estado_paciente["bbox_cuerpo_paciente"] = tuple(
@@ -2294,9 +2268,26 @@ def procesar_camara(nombre, modelo):
 
                 postura_detectada = "DESCONOCIDO"
 
+                print(
+                    f"[{nombre}] PACIENTE {id_paciente} | "
+                    f"CUERPO NO VÁLIDO | "
+                    f"CONFIANZA: {confianza:.3f} | "
+                    f"UMBRAL: {CONFIANZA_MINIMA_CUERPO:.3f} | "
+                    f"CUERPO_VALIDO: "
+                    f"{cuerpo_valido(puntos, confianzas)}"
+                )
+
         else:
 
             estado_paciente["persona_detectada"] = False
+
+            print(
+                f"[{nombre}] PACIENTE {id_paciente} | "
+                f"NO SE ASOCIÓ NINGÚN CUERPO | "
+                f"ROSTRO_RECIENTE: {rostro_reciente} | "
+                f"MÉTODO: "
+                f"{estado_paciente.get('metodo_asociacion_cuerpo')}"
+            )
 
             # No borrar inmediatamente la referencia corporal.
             # Se conserva para intentar recuperar el seguimiento.
@@ -2332,7 +2323,7 @@ def procesar_camara(nombre, modelo):
                 confianza,
             )
 
-                # ----------------------------------------------
+        # ----------------------------------------------
         # 5. CONTROLAR DURACIÓN DE LA ALERTA
         # ----------------------------------------------
 

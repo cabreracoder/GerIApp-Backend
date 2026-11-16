@@ -26,6 +26,48 @@ class RegistrosFacialesUsuarios(models.Model):
     class Meta:
         managed = False
         db_table = 'registros_faciales_usuarios'
+
+
+class EstadoPosturaPaciente(models.Model):
+    id_estado_postura = models.AutoField(primary_key=True)
+
+    id_paciente = models.OneToOneField(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        related_name='estado_postura'
+    )
+
+    id_camara = models.ForeignKey(
+        'Camaras',
+        models.DO_NOTHING,
+        db_column='id_camara'
+    )
+
+    id_habitacion = models.ForeignKey(
+        'Habitaciones',
+        models.DO_NOTHING,
+        db_column='id_habitacion'
+    )
+
+    postura_actual = models.CharField(max_length=30)
+
+    confianza = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        blank=True,
+        null=True
+    )
+
+    fecha_actualizacion = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'estado_postura_paciente'
+
+    def __str__(self):
+        return f'Paciente {self.id_paciente_id} - {self.postura_actual}'
+
         
 class Actividades(models.Model):
     id_actividad = models.AutoField(primary_key=True)

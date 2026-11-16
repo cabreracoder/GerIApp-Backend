@@ -141,6 +141,7 @@ from .views import (
 )
 
 
+
 # ==============================
 # IA - Habitaciones y cámaras
 # ==============================
@@ -153,7 +154,9 @@ from .views import (
     TiposEventoIaViewSet,
     EventosIaViewSet,
     EvidenciasIaViewSet,
+    EstadoPosturaPacienteViewSet,
 )
+
 
 
 # ==============================
@@ -221,6 +224,11 @@ router.register(r'camaras', CamarasViewSet)
 router.register(r'tipos_evento_ia', TiposEventoIaViewSet)
 router.register(r'eventos_ia', EventosIaViewSet)
 router.register(r'evidencias_ia', EvidenciasIaViewSet)
+router.register(
+    r'estado_postura_paciente',
+    EstadoPosturaPacienteViewSet,
+    basename='estado-postura-paciente'
+)
 
 router.register(r'asignacion_habitacion', AsignacionHabitacionViewSet)
 router.register(r'grupo_medicacion', GrupoMedicacionViewSet)

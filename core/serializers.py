@@ -806,31 +806,32 @@ class EventosIaSerializer(serializers.ModelSerializer):
 
 class EstadoPosturaPacienteSerializer(serializers.ModelSerializer):
 
+    # Permite reutilizar el paciente aunque ya tenga
+    # un registro en estado_postura_paciente.
+    id_paciente = serializers.PrimaryKeyRelatedField(
+        queryset=Pacientes.objects.all(),
+        validators=[]
+    )
+
     class Meta:
         model = EstadoPosturaPaciente
-        fields = '__all__'
+
+        fields = [
+            'id_estado_postura',
+            'id_paciente',
+            'id_camara',
+            'id_habitacion',
+            'postura_actual',
+            'confianza',
+            'fecha_actualizacion',
+        ]
+
         read_only_fields = [
             'id_estado_postura',
-            'fecha_actualizacion'
+            'fecha_actualizacion',
         ]
 
-    def validate_postura_actual(self, value):
-        posturas_permitidas = [
-            'ACOSTADO',
-            'SENTADO',
-            'DE_PIE',
-            'SIN_PERSONA',
-            'DESCONOCIDO'
-        ]
-
-        if value not in posturas_permitidas:
-            raise serializers.ValidationError(
-                'La postura enviada no es válida.'
-            )
-
-        return value
-
-
+        
 class EvidenciasIaSerializer(serializers.ModelSerializer):
 
     class Meta:

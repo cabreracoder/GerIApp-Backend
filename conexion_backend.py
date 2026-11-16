@@ -20,6 +20,7 @@ API_URL = f"{BASE_URL}/eventos_ia/"
 API_SUBIR_IMAGEN = f"{BASE_URL}/subir-imagen/"
 API_EVIDENCIAS = f"{BASE_URL}/evidencias_ia/"
 API_PLANTILLAS = f"{BASE_URL}/registros_faciales/plantillas/"
+API_ESTADO_POSTURA = f"{BASE_URL}/estado_postura_paciente/"
 
 sesion = requests.Session()
 autenticado = False
@@ -506,5 +507,91 @@ def registrar_evidencia_geriapp(id_evento, url, public_id):
 
     except (requests.exceptions.RequestException, ValueError, RuntimeError) as error:
         print("No se pudo registrar la evidencia.")
+        print("Detalle:", error)
+        return None
+
+    # ============================================================
+# ACTUALIZAR ESTADO DE POSTURA DEL PACIENTE
+# ============================================================
+
+def enviar_estado_postura_geriapp(
+    id_camara,
+    id_habitacion,
+    id_paciente,
+    postura_actual,
+    confianza
+):
+    """
+    Envía o actualiza la postura actual del paciente en GerIApp.
+    Se conserva un único registro por paciente.
+    """
+
+    equivalencias_postura = {
+        "ACOSTADA": "ACOSTADO",
+        "ACOSTADO": "ACOSTADO",
+        "SENTADA": "SENTADO",
+        "SENTADO": "SENTADO",
+        "DE PIE": "DE_PIE",
+        "DE_PIE": "DE_PIE",
+        "SIN PERSONA": "SIN_PERSONA",
+        "SIN_PERSONA": "SIN_PERSONA",
+        "DESCONOCIDO": "DESCONOCIDO"
+    }
+
+    postura_normalizada = equivalencias_postura.get(
+        str(postura_actual).strip().upper()
+    )
+
+    if postura_normalizada is None:
+        print(
+            f"Postura no válida para enviar: {postura_actual}"
+        )
+        return None
+
+    estado = {
+        "id_camara": id_camara,
+        "id_habitacion": id_habitacion,
+        "id_paciente": id_paciente,
+        "postura_actual": postura_normalizada,
+        "confianza": round(float(confianza) * 100, 2)
+    }
+
+    try:
+        asegurar_autenticacion()
+
+        respuesta = sesion.post(
+            API_ESTADO_POSTURA,
+            json=estado,
+            timeout=(5, 15)
+        )
+
+        if respuesta.status_code == 401:
+            autenticar_geriapp()
+
+            respuesta = sesion.post(
+                API_ESTADO_POSTURA,
+                json=estado,
+                timeout=(5, 15)
+            )
+
+        if respuesta.status_code in (200, 201):
+            print(
+                f"Postura actualizada: paciente {id_paciente} "
+                f"- {postura_normalizada}"
+            )
+            return respuesta.json()
+
+        print("Error al actualizar la postura del paciente.")
+        print("Código HTTP:", respuesta.status_code)
+        print("Respuesta:", respuesta.text[:500])
+
+        return None
+
+    except (
+        requests.exceptions.RequestException,
+        ValueError,
+        RuntimeError
+    ) as error:
+        print("No se pudo enviar el estado de postura.")
         print("Detalle:", error)
         return None

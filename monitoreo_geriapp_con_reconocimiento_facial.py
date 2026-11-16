@@ -10,6 +10,7 @@ load_dotenv()
 
 from conexion_backend import (
     enviar_evento_geriapp,
+    enviar_estado_postura_geriapp,
     subir_imagen_cloudinary,
     registrar_evidencia_geriapp,
     obtener_camaras_activas,
@@ -116,7 +117,11 @@ TIPO_LEVANTAMIENTO_COMPLETO = 4
 ejecutando = threading.Event()
 ejecutando.set()
 
+# Cola para eventos y evidencias.
 cola_eventos = queue.Queue()
+
+# Cola independiente para actualizar posturas.
+cola_estado_postura = queue.Queue()
 
 
 # ============================================================
@@ -1094,6 +1099,57 @@ def enviar_eventos_backend():
         finally:
             cola_eventos.task_done()
 
+# ============================================================
+# ENVÍO DE ESTADOS DE POSTURA A GERIAPP
+# ============================================================
+
+def enviar_estados_postura_backend():
+
+    while True:
+
+        datos = cola_estado_postura.get()
+
+        try:
+
+            if datos is None:
+                return
+
+            resultado = enviar_estado_postura_geriapp(
+                id_camara=datos["id_camara"],
+                id_habitacion=datos["id_habitacion"],
+                id_paciente=datos["id_paciente"],
+                postura_actual=datos["postura_actual"],
+                confianza=datos["confianza"]
+            )
+
+            if resultado:
+
+                print(
+                    f"[{datos['nombre_camara']}] "
+                    f"Estado de postura sincronizado. "
+                    f"Paciente: {datos['id_paciente']} | "
+                    f"Postura: {datos['postura_actual']}"
+                )
+
+            else:
+
+                print(
+                    f"[{datos['nombre_camara']}] "
+                    f"No se pudo sincronizar la postura "
+                    f"del paciente {datos['id_paciente']}."
+                )
+
+        except Exception as error:
+
+            print(
+                "[POSTURA] Error procesando actualización:",
+                error
+            )
+
+        finally:
+
+            cola_estado_postura.task_done()
+
 
 # ============================================================
 # RECONOCIMIENTO FACIAL POR CÁMARA
@@ -1907,6 +1963,44 @@ def actualizar_postura(
     estado["ultimo_frame_candidato"] = 0.0
 
     # --------------------------------------------------
+    # SINCRONIZAR POSTURA CONFIRMADA CON GERIAPP
+    # --------------------------------------------------
+
+    config = CAMARAS_CONFIG.get(nombre)
+
+    if config is not None:
+
+        datos_postura = {
+            "nombre_camara": nombre,
+            "id_camara": config["id_camara"],
+            "id_habitacion": config["id_habitacion"],
+            "id_paciente": id_paciente,
+            "postura_actual": {
+                "ACOSTADA": "ACOSTADO",
+                "SENTADA": "SENTADO",
+                "DE PIE": "DE_PIE",
+                "SIN PERSONA": "SIN_PERSONA",
+                "DESCONOCIDO": "DESCONOCIDO",
+            }.get(postura_detectada, postura_detectada),
+            "confianza": confianza
+        }
+
+        cola_estado_postura.put(datos_postura)
+
+        print(
+            f"[{nombre}] Postura agregada a la cola de sincronización. "
+            f"Paciente: {id_paciente} | "
+            f"Postura: {postura_detectada}"
+        )
+
+    else:
+
+        print(
+            f"[{nombre}] No se pudo sincronizar la postura: "
+            "no existe configuración de cámara."
+        )
+
+    # --------------------------------------------------
     # PACIENTE ACOSTADO
     # --------------------------------------------------
 
@@ -2623,6 +2717,7 @@ def main():
 
     hilos_captura = []
     hilo_backend = None
+    hilo_posturas = None
 
     # Estados compartidos por todas las cámaras.
     estados = {}
@@ -2966,6 +3061,13 @@ def main():
 
         hilo_backend.start()
 
+        hilo_posturas = threading.Thread(
+            target=enviar_estados_postura_backend,
+            daemon=True,
+        )
+
+        hilo_posturas.start()
+
         print(
             "\nDetección iniciada sin delimitar la cama. "
             "Presiona Q para salir."
@@ -3071,6 +3173,19 @@ def main():
 
                 print(
                     "Advertencia: el hilo del backend "
+                    "sigue activo."
+                )
+
+        if hilo_posturas is not None:
+
+            cola_estado_postura.put(None)
+
+            hilo_posturas.join(timeout=30)
+
+            if hilo_posturas.is_alive():
+
+                print(
+                    "Advertencia: el hilo de sincronización de posturas "
                     "sigue activo."
                 )
 

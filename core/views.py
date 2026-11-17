@@ -21,6 +21,19 @@ from rest_framework.parsers import (
     JSONParser,
 )
 
+#notificaciones de eventos IA estas son las importaciones#
+from rest_framework import viewsets
+from django.utils import timezone
+from django.db import transaction
+
+from .models import (
+    EventosIa,
+    Notificaciones,
+    AsignacionPacienteCuidador
+)
+from .serializers import EventosIaSerializer
+from .notificaciones_utils import enviar_notificacion_fcm
+
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
 from django.db import transaction
@@ -3996,8 +4009,89 @@ class TiposEventoIaViewSet(viewsets.ModelViewSet):
     serializer_class = TiposEventoIaSerializer
 
 class EventosIaViewSet(viewsets.ModelViewSet):
+
     queryset = EventosIa.objects.all()
     serializer_class = EventosIaSerializer
+
+    def perform_create(self, serializer):
+
+        # 1. Guardar el evento IA
+        evento = serializer.save()
+
+        # 2. Obtener el paciente relacionado
+        paciente = evento.id_paciente
+
+        # 3. Buscar cuidadores con asignación activa
+        asignaciones = (
+            AsignacionPacienteCuidador.objects
+            .filter(
+                id_paciente=paciente,
+                estado__iexact="Activo"
+            )
+            .select_related("id_usuario")
+        )
+
+        # 4. Obtener cuidadores sin duplicarlos
+        cuidadores = {}
+
+        for asignacion in asignaciones:
+            usuario = asignacion.id_usuario
+
+            if usuario:
+                cuidadores[usuario.pk] = usuario
+
+        # Si no hay cuidadores activos, no hay destinatarios
+        if not cuidadores:
+            print(
+                f"EVENTO IA {evento.id_evento}: "
+                "No hay cuidadores activos asignados."
+            )
+            return
+
+        # 5. Obtener información del tipo de evento
+        tipo_evento = evento.id_tipo_evento
+
+        nombre_evento = tipo_evento.nombre
+        nivel_riesgo = tipo_evento.nivel_riesgo
+
+        titulo = "Alerta de inteligencia artificial"
+
+        mensaje = (
+            f"Se ha detectado un evento: {nombre_evento}. "
+            f"Nivel de riesgo: {nivel_riesgo}. "
+            "Ingresa a GerIApp para consultar los detalles."
+        )
+
+        # 6. Crear una sola notificación para el paciente
+        notificacion = Notificaciones.objects.create(
+            titulo=titulo,
+            tipo="EVENTO_IA",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=paciente,
+            id_usuario=None
+        )
+
+        # 7. Enviar notificación push a cada cuidador
+        def enviar_push():
+
+            for usuario in cuidadores.values():
+
+                try:
+                    enviar_notificacion_fcm(
+                        notificacion,
+                        usuario
+                    )
+
+                except Exception as error:
+                    print(
+                        f"Error notificando al cuidador "
+                        f"{usuario.pk}: {error}"
+                    )
+
+        transaction.on_commit(enviar_push)
 
 class EvidenciasIaViewSet(viewsets.ModelViewSet):
     queryset = EvidenciasIa.objects.all()

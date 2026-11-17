@@ -72,36 +72,110 @@ def abrir_camara_opencv(indice):
 # ============================================================
 
 MODELO_YOLO = "yolo11n-pose.pt"
-FPS_YOLO = 10
-TAMANO_YOLO = 640
+
+# ============================================================
+# CONFIGURACIÓN DE YOLO - DETECCIÓN DE POSTURAS
+# ============================================================
+
+# Máximo de veces por segundo que se intenta procesar YOLO
+# para cada cámara. Aumentamos de 10 a 12.
+FPS_YOLO = 12
+
+# Resolución utilizada para la inferencia de YOLO.
+# Reducimos de 640 a 512 para intentar mejorar la velocidad.
+# Si se pierden puntos corporales, volver a 640.
+TAMANO_YOLO = 512
+
+# Confianza mínima para aceptar una persona detectada.
+# 0.50 equivale al 50 %.
 CONFIANZA_DETECCION = 0.50
+
+# Confianza mínima para considerar válido un punto corporal
+# como hombros, caderas, rodillas o tobillos.
 CONFIANZA_MINIMA_PUNTO = 0.40
-FRAMES_ESTABILIDAD = 8
+
+# Número de detecciones consecutivas necesarias para confirmar
+# un cambio de postura.
+# Antes: 8. Ahora: 5 para reducir la espera.
+FRAMES_ESTABILIDAD = 5
+
+# Número de detecciones sin persona necesarias para confirmar
+# que la cámara ya no observa a nadie.
 MAX_SIN_PERSONA = 25
+
+# Confianza mínima requerida para aceptar la postura corporal.
 CONFIANZA_MINIMA_CUERPO = 0.35
-INTERVALO_MAXIMO_ESTABILIDAD = 0.35
+
+# Tiempo máximo permitido entre detecciones consecutivas
+# para mantener la misma secuencia de estabilidad.
+# Antes: 0.35 segundos. Ahora: 0.60 segundos.
+# Ayuda cuando el procesamiento de las cámaras se retrasa.
+INTERVALO_MAXIMO_ESTABILIDAD = 0.60
+
+# Tiempo durante el cual se tolera perder temporalmente
+# la detección del cuerpo antes de invalidar su seguimiento.
 TIEMPO_MAXIMO_PERDIDA_CUERPO = 3.0
+
+# Duración del aviso relacionado con el levantamiento.
 DURACION_AVISO_LEVANTAMIENTO = 2
+
+# Tiempo máximo durante el cual se mantiene una postura
+# anterior cuando las nuevas detecciones son desconocidas.
 TIEMPO_MAXIMO_DESCONOCIDO = 3.0
 
-# Reconocimiento facial: valores iniciales sujetos a validación en campo.
-FPS_RECONOCIMIENTO_FACIAL = 1
+
+# ============================================================
+# CONFIGURACIÓN DEL RECONOCIMIENTO FACIAL
+# ============================================================
+
+# Frecuencia objetivo de reconocimiento facial.
+# Antes: 1. Ahora: 2.
+# IMPORTANTE: este valor solo tendrá efecto si la función
+# de reconocimiento facial realmente utiliza esta variable.
+FPS_RECONOCIMIENTO_FACIAL = 2
+
+# Similitud mínima para considerar que un rostro coincide
+# con el paciente registrado.
 UMBRAL_SIMILITUD_FACIAL = 0.55
+
+# Cantidad de coincidencias faciales necesarias para
+# confirmar la identidad del paciente.
 COINCIDENCIAS_FACIALES_REQUERIDAS = 3
+
+# Tiempo durante el cual se conserva la identidad del paciente
+# cuando su rostro deja de ser visible temporalmente.
 TIEMPO_RETENCION_IDENTIDAD = 8.0
+
+# Diferencia mínima de similitud entre dos posibles identidades
+# para evitar reconocer al paciente equivocado.
 MARGEN_AMBIGUEDAD_FACIAL = 0.08
 
-# Si YOLO no detecta ninguna persona durante este intervalo,
-# se considera que la habitación quedó sin personas y se inicia
-# un nuevo ciclo de identificación desde cero.
+
+# ============================================================
+# CONTROL DE AUSENCIA Y ASOCIACIÓN DEL PACIENTE
+# ============================================================
+
+# Si YOLO no detecta ninguna persona durante 2 segundos,
+# se considera que la habitación quedó vacía y se inicia
+# un nuevo ciclo de identificación.
 TIEMPO_AUSENCIA_PARA_REINICIAR = 2.0
-# Si siguen apareciendo acompañantes, pero no se consigue asociar ningún
-# cuerpo al paciente identificado, también se invalida el ciclo anterior.
+
+# Si hay personas visibles, pero ninguna puede asociarse
+# con el paciente identificado durante 3 segundos,
+# se invalida la asociación anterior.
 TIEMPO_MAXIMO_SIN_ASOCIACION_PACIENTE = 3.0
 
-# Cuando no hay paciente identificado, acelerar los intentos faciales
-# para que una persona que ingresa pueda ser reconocida sin esperar 1 s.
+
+# ============================================================
+# INTERVALO DE RECONOCIMIENTO SIN IDENTIDAD
+# ============================================================
+
+# Cuando todavía no se identifica al paciente, se intenta
+# reconocer su rostro aproximadamente cada 0.35 segundos.
+# Se conserva este valor para no aumentar innecesariamente
+# el consumo de procesamiento.
 INTERVALO_RECONOCIMIENTO_SIN_IDENTIDAD = 0.35
+
 
 CAMARAS_CONFIG = {}
 reconocedor_facial = None

@@ -2,6 +2,73 @@ from django.core.serializers import python
 from django.db import models
 
 
+class RegistrosFacialesUsuarios(models.Model):
+
+    id_registro_facial_usuario = models.AutoField(
+        primary_key=True
+    )
+
+    id_usuario = models.OneToOneField(
+        'Usuarios',
+        models.CASCADE,
+        db_column='id_usuario',
+        related_name='registro_facial'
+    )
+
+    embedding = models.BinaryField()
+
+    activo = models.BooleanField(default=True)
+
+    fecha_registro = models.DateTimeField()
+
+    fecha_actualizacion = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'registros_faciales_usuarios'
+
+
+class EstadoPosturaPaciente(models.Model):
+    id_estado_postura = models.AutoField(primary_key=True)
+
+    id_paciente = models.OneToOneField(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente',
+        related_name='estado_postura'
+    )
+
+    id_camara = models.ForeignKey(
+        'Camaras',
+        models.DO_NOTHING,
+        db_column='id_camara'
+    )
+
+    id_habitacion = models.ForeignKey(
+        'Habitaciones',
+        models.DO_NOTHING,
+        db_column='id_habitacion'
+    )
+
+    postura_actual = models.CharField(max_length=30)
+
+    confianza = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        blank=True,
+        null=True
+    )
+
+    fecha_actualizacion = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'estado_postura_paciente'
+
+    def __str__(self):
+        return f'Paciente {self.id_paciente_id} - {self.postura_actual}'
+
+        
 class Actividades(models.Model):
     id_actividad = models.AutoField(primary_key=True)
     id_bitacora = models.ForeignKey('Bitacora', models.DO_NOTHING, db_column='id_bitacora', blank=True, null=True)
@@ -357,7 +424,7 @@ class DocumentosHistoriaClinica(models.Model):
     class Meta:
         managed = False
         db_table = 'documentos_historia_clinica'
-        
+
 class ImagenesEventoAdverso(models.Model):
     id_imagen = models.AutoField(primary_key=True)
     id_evento_adverso = models.ForeignKey(EventosAdversos, models.DO_NOTHING, db_column='id_evento_adverso', blank=True, null=True)
@@ -470,58 +537,7 @@ class FormulacionMedicamentos(models.Model):
         managed = False
         db_table = 'formulacion_medicamentos'
 
-class SeguimientoAdministracionMedicamento(models.Model):
 
-    class Estado(models.TextChoices):
-        PENDIENTE = 'PENDIENTE', 'Pendiente'
-        ADMINISTRADO = 'ADMINISTRADO', 'Administrado'
-        NO_ADMINISTRADO = 'NO_ADMINISTRADO', 'No administrado'
-
-    id_seguimiento = models.AutoField(
-        primary_key=True
-    )
-
-    id_formulacion = models.ForeignKey(
-        'FormulacionMedicamentos',
-        models.DO_NOTHING,
-        db_column='id_formulacion'
-    )
-
-    fecha_hora_programada = models.DateTimeField()
-
-    estado = models.CharField(
-        max_length=20,
-        choices=Estado.choices
-    )
-
-    motivo_no_administracion = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True
-    )
-
-    fecha_hora_registro = models.DateTimeField(
-        blank=True,
-        null=True
-    )
-
-    id_usuario = models.ForeignKey(
-        'Usuarios',
-        models.DO_NOTHING,
-        db_column='id_usuario'
-    )
-
-    id_aplicacion = models.ForeignKey(
-        'AplicacionMedicamento',
-        models.DO_NOTHING,
-        db_column='id_aplicacion',
-        blank=True,
-        null=True
-    )
-
-    class Meta:
-        managed = False
-        db_table = 'seguimiento_administracion_medicamento'
 class MovimientoMedicamento(models.Model):
     id_movimiento = models.AutoField(primary_key=True)
     id_inventario = models.ForeignKey(Inventario, models.DO_NOTHING, db_column='id_inventario', blank=True, null=True)
@@ -585,7 +601,7 @@ class Pacientes(models.Model):
     class Meta:
         managed = False
         db_table = 'pacientes'
-         
+
 class RegistrosFaciales(models.Model):
     id_registro_facial = models.AutoField(primary_key=True)
 
@@ -959,6 +975,9 @@ class Sedes(models.Model):
     estado = models.BooleanField()
     fecha_registro = models.DateTimeField()
     id_fundacion = models.ForeignKey('Fundaciones', models.DO_NOTHING, db_column='id_fundacion', blank=True, null=True)
+    longitud = models.FloatField(blank=True, null=True)
+    radio_verificacion = models.FloatField(blank=True, null=True)
+    latitud = models.FloatField(blank=True, null=True)
 
     class Meta:
         managed = False
@@ -1081,6 +1100,59 @@ class ControlesPeriodicosBitacora(models.Model):
     class Meta:
         managed = False
         db_table = 'controles_periodicos_bitacora'
+
+class SeguimientoAdministracionMedicamento(models.Model):
+
+    class Estado(models.TextChoices):
+        PENDIENTE = 'PENDIENTE', 'Pendiente'
+        ADMINISTRADO = 'ADMINISTRADO', 'Administrado'
+        NO_ADMINISTRADO = 'NO_ADMINISTRADO', 'No administrado'
+
+    id_seguimiento = models.AutoField(
+        primary_key=True
+    )
+
+    id_formulacion = models.ForeignKey(
+        'FormulacionMedicamentos',
+        models.DO_NOTHING,
+        db_column='id_formulacion'
+    )
+
+    fecha_hora_programada = models.DateTimeField()
+
+    estado = models.CharField(
+        max_length=20,
+        choices=Estado.choices
+    )
+
+    motivo_no_administracion = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True
+    )
+
+    fecha_hora_registro = models.DateTimeField(
+        blank=True,
+        null=True
+    )
+
+    id_usuario = models.ForeignKey(
+        'Usuarios',
+        models.DO_NOTHING,
+        db_column='id_usuario'
+    )
+
+    id_aplicacion = models.ForeignKey(
+        'AplicacionMedicamento',
+        models.DO_NOTHING,
+        db_column='id_aplicacion',
+        blank=True,
+        null=True
+    )
+
+    class Meta:
+        managed = False
+        db_table = 'seguimiento_administracion_medicamento'
 
 class ConfiguracionControlesPeriodicos(models.Model):
     id_configuracion = models.AutoField(primary_key=True)

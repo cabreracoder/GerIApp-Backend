@@ -6,14 +6,33 @@ from rest_framework.decorators import (
     parser_classes,
     permission_classes,
     action,
+    authentication_classes,
+    throttle_classes,
 )
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from .throttling import (
+    LoginFacialThrottle,
+    registrar_fallo_login_facial
+)
 from rest_framework.parsers import (
     MultiPartParser,
     FormParser,
     JSONParser,
 )
+
+#notificaciones de eventos IA estas son las importaciones#
+from rest_framework import viewsets
+from django.utils import timezone
+from django.db import transaction
+
+from .models import (
+    EventosIa,
+    Notificaciones,
+    AsignacionPacienteCuidador
+)
+from .serializers import EventosIaSerializer
+from .notificaciones_utils import enviar_notificacion_fcm
 
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
@@ -35,6 +54,7 @@ from urllib.parse import urlparse
 import base64
 import logging
 import os
+import numpy as np
 import random
 import re
 
@@ -57,7 +77,6 @@ from google.auth.transport import requests
 
 from livekit import api
 
-
 # ==========================================
 # SERVICIOS DEL PROYECTO
 # ==========================================
@@ -68,7 +87,10 @@ from servicios.cloudinary_service import (
 )
 
 from reconocimiento_facial.reconocedor import ReconocedorFacial
-from reconocimiento_facial.cifrado import cifrar_embedding
+from reconocimiento_facial.cifrado import (
+    cifrar_embedding,
+    descifrar_embedding
+)
 from core.services.gemini_service import analizar_pdf_geriatrico
 
 
@@ -147,7 +169,9 @@ from .models import (
     ConfiguracionControlesPeriodicos,
     ControlesPeriodicosBitacora,
     RegistrosFaciales,
-    DocumentosHistoriaClinica, 
+    DocumentosHistoriaClinica,
+    RegistrosFacialesUsuarios,
+    EstadoPosturaPaciente,
 )
 
 
@@ -218,6 +242,8 @@ from .serializers import (
     ControlesPeriodicosBitacoraSerializer,
     RegistrosFacialesSerializer,
     DocumentosHistoriaClinicaSerializer,
+    ImagenFacialSerializer,
+    EstadoPosturaPacienteSerializer,
 )
 
 
@@ -226,7 +252,6 @@ from .serializers import (
 # ==========================================
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # REGISTRO DE USUARIO
@@ -276,7 +301,7 @@ def registro_usuario(request):
                     'rol': usuario.id_rol.nombre if usuario.id_rol else None,
                     'estado': usuario.estado,
                     'foto': usuario.foto
-                    
+
                 }
             },
             status=status.HTTP_200_OK
@@ -357,6 +382,7 @@ def login_usuario(request):
                 'correo': usuario.correo,
                 'id_rol': usuario.id_rol_id,
                 'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+                'id_sede': usuario.id_sede_id,
                 'estado': usuario.estado,
 
                 # URL de la foto almacenada en Cloudinary
@@ -442,6 +468,411 @@ def login_google(request):
             },
             status=status.HTTP_400_BAD_REQUEST
         )
+
+# ============================================================
+# REGISTRO FACIAL DE USUARIOS
+# ============================================================
+
+@api_view(['POST'])
+@authentication_classes([GeriAppTokenAuthentication])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def registrar_rostro_usuario(request):
+
+    usuario = request.user
+
+    logger.info(
+        "Iniciando registro facial para usuario %s",
+        usuario.id_usuario
+    )
+
+    # 1. Verificar estado del usuario
+    if not getattr(usuario, 'estado', False):
+        return Response(
+            {'error': 'El usuario se encuentra inactivo.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # 2. Validar fotografía
+    serializer = ImagenFacialSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        logger.warning(
+            "Fotografía inválida: %s",
+            serializer.errors
+        )
+
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    fotografia = serializer.validated_data['imagen']
+
+    try:
+        # 3. Inicializar reconocedor
+        logger.info("Inicializando reconocedor facial...")
+
+        reconocedor = ReconocedorFacial()
+
+        # 4. Detectar rostro y generar embedding
+        logger.info("Procesando fotografía...")
+
+        resultados = reconocedor.procesar_imagen(fotografia)
+
+        logger.info(
+            "Cantidad de rostros detectados: %s",
+            len(resultados)
+        )
+
+        if len(resultados) == 0:
+            return Response(
+                {'error': 'No se detectó ningún rostro.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if len(resultados) != 1:
+            return Response(
+                {'error': 'La imagen debe contener un único rostro.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Obtener embedding
+        logger.info("Convirtiendo embedding...")
+
+        embedding = np.asarray(
+            resultados[0]['embedding'],
+            dtype=np.float32
+        ).reshape(-1)
+
+        logger.info(
+            "Dimensiones del embedding generado: %s",
+            embedding.size
+        )
+
+        if (
+            embedding.size != 128
+            or not np.isfinite(embedding).all()
+            or np.linalg.norm(embedding) == 0
+        ):
+            logger.error(
+                "Embedding inválido. Dimensiones: %s",
+                embedding.size
+            )
+
+            return Response(
+                {
+                    'error': 'El embedding facial generado no es válido.',
+                    'dimensiones': int(embedding.size)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 6. Cifrar embedding
+        logger.info("Cifrando embedding facial...")
+
+        embedding_cifrado = cifrar_embedding(
+            embedding.tobytes()
+        )
+
+        logger.info("Embedding cifrado correctamente.")
+
+        # 7. Guardar en PostgreSQL
+        ahora = timezone.now()
+
+        logger.info(
+            "Guardando registro facial del usuario %s...",
+            usuario.id_usuario
+        )
+
+        with transaction.atomic():
+
+            registro = RegistrosFacialesUsuarios.objects.filter(
+                id_usuario_id=usuario.id_usuario
+            ).first()
+
+            if registro:
+
+                registro.embedding = embedding_cifrado
+                registro.activo = True
+                registro.fecha_actualizacion = ahora
+
+                registro.save(
+                    update_fields=[
+                        'embedding',
+                        'activo',
+                        'fecha_actualizacion'
+                    ]
+                )
+
+                mensaje = 'Rostro actualizado correctamente.'
+                codigo = status.HTTP_200_OK
+
+            else:
+
+                RegistrosFacialesUsuarios.objects.create(
+                    id_usuario_id=usuario.id_usuario,
+                    embedding=embedding_cifrado,
+                    activo=True,
+                    fecha_registro=ahora,
+                    fecha_actualizacion=ahora
+                )
+
+                mensaje = 'Rostro registrado correctamente.'
+                codigo = status.HTTP_201_CREATED
+
+        logger.info(
+            "Registro facial completado para usuario %s.",
+            usuario.id_usuario
+        )
+
+        return Response(
+            {'mensaje': mensaje},
+            status=codigo
+        )
+
+    except (FileNotFoundError, TypeError, ValueError) as error:
+
+        logger.exception(
+            "Error de procesamiento facial para usuario %s: %s",
+            usuario.id_usuario,
+            error
+        )
+
+        return Response(
+            {
+                'error': 'No fue posible procesar la fotografía enviada.'
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Error inesperado al registrar el rostro del usuario %s.",
+            usuario.id_usuario
+        )
+
+        return Response(
+            {
+                'error': 'No fue posible registrar el rostro.'
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+# ============================================================
+# CONSULTAR ESTADO DEL REGISTRO FACIAL
+# ============================================================
+
+@api_view(['GET'])
+@authentication_classes([GeriAppTokenAuthentication])
+@permission_classes([IsAuthenticated])
+def consultar_estado_rostro(request):
+
+    usuario = request.user
+
+    registro = RegistrosFacialesUsuarios.objects.filter(
+        id_usuario_id=usuario.id_usuario,
+        activo=True
+    ).exists()
+
+    return Response(
+        {
+            'registrado': registro,
+            'mensaje': (
+                'El usuario tiene un rostro registrado.'
+                if registro
+                else 'El usuario no tiene un rostro registrado.'
+            )
+        },
+        status=status.HTTP_200_OK
+    )
+
+    
+# ============================================================
+# LOGIN MEDIANTE RECONOCIMIENTO FACIAL
+# ============================================================
+
+@api_view(['POST'])
+@authentication_classes([])
+@permission_classes([AllowAny])
+@parser_classes([MultiPartParser, FormParser])
+@throttle_classes([LoginFacialThrottle])
+def login_facial(request):
+    """Autentica al usuario mediante reconocimiento facial."""
+
+    serializer = ImagenFacialSerializer(data=request.data)
+
+    if not serializer.is_valid():
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Obtener el umbral configurado en las variables de entorno.
+    umbral_configurado = os.getenv(
+        'UMBRAL_SIMILITUD_FACIAL_USUARIOS'
+    )
+
+    if not umbral_configurado:
+        return Response(
+            {
+                'error': 'El reconocimiento facial no está configurado correctamente.'
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    try:
+        umbral = float(umbral_configurado)
+
+        if not np.isfinite(umbral) or not -1.0 <= umbral <= 1.0:
+            raise ValueError
+
+    except (TypeError, ValueError):
+        return Response(
+            {'error': 'El umbral de reconocimiento facial no es válido.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    try:
+        reconocedor = ReconocedorFacial()
+
+        resultados = reconocedor.procesar_imagen(
+            serializer.validated_data['imagen']
+        )
+
+        # Debe existir exactamente un rostro.
+        if len(resultados) != 1:
+            return registrar_fallo_login_facial(request)
+
+        embedding_capturado = np.asarray(
+            resultados[0]['embedding'],
+            dtype=np.float32
+        ).reshape(-1)
+
+        if (
+            embedding_capturado.size != 128
+            or not np.isfinite(embedding_capturado).all()
+            or np.linalg.norm(embedding_capturado) == 0
+        ):
+            return registrar_fallo_login_facial(request)
+
+        # Consultar registros faciales activos de usuarios activos.
+        registros = (
+            RegistrosFacialesUsuarios.objects
+            .filter(
+                activo=True,
+                id_usuario__estado=True
+            )
+            .select_related('id_usuario')
+        )
+
+        mejor_usuario = None
+        mejor_similitud = -1.0
+
+        for registro in registros:
+
+            try:
+                embedding_bytes = descifrar_embedding(
+                    bytes(registro.embedding)
+                )
+
+                embedding_guardado = np.frombuffer(
+                    embedding_bytes,
+                    dtype=np.float32
+                )
+
+                if (
+                    embedding_guardado.size != 128
+                    or not np.isfinite(embedding_guardado).all()
+                    or np.linalg.norm(embedding_guardado) == 0
+                ):
+                    continue
+
+                similitud = reconocedor.generador.comparar_embeddings(
+                    embedding_capturado,
+                    embedding_guardado
+                )
+
+                similitud = float(similitud)
+
+                if not np.isfinite(similitud):
+                    continue
+
+                if similitud > mejor_similitud:
+                    mejor_similitud = similitud
+                    mejor_usuario = registro.id_usuario
+
+            except Exception:
+                logger.exception(
+                    'Error al comparar el registro facial %s.',
+                    registro.id_registro_facial_usuario
+                )
+                continue
+
+        # Registrar información de comparación para diagnóstico.
+        logger.info(
+            "LOGIN FACIAL | Usuario encontrado: %s | "
+            "Similitud obtenida: %.4f | Umbral configurado: %.4f",
+            mejor_usuario.id_usuario if mejor_usuario else None,
+            mejor_similitud,
+            umbral
+        )
+
+        # Validar si se encontró una coincidencia suficiente.
+        if mejor_usuario is None or mejor_similitud < umbral:
+            logger.warning(
+                "LOGIN FACIAL RECHAZADO | Similitud: %.4f | Umbral: %.4f",
+                mejor_similitud,
+                umbral
+            )
+
+            return registrar_fallo_login_facial(request)
+
+        usuario = mejor_usuario
+
+        # Generar el mismo token utilizado en el login tradicional.
+        return Response(
+            {
+                'mensaje': 'Inicio de sesión exitoso.',
+                'token': crear_token_usuario(usuario),
+                'usuario': {
+                    'id_usuario': usuario.id_usuario,
+                    'nombres': usuario.nombres,
+                    'apellidos': usuario.apellidos,
+                    'correo': usuario.correo,
+                    'id_rol': usuario.id_rol_id,
+                    'rol': usuario.id_rol.nombre if usuario.id_rol else None,
+                    'id_sede': usuario.id_sede_id,
+                    'estado': usuario.estado,
+                    'foto': usuario.foto
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+    except (FileNotFoundError, TypeError, ValueError) as error:
+        logger.warning(
+            'Error procesando imagen del login facial: %s',
+            error
+        )
+
+        return Response(
+            {'error': 'No fue posible procesar la fotografía enviada.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    except Exception:
+        logger.exception(
+            'Error durante el inicio de sesión facial.'
+        )
+
+        return Response(
+            {'error': 'No fue posible realizar el reconocimiento facial.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+        
 # ============================================================
 # CAMBIAR CONTRASEÑA
 # ============================================================
@@ -1020,7 +1451,6 @@ class RolesViewSet(viewsets.ModelViewSet):
     serializer_class = RolesSerializer
     permission_classes = [EsSuperadministradorOMetodoLectura]
 
-
 class SeguimientoAdministracionMedicamentoViewSet(viewsets.ModelViewSet):
     queryset = SeguimientoAdministracionMedicamento.objects.all()
     serializer_class = SeguimientoAdministracionMedicamentoSerializer
@@ -1064,7 +1494,7 @@ class SeguimientoAdministracionMedicamentoViewSet(viewsets.ModelViewSet):
         # Otros roles: únicamente sus propios registros
         return SeguimientoAdministracionMedicamento.objects.filter(
             id_usuario=usuario
-        )       
+        )
 
 
 class UsuariosViewSet(viewsets.ModelViewSet):
@@ -1126,11 +1556,17 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                 id_sede_id=sede_id
             )
 
-        # Encargado: puede consultar su perfil y los cuidadores.
+        # Encargado: puede consultar su perfil
+        # y los cuidadores de su propia sede.
         if rol_id == 2:
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if sede_id is None:
+                return Usuarios.objects.none()
+
             return Usuarios.objects.filter(
                 Q(id_usuario=usuario.id_usuario)
-                | Q(id_rol_id=3)
+                | Q(id_rol_id=3, id_sede_id=sede_id)
             ).distinct()
 
         # Los demás roles solo consultan su propio perfil.
@@ -1141,6 +1577,196 @@ class UsuariosViewSet(viewsets.ModelViewSet):
     # =====================================================
     # REAR USUARIO
     # =====================================================
+
+    # =====================================================
+    # CREAR ENCARGADO O CUIDADOR POR ADMINISTRADOR DE SEDE
+    # =====================================================
+
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='crear-usuario-sede',
+        permission_classes=[IsAuthenticated],
+        parser_classes=[
+            parsers.MultiPartParser,
+            parsers.FormParser,
+            parsers.JSONParser,
+        ]
+    )
+    @transaction.atomic
+    def crear_usuario_sede(self, request):
+
+        # 1. Validar que quien registra sea administrador
+        rol_actual = self._obtener_id_rol(request.user)
+
+        if rol_actual != 1:
+            return Response(
+                {
+                    "error": "Solo el administrador de sede puede crear encargados y cuidadores."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # 2. Obtener automáticamente la sede del administrador
+        sede_id = getattr(request.user, 'id_sede_id', None)
+
+        if not sede_id:
+            return Response(
+                {
+                    "error": "El administrador no tiene una sede asignada."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Validar datos obligatorios
+        campos_obligatorios = [
+            'id_rol',
+            'tipo_documento',
+            'numero_documento',
+            'nombres',
+            'apellidos',
+            'correo',
+        ]
+
+        for campo in campos_obligatorios:
+            valor = request.data.get(campo)
+
+            if valor is None or not str(valor).strip():
+                return Response(
+                    {
+                        "error": f"El campo {campo} es obligatorio."
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # 4. Validar rol solicitado
+        try:
+            rol_id = int(request.data.get('id_rol'))
+        except (TypeError, ValueError):
+            return Response(
+                {"error": "El rol seleccionado no es válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if rol_id not in (2, 3):
+            return Response(
+                {
+                    "error": "Solo puedes crear usuarios con rol Encargado o Cuidador."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        rol = Roles.objects.filter(
+            id_rol=rol_id,
+            estado=True
+        ).first()
+
+        if not rol:
+            return Response(
+                {"error": "El rol seleccionado no existe o está inactivo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 5. Obtener y limpiar información
+        tipo_documento = str(
+            request.data.get('tipo_documento')
+        ).strip()
+
+        numero_documento = str(
+            request.data.get('numero_documento')
+        ).strip()
+
+        nombres = str(request.data.get('nombres')).strip()
+        apellidos = str(request.data.get('apellidos')).strip()
+        correo = str(request.data.get('correo')).strip()
+
+        # 6. Verificar documentos duplicados
+        if Usuarios.objects.filter(
+            numero_documento=numero_documento
+        ).exists():
+            return Response(
+                {"error": "Este número de documento ya está registrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 7. Verificar correos duplicados
+        if Usuarios.objects.filter(
+            correo__iexact=correo
+        ).exists():
+            return Response(
+                {"error": "Este correo ya está registrado."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 8. Validar experiencia profesional
+        experiencia = request.data.get('experiencia')
+
+        if experiencia in ('', None):
+            experiencia = None
+        else:
+            try:
+                experiencia = int(experiencia)
+
+                if experiencia < 0:
+                    raise ValueError
+
+            except (TypeError, ValueError):
+                return Response(
+                    {"error": "La experiencia debe ser un número válido."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        # 9. Procesar fotografía
+        imagen = request.FILES.get('foto')
+        foto_url = None
+
+        if imagen:
+            resultado = subir_imagen(
+                imagen,
+                'geriapp/usuarios'
+            )
+            foto_url = resultado['secure_url']
+
+        # 10. Crear usuario
+        usuario = Usuarios.objects.create(
+            id_rol=rol,
+            id_sede_id=sede_id,
+            tipo_documento=tipo_documento,
+            numero_documento=numero_documento,
+            nombres=nombres,
+            apellidos=apellidos,
+            correo=correo,
+            telefono=request.data.get('telefono') or None,
+            fecha_ingreso=timezone.now(),
+            estado=True,
+            contrasena=None,
+            foto=foto_url
+        )
+
+        # 11. Crear perfil profesional para encargados y cuidadores
+        perfil = None
+
+        if rol_id in (2, 3):
+            perfil = PerfilProfesional.objects.create(
+                id_usuario=usuario,
+                especialidad=request.data.get('especialidad') or None,
+                licencia=request.data.get('licencia') or None,
+                experiencia=experiencia,
+                institucion=request.data.get('institucion') or None
+            )
+
+        # 12. Responder a Angular
+        return Response(
+            {
+                "mensaje": "Usuario creado correctamente.",
+                "usuario": UsuariosSerializer(usuario).data,
+                "perfil_profesional": (
+                    PerfilProfesionalSerializer(perfil).data
+                    if perfil else None
+                )
+            },
+            status=status.HTTP_201_CREATED
+        )
 
     def create(self, request, *args, **kwargs):
         """El registro debe pasar por el endpoint específico."""
@@ -1907,6 +2533,8 @@ class TipoEventoViewSet(viewsets.ModelViewSet):
     serializer_class = TipoEventoSerializer
 
 
+
+
 class TipoEmergenciaViewSet(viewsets.ModelViewSet):
     queryset = TipoEmergencia.objects.all()
     serializer_class = TipoEmergenciaSerializer
@@ -2532,9 +3160,9 @@ class FcmTokensViewSet(viewsets.ModelViewSet):
         )
 
 
-class CamasViewSet(viewsets.ModelViewSet): 
-    queryset = Camas.objects.all() 
-    serializer_class = CamasSerializer 
+class CamasViewSet(viewsets.ModelViewSet):
+    queryset = Camas.objects.all()
+    serializer_class = CamasSerializer
 
 class HabitacionesViewSet(viewsets.ModelViewSet):
 
@@ -3203,7 +3831,7 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        
+
 class ResumenCuidadosTurnoView(APIView):
 
     def get(self, request, id_asignacion):
@@ -3522,12 +4150,155 @@ class TiposEventoIaViewSet(viewsets.ModelViewSet):
     serializer_class = TiposEventoIaSerializer
 
 class EventosIaViewSet(viewsets.ModelViewSet):
+
     queryset = EventosIa.objects.all()
     serializer_class = EventosIaSerializer
+
+    def perform_create(self, serializer):
+
+        # 1. Guardar el evento IA
+        evento = serializer.save()
+
+        # 2. Obtener el paciente relacionado
+        paciente = evento.id_paciente
+
+        # 3. Buscar cuidadores con asignación activa
+        asignaciones = (
+            AsignacionPacienteCuidador.objects
+            .filter(
+                id_paciente=paciente,
+                estado__iexact="Activo"
+            )
+            .select_related("id_usuario")
+        )
+
+        # 4. Obtener cuidadores sin duplicarlos
+        cuidadores = {}
+
+        for asignacion in asignaciones:
+            usuario = asignacion.id_usuario
+
+            if usuario:
+                cuidadores[usuario.pk] = usuario
+
+        # Si no hay cuidadores activos, no hay destinatarios
+        if not cuidadores:
+            print(
+                f"EVENTO IA {evento.id_evento}: "
+                "No hay cuidadores activos asignados."
+            )
+            return
+
+        # 5. Obtener información del tipo de evento
+        tipo_evento = evento.id_tipo_evento
+
+        nombre_evento = tipo_evento.nombre
+        nivel_riesgo = tipo_evento.nivel_riesgo
+
+        titulo = "Alerta de inteligencia artificial"
+
+        mensaje = (
+            f"Se ha detectado un evento: {nombre_evento}. "
+            f"Nivel de riesgo: {nivel_riesgo}. "
+            "Ingresa a GerIApp para consultar los detalles."
+        )
+
+        # 6. Crear una sola notificación para el paciente
+        notificacion = Notificaciones.objects.create(
+            titulo=titulo,
+            tipo="EVENTO_IA",
+            mensaje=mensaje,
+            enviar_correo=False,
+            fecha_hora=timezone.now(),
+            estado=True,
+            id_paciente=paciente,
+            id_usuario=None
+        )
+
+        # 7. Enviar notificación push a cada cuidador
+        def enviar_push():
+
+            for usuario in cuidadores.values():
+
+                try:
+                    enviar_notificacion_fcm(
+                        notificacion,
+                        usuario
+                    )
+
+                except Exception as error:
+                    print(
+                        f"Error notificando al cuidador "
+                        f"{usuario.pk}: {error}"
+                    )
+
+        transaction.on_commit(enviar_push)
 
 class EvidenciasIaViewSet(viewsets.ModelViewSet):
     queryset = EvidenciasIa.objects.all()
     serializer_class = EvidenciasIaSerializer
+
+
+class EstadoPosturaPacienteViewSet(viewsets.ModelViewSet):
+
+    queryset = EstadoPosturaPaciente.objects.all()
+    serializer_class = EstadoPosturaPacienteSerializer
+
+    def get_queryset(self):
+        queryset = EstadoPosturaPaciente.objects.all()
+
+        id_paciente = self.request.query_params.get('id_paciente')
+
+        if id_paciente:
+            queryset = queryset.filter(
+                id_paciente_id=id_paciente
+            )
+
+        return queryset
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+
+        serializer = self.get_serializer(data=request.data)
+
+        serializer.is_valid(raise_exception=True)
+
+        datos = serializer.validated_data
+
+        paciente = datos['id_paciente']
+
+        estado_postura, creado = (
+            EstadoPosturaPaciente.objects.update_or_create(
+                id_paciente=paciente,
+                defaults={
+                    'id_camara': datos['id_camara'],
+                    'id_habitacion': datos['id_habitacion'],
+                    'postura_actual': datos['postura_actual'],
+                    'confianza': datos.get('confianza'),
+                    'fecha_actualizacion': timezone.now()
+                }
+            )
+        )
+
+        respuesta = self.get_serializer(estado_postura)
+
+        return Response(
+            {
+                'mensaje': (
+                    'Postura registrada correctamente.'
+                    if creado
+                    else 'Postura actualizada correctamente.'
+                ),
+                'creado': creado,
+                'estado_postura': respuesta.data
+            },
+            status=(
+                status.HTTP_201_CREATED
+                if creado
+                else status.HTTP_200_OK
+            )
+        )
+
 
 class ConfiguracionControlesPeriodicosViewSet(viewsets.ModelViewSet):
     queryset = ConfiguracionControlesPeriodicos.objects.all()
@@ -3875,7 +4646,7 @@ class RegistrosFacialesViewSet(
             },
             status=status.HTTP_200_OK
         )
-    
+
     # ==========================================
     # VALIDAR PACIENTE Y SEDE
     # ==========================================

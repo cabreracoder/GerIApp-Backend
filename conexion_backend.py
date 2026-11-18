@@ -20,6 +20,7 @@ API_URL = f"{BASE_URL}/eventos_ia/"
 API_SUBIR_IMAGEN = f"{BASE_URL}/subir-imagen/"
 API_EVIDENCIAS = f"{BASE_URL}/evidencias_ia/"
 API_PLANTILLAS = f"{BASE_URL}/registros_faciales/plantillas/"
+API_ESTADO_POSTURA = f"{BASE_URL}/estado_postura_paciente/"
 
 sesion = requests.Session()
 autenticado = False
@@ -192,6 +193,46 @@ def obtener_pacientes_activos():
         ) from error
 
 # ============================================================
+# OBTENER NOMBRE DE LOS PACIENTES
+# ============================================================
+
+def obtener_nombre_paciente(paciente):
+    """
+    Obtiene el nombre completo del paciente desde
+    la información recibida del backend.
+    """
+
+    nombres = (
+        paciente.get("nombres")
+        or paciente.get("nombre")
+        or paciente.get("primer_nombre")
+        or ""
+    )
+
+    apellidos = (
+        paciente.get("apellidos")
+        or paciente.get("apellido")
+        or paciente.get("primer_apellido")
+        or ""
+    )
+
+    nombre_completo = f"{nombres} {apellidos}".strip()
+
+    # Intentar obtener el nombre desde un objeto relacionado.
+    if not nombre_completo:
+        usuario = paciente.get("usuario", {})
+
+        if isinstance(usuario, dict):
+            nombre_completo = (
+                usuario.get("nombre_completo")
+                or usuario.get("nombre")
+                or ""
+            )
+
+    return nombre_completo or f"Paciente {paciente.get('id_paciente', '')}"
+
+
+# ============================================================
 # CONSULTAR Y DESCIFRAR PLANTILLAS FACIALES POR CÁMARA
 # ============================================================
 
@@ -199,30 +240,33 @@ def obtener_plantillas_faciales(id_camara):
     """
     Consulta las plantillas faciales asociadas a una cámara.
 
-    Los embeddings llegan cifrados desde Django.
-    Se descifran localmente y se convierten en vectores
-    NumPy de 128 dimensiones.
-
-    Retorna una lista de diccionarios:
-    [
-        {
-            "id_registro_facial": 1,
-            "id_paciente": 1,
-            "embedding": numpy.ndarray
-        }
-    ]
+    Descifra los embeddings y relaciona cada plantilla
+    con el nombre del paciente correspondiente.
     """
 
     asegurar_autenticacion()
 
     try:
+        # Obtener pacientes activos
+        pacientes = obtener_pacientes_activos()
+
+        # Crear un diccionario para relacionar ID y nombre
+        pacientes_por_id = {}
+
+        for paciente in pacientes:
+            id_paciente = paciente.get("id_paciente") or paciente.get("id")
+
+            if id_paciente is not None:
+                pacientes_por_id[str(id_paciente)] = (
+                    obtener_nombre_paciente(paciente)
+                )
+
         respuesta = sesion.get(
             API_PLANTILLAS,
             params={"id_camara": id_camara},
             timeout=(5, 30)
         )
 
-        # Renovar autenticación si el token expiró
         if respuesta.status_code == 401:
             autenticar_geriapp()
 
@@ -253,9 +297,14 @@ def obtener_plantillas_faciales(id_camara):
         for registro in registros:
 
             try:
-                # 1. Obtener los datos del paciente
                 id_paciente = registro.get("id_paciente")
                 id_registro = registro.get("id_registro_facial")
+
+                # Obtener nombre del paciente
+                nombre_paciente = pacientes_por_id.get(
+                    str(id_paciente),
+                    f"Paciente {id_paciente}"
+                )
 
                 embedding_base64 = registro.get(
                     "embedding_cifrado"
@@ -268,24 +317,24 @@ def obtener_plantillas_faciales(id_camara):
                     )
                     continue
 
-                # 2. Decodificar Base64
+                # Decodificar Base64
                 embedding_cifrado = base64.b64decode(
                     embedding_base64,
                     validate=True
                 )
 
-                # 3. Descifrar localmente con Fernet
+                # Descifrar embedding
                 embedding_bytes = descifrar_embedding(
                     embedding_cifrado
                 )
 
-                # 4. Convertir bytes a vector NumPy
+                # Convertir a vector NumPy
                 embedding = np.frombuffer(
                     embedding_bytes,
                     dtype=np.float32
                 ).copy()
 
-                # 5. Validar dimensiones
+                # Validar dimensiones
                 if embedding.shape != (128,):
                     print(
                         f"Dimensiones incorrectas en el registro "
@@ -293,7 +342,7 @@ def obtener_plantillas_faciales(id_camara):
                     )
                     continue
 
-                # 6. Validar valores numéricos
+                # Validar valores numéricos
                 if not np.all(np.isfinite(embedding)):
                     print(
                         f"Embedding inválido en el registro "
@@ -301,12 +350,17 @@ def obtener_plantillas_faciales(id_camara):
                     )
                     continue
 
-                # 7. Guardar plantilla descifrada
+                # Guardar plantilla con ID y nombre
                 plantillas_descifradas.append({
                     "id_registro_facial": id_registro,
                     "id_paciente": id_paciente,
+                    "nombre_paciente": nombre_paciente,
                     "embedding": embedding
                 })
+
+                print(
+                    f"Plantilla cargada: {nombre_paciente}"
+                )
 
             except (ValueError, TypeError) as error:
                 print(
@@ -317,8 +371,8 @@ def obtener_plantillas_faciales(id_camara):
 
         print(
             f"Cámara {id_camara}: "
-            f"{len(plantillas_descifradas)} plantillas faciales "
-            "descifradas correctamente."
+            f"{len(plantillas_descifradas)} plantillas "
+            "faciales descifradas correctamente."
         )
 
         return plantillas_descifradas
@@ -454,4 +508,96 @@ def registrar_evidencia_geriapp(id_evento, url, public_id):
     except (requests.exceptions.RequestException, ValueError, RuntimeError) as error:
         print("No se pudo registrar la evidencia.")
         print("Detalle:", error)
+        return None
+
+# ============================================================
+# ACTUALIZAR ESTADO DE POSTURA DEL PACIENTE
+# ============================================================
+
+
+def enviar_estado_postura_geriapp(
+    id_camara,
+    id_habitacion,
+    id_paciente,
+    postura_actual,
+    confianza
+):
+    """
+    Envía o actualiza la postura actual del paciente en GerIApp.
+    Se conserva un único registro por paciente.
+    """
+
+    equivalencias_postura = {
+        "ACOSTADA": "ACOSTADO",
+        "ACOSTADO": "ACOSTADO",
+        "SENTADA": "SENTADO",
+        "SENTADO": "SENTADO",
+        "DE PIE": "DE_PIE",
+        "DE_PIE": "DE_PIE",
+        "SIN PERSONA": "SIN_PERSONA",
+        "SIN_PERSONA": "SIN_PERSONA",
+        "DESCONOCIDO": "DESCONOCIDO"
+    }
+
+    postura_normalizada = equivalencias_postura.get(
+        str(postura_actual).strip().upper()
+    )
+
+    if postura_normalizada is None:
+        print(f"[POSTURA] Postura no válida: {postura_actual}")
+        return None
+
+    estado = {
+        "id_camara": id_camara,
+        "id_habitacion": id_habitacion,
+        "id_paciente": id_paciente,
+        "postura_actual": postura_normalizada,
+        "confianza": round(float(confianza) * 100, 2)
+    }
+
+    try:
+        asegurar_autenticacion()
+
+        print("\n========== ENVÍO DE POSTURA ==========")
+        print("URL:", API_ESTADO_POSTURA)
+        print("Datos:", estado)
+
+        respuesta = sesion.post(
+            API_ESTADO_POSTURA,
+            json=estado,
+            timeout=(5, 15)
+        )
+
+        if respuesta.status_code == 401:
+            print("[POSTURA] Token vencido. Renovando autenticación.")
+
+            autenticar_geriapp()
+
+            respuesta = sesion.post(
+                API_ESTADO_POSTURA,
+                json=estado,
+                timeout=(5, 15)
+            )
+
+        print("[POSTURA] Código HTTP:", respuesta.status_code)
+        print("[POSTURA] Respuesta:", respuesta.text[:1000])
+
+        if respuesta.status_code in (200, 201):
+            print(
+                f"[POSTURA] Actualización exitosa: "
+                f"Paciente {id_paciente} - {postura_normalizada}"
+            )
+            return respuesta.json()
+
+        print("[POSTURA] ERROR: Django no aceptó la actualización.")
+        return None
+
+    except (
+        requests.exceptions.RequestException,
+        ValueError,
+        RuntimeError,
+        TypeError
+    ) as error:
+        print("[POSTURA] No se pudo enviar el estado.")
+        print("[POSTURA] Detalle:", error)
         return None

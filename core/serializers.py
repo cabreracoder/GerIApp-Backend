@@ -66,13 +66,21 @@ from .models import (
     ControlesPeriodicosBitacora,
     RegistrosFaciales,
     DocumentosHistoriaClinica,
+    EstadoPosturaPaciente,
 )
+
+class ImagenFacialSerializer(serializers.Serializer):
+
+    imagen = serializers.ImageField(
+        required=True,
+        allow_empty_file=False
+    )
 
 class DocumentosHistoriaClinicaSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentosHistoriaClinica
         fields = '__all__'
-        
+
 class RegistrosFacialesSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistrosFaciales
@@ -92,6 +100,8 @@ class RegistrosFacialesSerializer(serializers.ModelSerializer):
             'fecha_registro',
             'fecha_actualizacion'
         ]
+
+
 class PacientesSerializer(serializers.ModelSerializer):
     # Permite recibir una imagen desde FormData
     foto = serializers.CharField(
@@ -123,9 +133,7 @@ class PacientesSerializer(serializers.ModelSerializer):
 
         return super().to_internal_value(data)
 
-    # =====================================================
     # VALIDAR HABITACIÓN Y CAMA DEL PACIENTE
-    # =====================================================
 
     def validate(self, attrs):
 
@@ -361,7 +369,7 @@ class UsuariosSerializer(serializers.ModelSerializer):
         instance.save()
 
         return instance
-    
+
 
 class DocumentosSerializer(serializers.ModelSerializer):
 
@@ -508,24 +516,18 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
 
-        # =====================================================
         # OBTENER NUEVO ESTADO
-        # =====================================================
 
         nueva_leida = validated_data.get(
             'leida',
             instance.leida
         )
 
-        # =====================================================
         # ACTUALIZAR ESTADO
-        # =====================================================
 
         instance.leida = nueva_leida
 
-        # =====================================================
         # ACTUALIZAR FECHA DE LECTURA
-        # =====================================================
 
         if nueva_leida:
 
@@ -538,9 +540,7 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
             # Si vuelve a no leída, quitar fecha
             instance.fecha_lectura = None
 
-        # =====================================================
         # ACTUALIZAR OTROS CAMPOS
-        # =====================================================
 
         for atributo, valor in validated_data.items():
 
@@ -555,9 +555,7 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
                     valor
                 )
 
-        # =====================================================
         # GUARDAR
-        # =====================================================
 
         instance.save()
 
@@ -732,7 +730,7 @@ class EventosAdversosSerializer(serializers.ModelSerializer):
     class Meta:
         model = EventosAdversos
         fields = '__all__'
-        
+
     def create(self, validated_data):
 
         evento = EventosAdversos.objects.create(**validated_data)
@@ -781,8 +779,8 @@ class EventosAdversosSerializer(serializers.ModelSerializer):
                 id_usuario=usuario
             )
 
-        return evento   
-        
+        return evento
+
 
 
 class ImagenesEventoAdversoSerializer(serializers.ModelSerializer):
@@ -892,19 +890,48 @@ class CamarasSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class TiposEventoIaSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = TiposEventoIa
         fields = '__all__'
 
 class EventosIaSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = EventosIa
         fields = '__all__'
 
+
+class EstadoPosturaPacienteSerializer(serializers.ModelSerializer):
+
+    # Permite reutilizar el paciente aunque ya tenga
+    # un registro en estado_postura_paciente.
+    id_paciente = serializers.PrimaryKeyRelatedField(
+        queryset=Pacientes.objects.all(),
+        validators=[]
+    )
+
+    class Meta:
+        model = EstadoPosturaPaciente
+
+        fields = [
+            'id_estado_postura',
+            'id_paciente',
+            'id_camara',
+            'id_habitacion',
+            'postura_actual',
+            'confianza',
+            'fecha_actualizacion',
+        ]
+
+        read_only_fields = [
+            'id_estado_postura',
+            'fecha_actualizacion',
+        ]
+
+        
 class EvidenciasIaSerializer(serializers.ModelSerializer):
-    
+
     class Meta:
         model = EvidenciasIa
         fields = '__all__'
@@ -956,8 +983,8 @@ class ControlesPeriodicosBitacoraSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ControlesPeriodicosBitacora
-        fields = '__all__'  
-        
+        fields = '__all__'
+
 class CitasSerializer(serializers.ModelSerializer):
 
     class Meta:
@@ -1089,7 +1116,7 @@ class RegistroUsuarioSerializer(serializers.ModelSerializer):
         return usuario
 #Aqui lo que estamos haciendo es crear un serializer para cambiar la contraseña del usuario,
 #este serializer recibe la contraseña actual, la nueva contraseña y la confirmación de la
-#nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación. 
+#nueva contraseña, si las contraseñas nuevas no coinciden se lanza un error de validación.
 
 class CambiarContrasenaSerializer(serializers.Serializer):
     contrasena_actual = serializers.CharField(

@@ -123,6 +123,20 @@ DATABASES = {
         'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
+# ==========================================
+# CACHÉ PERSISTENTE PARA AUTENTICACIÓN
+# ==========================================
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'facial_login_cache',
+        'TIMEOUT': 900,
+        'OPTIONS': {
+            'MAX_ENTRIES': 10000,
+        }
+    }
+}
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
@@ -211,4 +225,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+
+    # Configuración de identificación de IP detrás del proxy
+    'NUM_PROXIES': 3,
 }

@@ -52,6 +52,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 import base64
+import io
 import logging
 import os
 import numpy as np
@@ -84,6 +85,7 @@ from livekit import api
 from servicios.cloudinary_service import (
     subir_imagen,
     eliminar_imagen,
+    subir_documento,
 )
 
 from reconocimiento_facial.reconocedor import ReconocedorFacial
@@ -1245,30 +1247,85 @@ class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        documento = serializer.save()
 
-        respuesta = dict(serializer.data)
         archivo_subido = request.FILES.get('archivo')
+        if not archivo_subido:
+            return Response(
+                {'error': 'Debe adjuntar un archivo en el campo "archivo".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        if archivo_subido and _es_archivo_pdf(archivo_subido, documento.nombre_archivo):
+        if not all([
+            settings.CLOUDINARY_CLOUD_NAME,
+            settings.CLOUDINARY_API_KEY,
+            settings.CLOUDINARY_API_SECRET,
+        ]):
+            return Response(
+                {
+                    'error': (
+                        'Faltan credenciales de Cloudinary en el servidor '
+                        '(CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET).'
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        archivo_subido.seek(0)
+        archivo_bytes = archivo_subido.read()
+        nombre_archivo = (
+            getattr(archivo_subido, 'name', '')
+            or serializer.validated_data.get('nombre_archivo')
+            or 'documento.pdf'
+        )
+        es_pdf = _es_archivo_pdf(archivo_subido, nombre_archivo)
+
+        # Analizar en memoria antes de la subida remota para evitar fallos leyendo desde URL
+        rangos_json = None
+        ia_error = None
+        if es_pdf:
             try:
-                with documento.archivo.open('rb') as pdf_file:
-                    rangos_json = analizar_pdf_geriatrico(pdf_file)
-                _guardar_rangos_historia_clinica(
-                    documento.id_paciente,
-                    rangos_json,
-                )
-                respuesta['rangos_vitales_json'] = rangos_json
+                rangos_json = analizar_pdf_geriatrico(io.BytesIO(archivo_bytes))
             except Exception as exc:
                 logger.exception(
                     'Error analizando PDF clínico para paciente %s: %s',
-                    documento.id_paciente_id,
+                    serializer.validated_data.get('id_paciente'),
                     exc,
                 )
-                respuesta['rangos_vitales_json'] = None
-                respuesta['ia_error'] = str(exc)
+                ia_error = str(exc)
 
-        headers = self.get_success_headers(serializer.data)
+        buffer_cloudinary = io.BytesIO(archivo_bytes)
+        buffer_cloudinary.name = nombre_archivo
+        try:
+            resultado_cloudinary = subir_documento(
+                buffer_cloudinary,
+                carpeta='geriapp/documentos_historia_clinica',
+            )
+            url_cloudinary = resultado_cloudinary['secure_url']
+        except Exception as exc:
+            logger.exception(
+                'Error subiendo documento de historia clínica a Cloudinary: %s',
+                exc,
+            )
+            return Response(
+                {'error': f'Error al subir el documento a Cloudinary: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        documento = serializer.save(archivo=url_cloudinary)
+
+        if rangos_json is not None:
+            _guardar_rangos_historia_clinica(
+                documento.id_paciente,
+                rangos_json,
+            )
+
+        respuesta = dict(self.get_serializer(documento).data)
+        if es_pdf:
+            respuesta['rangos_vitales_json'] = rangos_json
+            if ia_error is not None:
+                respuesta['ia_error'] = ia_error
+
+        headers = self.get_success_headers(respuesta)
         return Response(
             respuesta,
             status=status.HTTP_201_CREATED,

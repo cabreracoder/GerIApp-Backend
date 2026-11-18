@@ -81,6 +81,17 @@ class DocumentosHistoriaClinicaSerializer(serializers.ModelSerializer):
         model = DocumentosHistoriaClinica
         fields = '__all__'
 
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        ruta_archivo = (
+            getattr(instance.archivo, 'name', '')
+            if instance.archivo
+            else ''
+        )
+        if ruta_archivo.startswith(('http://', 'https://')):
+            data['archivo'] = ruta_archivo
+        return data
+
 class RegistrosFacialesSerializer(serializers.ModelSerializer):
     class Meta:
         model = RegistrosFaciales

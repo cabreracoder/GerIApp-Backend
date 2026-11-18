@@ -32,6 +32,7 @@ from .views import (
     ControlesPeriodicosBitacoraViewSet,
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
+    ProcesarHistoriaPdfView,
     
 )
 
@@ -364,5 +365,10 @@ path(
     'livekit/token/',
     obtener_token_livekit,
     name='livekit-token'
+),
+path(
+    'procesar-historia-pdf/<int:id_paciente>/',
+    ProcesarHistoriaPdfView.as_view(),
+    name='procesar_historia_pdf'
 ),
 ]

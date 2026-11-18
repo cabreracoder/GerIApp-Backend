@@ -1,3 +1,6 @@
+import math
+import re
+
 from django.core.serializers import python
 from rest_framework import serializers
 from django.utils import timezone
@@ -608,10 +611,105 @@ class ActividadesSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+MAPA_SIGNOS_RANGOS = (
+    ("presion_sistolica", "sistolica_min", "sistolica_max", "Presión sistólica", "mmHg"),
+    ("presion_diastolica", "diastolica_min", "diastolica_max", "Presión diastólica", "mmHg"),
+    ("frecuencia_cardiaca", "fc_min", "fc_max", "Frecuencia cardíaca", "lpm"),
+    ("frecuencia_respiratoria", "fr_min", "fr_max", "Frecuencia respiratoria", "rpm"),
+    ("temperatura", "temp_min", "temp_max", "Temperatura", "°C"),
+    ("saturacion_oxigeno", "sat_min", "sat_max", "Saturación de oxígeno", "%"),
+)
+
+
+def _parse_float_seguro(valor):
+    """Convierte valores CharField de signos vitales a float sin fallar ante textos o vacíos."""
+    if valor is None:
+        return None
+    if isinstance(valor, (int, float)):
+        num = float(valor)
+        return None if (math.isnan(num) or math.isinf(num)) else num
+
+    texto = str(valor).strip().replace(",", ".")
+    if not texto:
+        return None
+
+    try:
+        num = float(texto)
+        return None if (math.isnan(num) or math.isinf(num)) else num
+    except ValueError:
+        pass
+
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", texto)
+    if match:
+        try:
+            num = float(match.group(0))
+            return None if (math.isnan(num) or math.isinf(num)) else num
+        except ValueError:
+            return None
+
+    return None
+
+
+def evaluar_rangos_signos_vitales(signo):
+    """
+    Compara los signos vitales contra HistoriaClinicas.rangos_vitales_json del paciente.
+    Retorna el mensaje de alerta si algún valor está fuera de rango, o None en caso contrario.
+    """
+    bitacora = getattr(signo, "id_bitacora", None)
+    paciente = getattr(bitacora, "id_paciente", None) if bitacora else None
+    if not paciente:
+        return None
+
+    historia = (
+        HistoriaClinicas.objects
+        .filter(id_paciente=paciente, rangos_vitales_json__isnull=False)
+        .order_by("-id_historia_clinica")
+        .first()
+    )
+    rangos = historia.rangos_vitales_json if historia else None
+    if not isinstance(rangos, dict) or not rangos:
+        return None
+
+    desviaciones = []
+    for campo_modelo, key_min, key_max, etiqueta, unidad in MAPA_SIGNOS_RANGOS:
+        valor_num = _parse_float_seguro(getattr(signo, campo_modelo, None))
+        if valor_num is None:
+            continue
+
+        min_val = _parse_float_seguro(rangos.get(key_min))
+        max_val = _parse_float_seguro(rangos.get(key_max))
+
+        if min_val is not None and valor_num < min_val:
+            desviaciones.append(
+                f"{etiqueta} baja ({valor_num:g} {unidad}; mínimo esperado: {min_val:g} {unidad})"
+            )
+        elif max_val is not None and valor_num > max_val:
+            desviaciones.append(
+                f"{etiqueta} elevada ({valor_num:g} {unidad}; máximo esperado: {max_val:g} {unidad})"
+            )
+
+    if not desviaciones:
+        return None
+
+    return (
+        "ALERTA GERIÁTRICA - Signos fuera de rango personalizado: "
+        + "; ".join(desviaciones)
+        + "."
+    )
+
+
 class SignosVitalesSerializer(serializers.ModelSerializer):
     class Meta:
         model = SignosVitales
         fields = '__all__'
+
+    def create(self, validated_data):
+        signo = SignosVitales(**validated_data)
+        alerta = evaluar_rangos_signos_vitales(signo)
+        if alerta:
+            signo.alerta_generada = alerta
+        signo.save()
+        return signo
 
 
 class TipoEventoSerializer(serializers.ModelSerializer):

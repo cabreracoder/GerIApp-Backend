@@ -336,6 +336,7 @@ class HistoriaClinicas(models.Model):
     observaciones = models.CharField()
     estado = models.BooleanField()
     id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    rangos_vitales_json = models.JSONField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -726,6 +727,7 @@ class SignosVitales(models.Model):
     peso = models.CharField()
     fecha_hora = models.DateTimeField()
     observaciones = models.CharField()
+    alerta_generada = models.TextField(null=True, blank=True)
 
     class Meta:
         managed = False

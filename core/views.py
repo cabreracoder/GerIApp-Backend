@@ -87,11 +87,11 @@ from servicios.cloudinary_service import (
 )
 
 from reconocimiento_facial.reconocedor import ReconocedorFacial
-
 from reconocimiento_facial.cifrado import (
     cifrar_embedding,
     descifrar_embedding
 )
+from core.services.gemini_service import analizar_pdf_geriatrico
 
 
 # ==========================================
@@ -1204,10 +1204,131 @@ def cambiar_password_recuperacion(request):
 # VIEWSETS
 # ============================================================
 
+def _guardar_rangos_historia_clinica(paciente, rangos_json):
+    """Guarda o actualiza los rangos vitales JSON en HistoriaClinicas del paciente."""
+    historia = (
+        HistoriaClinicas.objects
+        .filter(id_paciente=paciente)
+        .order_by('-id_historia_clinica')
+        .first()
+    )
+    if historia is not None:
+        historia.rangos_vitales_json = rangos_json
+        historia.save(update_fields=['rangos_vitales_json'])
+        return historia
+
+    resumen = (rangos_json.get('resumen_condicion') or '').strip()
+    return HistoriaClinicas.objects.create(
+        id_paciente=paciente,
+        fecha_apertura=timezone.now(),
+        antecedentes=resumen[:200],
+        alergias='',
+        observaciones='Historia clínica generada automáticamente al procesar PDF.',
+        estado=True,
+        rangos_vitales_json=rangos_json,
+    )
+
+
+def _es_archivo_pdf(archivo, nombre_alternativo=''):
+    """Determina si el archivo subido corresponde a un PDF."""
+    nombre = (getattr(archivo, 'name', '') or nombre_alternativo or '').lower()
+    content_type = (getattr(archivo, 'content_type', '') or '').lower()
+    return nombre.endswith('.pdf') or content_type == 'application/pdf'
+
+
 class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = DocumentosHistoriaClinica.objects.all()
     serializer_class = DocumentosHistoriaClinicaSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        documento = serializer.save()
+
+        respuesta = dict(serializer.data)
+        archivo_subido = request.FILES.get('archivo')
+
+        if archivo_subido and _es_archivo_pdf(archivo_subido, documento.nombre_archivo):
+            try:
+                with documento.archivo.open('rb') as pdf_file:
+                    rangos_json = analizar_pdf_geriatrico(pdf_file)
+                _guardar_rangos_historia_clinica(
+                    documento.id_paciente,
+                    rangos_json,
+                )
+                respuesta['rangos_vitales_json'] = rangos_json
+            except Exception as exc:
+                logger.exception(
+                    'Error analizando PDF clínico para paciente %s: %s',
+                    documento.id_paciente_id,
+                    exc,
+                )
+                respuesta['rangos_vitales_json'] = None
+                respuesta['ia_error'] = str(exc)
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            respuesta,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
+
+class ProcesarHistoriaPdfView(APIView):
+    """Endpoint dedicado para extraer rangos vitales de un PDF clínico con Gemini."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, id_paciente):
+        paciente = get_object_or_404(Pacientes, id_paciente=id_paciente)
+        archivo_pdf = (
+            request.FILES.get('archivo')
+            or request.FILES.get('pdf')
+            or request.FILES.get('file')
+        )
+
+        if not archivo_pdf:
+            return Response(
+                {'error': 'Debe adjuntar un archivo PDF en el campo "archivo".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not _es_archivo_pdf(archivo_pdf):
+            return Response(
+                {'error': 'El archivo enviado debe estar en formato PDF.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            rangos_json = analizar_pdf_geriatrico(archivo_pdf)
+        except ValueError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            logger.exception(
+                'Error procesando PDF con Gemini para paciente %s: %s',
+                id_paciente,
+                exc,
+            )
+            return Response(
+                {'error': f'Error al analizar el PDF con Gemini: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        historia = _guardar_rangos_historia_clinica(paciente, rangos_json)
+        return Response(
+            {
+                'id_paciente': paciente.id_paciente,
+                'id_historia_clinica': historia.id_historia_clinica,
+                'rangos_vitales_json': rangos_json,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class ConfiguracionInstitucionView(APIView):
     def get(self, request):
@@ -2385,6 +2506,26 @@ class ActividadesViewSet(viewsets.ModelViewSet):
 class SignosVitalesViewSet(viewsets.ModelViewSet):
     queryset = SignosVitales.objects.all()
     serializer_class = SignosVitalesSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        signo = serializer.save()
+
+        respuesta = dict(serializer.data)
+        mensaje_alerta = getattr(signo, 'alerta_generada', None)
+        if mensaje_alerta:
+            respuesta['alerta'] = True
+            respuesta['mensaje_alerta'] = mensaje_alerta
+        else:
+            respuesta['alerta'] = False
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            respuesta,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
 
 class TipoEventoViewSet(viewsets.ModelViewSet):

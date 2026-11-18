@@ -32,6 +32,7 @@ from .views import (
     ControlesPeriodicosBitacoraViewSet,
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
+    ProcesarHistoriaPdfView,
 )
 
 
@@ -381,8 +382,14 @@ urlpatterns = [
     ),
 
     path(
-    'usuarios/estado-rostro/',
-    consultar_estado_rostro,
-    name='consultar_estado_rostro'
-),
+        'usuarios/estado-rostro/',
+        consultar_estado_rostro,
+        name='consultar_estado_rostro'
+    ),
+
+    path(
+        'procesar-historia-pdf/<int:id_paciente>/',
+        ProcesarHistoriaPdfView.as_view(),
+        name='procesar_historia_pdf'
+    ),
 ]

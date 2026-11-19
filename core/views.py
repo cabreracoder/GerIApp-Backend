@@ -9,6 +9,13 @@ from rest_framework.decorators import (
     authentication_classes,
     throttle_classes,
 )
+
+from rest_framework import mixins, viewsets
+from rest_framework.permissions import IsAuthenticated
+
+from .models import SolicitudCita
+from .serializers import SolicitudCitaSerializer
+
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from .throttling import (
@@ -52,6 +59,7 @@ from zoneinfo import ZoneInfo
 from urllib.parse import urlparse
 
 import base64
+import io
 import logging
 import os
 import numpy as np
@@ -84,14 +92,15 @@ from livekit import api
 from servicios.cloudinary_service import (
     subir_imagen,
     eliminar_imagen,
+    subir_documento,
 )
 
 from reconocimiento_facial.reconocedor import ReconocedorFacial
-
 from reconocimiento_facial.cifrado import (
     cifrar_embedding,
     descifrar_embedding
 )
+from core.services.gemini_service import analizar_pdf_geriatrico
 
 
 # ==========================================
@@ -104,6 +113,11 @@ from .notificaciones_utils import enviar_notificacion_fcm
 from .authentication import GeriAppTokenAuthentication, crear_token_usuario
 from .permissions import EsSuperadministradorOMetodoLectura
 
+# ==========================================
+# AUTENTICACIÓN N8N
+# ==========================================
+
+from .authentication import N8NApiKeyAuthentication
 
 # ==========================================
 # MODELOS
@@ -172,6 +186,7 @@ from .models import (
     DocumentosHistoriaClinica,
     RegistrosFacialesUsuarios,
     EstadoPosturaPaciente,
+    SolicitudCita,
 )
 
 
@@ -244,6 +259,7 @@ from .serializers import (
     DocumentosHistoriaClinicaSerializer,
     ImagenFacialSerializer,
     EstadoPosturaPacienteSerializer,
+    SolicitudCitaSerializer,
 )
 
 
@@ -1204,10 +1220,186 @@ def cambiar_password_recuperacion(request):
 # VIEWSETS
 # ============================================================
 
+def _guardar_rangos_historia_clinica(paciente, rangos_json):
+    """Guarda o actualiza los rangos vitales JSON en HistoriaClinicas del paciente."""
+    historia = (
+        HistoriaClinicas.objects
+        .filter(id_paciente=paciente)
+        .order_by('-id_historia_clinica')
+        .first()
+    )
+    if historia is not None:
+        historia.rangos_vitales_json = rangos_json
+        historia.save(update_fields=['rangos_vitales_json'])
+        return historia
+
+    resumen = (rangos_json.get('resumen_condicion') or '').strip()
+    return HistoriaClinicas.objects.create(
+        id_paciente=paciente,
+        fecha_apertura=timezone.now(),
+        antecedentes=resumen[:200],
+        alergias='',
+        observaciones='Historia clínica generada automáticamente al procesar PDF.',
+        estado=True,
+        rangos_vitales_json=rangos_json,
+    )
+
+
+def _es_archivo_pdf(archivo, nombre_alternativo=''):
+    """Determina si el archivo subido corresponde a un PDF."""
+    nombre = (getattr(archivo, 'name', '') or nombre_alternativo or '').lower()
+    content_type = (getattr(archivo, 'content_type', '') or '').lower()
+    return nombre.endswith('.pdf') or content_type == 'application/pdf'
+
+
 class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = DocumentosHistoriaClinica.objects.all()
     serializer_class = DocumentosHistoriaClinicaSerializer
     permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        archivo_subido = request.FILES.get('archivo')
+        if not archivo_subido:
+            return Response(
+                {'error': 'Debe adjuntar un archivo en el campo "archivo".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not all([
+            settings.CLOUDINARY_CLOUD_NAME,
+            settings.CLOUDINARY_API_KEY,
+            settings.CLOUDINARY_API_SECRET,
+        ]):
+            return Response(
+                {
+                    'error': (
+                        'Faltan credenciales de Cloudinary en el servidor '
+                        '(CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET).'
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        archivo_subido.seek(0)
+        archivo_bytes = archivo_subido.read()
+        nombre_archivo = (
+            getattr(archivo_subido, 'name', '')
+            or serializer.validated_data.get('nombre_archivo')
+            or 'documento.pdf'
+        )
+        es_pdf = _es_archivo_pdf(archivo_subido, nombre_archivo)
+
+        # Analizar en memoria antes de la subida remota para evitar fallos leyendo desde URL
+        rangos_json = None
+        ia_error = None
+        if es_pdf:
+            try:
+                rangos_json = analizar_pdf_geriatrico(io.BytesIO(archivo_bytes))
+            except Exception as exc:
+                logger.exception(
+                    'Error analizando PDF clínico para paciente %s: %s',
+                    serializer.validated_data.get('id_paciente'),
+                    exc,
+                )
+                ia_error = str(exc)
+
+        buffer_cloudinary = io.BytesIO(archivo_bytes)
+        buffer_cloudinary.name = nombre_archivo
+        try:
+            resultado_cloudinary = subir_documento(
+                buffer_cloudinary,
+                carpeta='geriapp/documentos_historia_clinica',
+            )
+            url_cloudinary = resultado_cloudinary['secure_url']
+        except Exception as exc:
+            logger.exception(
+                'Error subiendo documento de historia clínica a Cloudinary: %s',
+                exc,
+            )
+            return Response(
+                {'error': f'Error al subir el documento a Cloudinary: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        documento = serializer.save(archivo=url_cloudinary)
+
+        if rangos_json is not None:
+            _guardar_rangos_historia_clinica(
+                documento.id_paciente,
+                rangos_json,
+            )
+
+        respuesta = dict(self.get_serializer(documento).data)
+        if es_pdf:
+            respuesta['rangos_vitales_json'] = rangos_json
+            if ia_error is not None:
+                respuesta['ia_error'] = ia_error
+
+        headers = self.get_success_headers(respuesta)
+        return Response(
+            respuesta,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
+
+
+class ProcesarHistoriaPdfView(APIView):
+    """Endpoint dedicado para extraer rangos vitales de un PDF clínico con Gemini."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, id_paciente):
+        paciente = get_object_or_404(Pacientes, id_paciente=id_paciente)
+        archivo_pdf = (
+            request.FILES.get('archivo')
+            or request.FILES.get('pdf')
+            or request.FILES.get('file')
+        )
+
+        if not archivo_pdf:
+            return Response(
+                {'error': 'Debe adjuntar un archivo PDF en el campo "archivo".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not _es_archivo_pdf(archivo_pdf):
+            return Response(
+                {'error': 'El archivo enviado debe estar en formato PDF.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            rangos_json = analizar_pdf_geriatrico(archivo_pdf)
+        except ValueError as exc:
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:
+            logger.exception(
+                'Error procesando PDF con Gemini para paciente %s: %s',
+                id_paciente,
+                exc,
+            )
+            return Response(
+                {'error': f'Error al analizar el PDF con Gemini: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        historia = _guardar_rangos_historia_clinica(paciente, rangos_json)
+        return Response(
+            {
+                'id_paciente': paciente.id_paciente,
+                'id_historia_clinica': historia.id_historia_clinica,
+                'rangos_vitales_json': rangos_json,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class ConfiguracionInstitucionView(APIView):
     def get(self, request):
@@ -2385,6 +2577,26 @@ class ActividadesViewSet(viewsets.ModelViewSet):
 class SignosVitalesViewSet(viewsets.ModelViewSet):
     queryset = SignosVitales.objects.all()
     serializer_class = SignosVitalesSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        signo = serializer.save()
+
+        respuesta = dict(serializer.data)
+        mensaje_alerta = getattr(signo, 'alerta_generada', None)
+        if mensaje_alerta:
+            respuesta['alerta'] = True
+            respuesta['mensaje_alerta'] = mensaje_alerta
+        else:
+            respuesta['alerta'] = False
+
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            respuesta,
+            status=status.HTTP_201_CREATED,
+            headers=headers,
+        )
 
 
 class TipoEventoViewSet(viewsets.ModelViewSet):
@@ -5587,3 +5799,14 @@ def obtener_token_livekit(request):
         },
         status=status.HTTP_200_OK
     )
+
+
+class SolicitudCitaViewSet(
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet
+):
+    queryset = SolicitudCita.objects.all()
+    serializer_class = SolicitudCitaSerializer
+
+    authentication_classes = [N8NApiKeyAuthentication]
+    permission_classes = [IsAuthenticated]

@@ -1,6 +1,6 @@
 from django.core.serializers import python
 from django.db import models
-
+import uuid
 
 class RegistrosFacialesUsuarios(models.Model):
 
@@ -403,6 +403,7 @@ class HistoriaClinicas(models.Model):
     observaciones = models.CharField()
     estado = models.BooleanField()
     id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
+    rangos_vitales_json = models.JSONField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -742,6 +743,7 @@ class SignosVitales(models.Model):
     peso = models.CharField()
     fecha_hora = models.DateTimeField()
     observaciones = models.CharField()
+    alerta_generada = models.TextField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -1215,3 +1217,101 @@ class ElementosPaciente(models.Model):
     class Meta:
         managed = False
         db_table = 'elementos_paciente'
+
+
+class SolicitudCita(models.Model):
+
+    ESTADOS = [
+        ('RECIBIDA', 'Recibida'),
+        ('VALIDANDO', 'Validando datos'),
+        ('VALIDADA', 'Validada'),
+        ('PENDIENTE_AUTOMATIZACION', 'Pendiente de automatización'),
+        ('EN_PROCESO', 'En proceso'),
+        ('CITA_CONFIRMADA', 'Cita confirmada'),
+        ('SIN_DISPONIBILIDAD', 'Sin disponibilidad'),
+        ('ERROR', 'Error'),
+        ('CANCELADA', 'Cancelada'),
+    ]
+
+    id_solicitud = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
+    id_paciente = models.ForeignKey(
+        'Pacientes',
+        models.DO_NOTHING,
+        db_column='id_paciente'
+    )
+
+    id_familiar_responsable = models.ForeignKey(
+        'FamiliarResponsable',
+        models.DO_NOTHING,
+        db_column='id_familiar_responsable'
+    )
+
+    especialidad = models.CharField(
+        max_length=150
+    )
+
+    motivo = models.TextField(
+        blank=True,
+        null=True
+    )
+
+    fecha_preferida = models.DateField(
+        blank=True,
+        null=True
+    )
+
+    hora_preferida = models.TimeField(
+        blank=True,
+        null=True
+    )
+
+    estado = models.CharField(
+        max_length=35,
+        choices=ESTADOS,
+        default='RECIBIDA'
+    )
+
+    observaciones = models.TextField(
+        blank=True,
+        null=True
+    )
+
+    resultado_automatizacion = models.JSONField(
+        blank=True,
+        null=True
+    )
+
+    id_cita = models.ForeignKey(
+        'Citas',
+        models.SET_NULL,
+        db_column='id_cita',
+        blank=True,
+        null=True
+    )
+
+    id_mensaje_whatsapp = models.CharField(
+        max_length=255,
+        unique=True,
+        blank=True,
+        null=True
+    )
+
+    fecha_creacion = models.DateTimeField()
+
+    fecha_actualizacion = models.DateTimeField()
+
+    class Meta:
+        managed = False
+        db_table = 'solicitud_cita'
+        ordering = ['-fecha_creacion']
+
+    def __str__(self):
+        return (
+            f'Solicitud {self.id_solicitud} - '
+            f'{self.especialidad}'
+        )

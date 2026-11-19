@@ -32,6 +32,7 @@ from .views import (
     ControlesPeriodicosBitacoraViewSet,
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
+    ProcesarHistoriaPdfView,
 )
 
 
@@ -101,6 +102,7 @@ from .views import (
     CuidadosEnfermeriaViewSet,
     ElementosPacienteViewSet,
     CitasViewSet,
+    SolicitudCitaViewSet,
 )
 
 
@@ -214,6 +216,7 @@ router.register(r'notificaciones', NotificacionesViewSet)
 router.register(r'notificacion_destinatario', NotificacionDestinatarioViewSet)
 router.register(r'citas', CitasViewSet)
 router.register(r'fcm_tokens', FcmTokensViewSet)
+router.register(r'solicitudes-citas', SolicitudCitaViewSet)
 
 router.register(r'camas', CamasViewSet)
 router.register(r'habitaciones', HabitacionesViewSet)
@@ -381,8 +384,14 @@ urlpatterns = [
     ),
 
     path(
-    'usuarios/estado-rostro/',
-    consultar_estado_rostro,
-    name='consultar_estado_rostro'
-),
+        'usuarios/estado-rostro/',
+        consultar_estado_rostro,
+        name='consultar_estado_rostro'
+    ),
+
+    path(
+        'procesar-historia-pdf/<int:id_paciente>/',
+        ProcesarHistoriaPdfView.as_view(),
+        name='procesar_historia_pdf'
+    ),
 ]

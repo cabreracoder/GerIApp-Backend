@@ -510,9 +510,10 @@ def registrar_evidencia_geriapp(id_evento, url, public_id):
         print("Detalle:", error)
         return None
 
-    # ============================================================
+# ============================================================
 # ACTUALIZAR ESTADO DE POSTURA DEL PACIENTE
 # ============================================================
+
 
 def enviar_estado_postura_geriapp(
     id_camara,
@@ -543,9 +544,7 @@ def enviar_estado_postura_geriapp(
     )
 
     if postura_normalizada is None:
-        print(
-            f"Postura no válida para enviar: {postura_actual}"
-        )
+        print(f"[POSTURA] Postura no válida: {postura_actual}")
         return None
 
     estado = {
@@ -559,6 +558,10 @@ def enviar_estado_postura_geriapp(
     try:
         asegurar_autenticacion()
 
+        print("\n========== ENVÍO DE POSTURA ==========")
+        print("URL:", API_ESTADO_POSTURA)
+        print("Datos:", estado)
+
         respuesta = sesion.post(
             API_ESTADO_POSTURA,
             json=estado,
@@ -566,6 +569,8 @@ def enviar_estado_postura_geriapp(
         )
 
         if respuesta.status_code == 401:
+            print("[POSTURA] Token vencido. Renovando autenticación.")
+
             autenticar_geriapp()
 
             respuesta = sesion.post(
@@ -574,24 +579,25 @@ def enviar_estado_postura_geriapp(
                 timeout=(5, 15)
             )
 
+        print("[POSTURA] Código HTTP:", respuesta.status_code)
+        print("[POSTURA] Respuesta:", respuesta.text[:1000])
+
         if respuesta.status_code in (200, 201):
             print(
-                f"Postura actualizada: paciente {id_paciente} "
-                f"- {postura_normalizada}"
+                f"[POSTURA] Actualización exitosa: "
+                f"Paciente {id_paciente} - {postura_normalizada}"
             )
             return respuesta.json()
 
-        print("Error al actualizar la postura del paciente.")
-        print("Código HTTP:", respuesta.status_code)
-        print("Respuesta:", respuesta.text[:500])
-
+        print("[POSTURA] ERROR: Django no aceptó la actualización.")
         return None
 
     except (
         requests.exceptions.RequestException,
         ValueError,
-        RuntimeError
+        RuntimeError,
+        TypeError
     ) as error:
-        print("No se pudo enviar el estado de postura.")
-        print("Detalle:", error)
+        print("[POSTURA] No se pudo enviar el estado.")
+        print("[POSTURA] Detalle:", error)
         return None

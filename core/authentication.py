@@ -5,6 +5,11 @@ from rest_framework.exceptions import AuthenticationFailed
 
 from .models import Usuarios
 
+#n8n
+import secrets
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+
 
 TOKEN_SALT = 'geriapp.auth'
 TOKEN_DURACION = 60 * 60 * 24 * 90  # 90 días
@@ -90,3 +95,53 @@ class GeriAppTokenAuthentication(BaseAuthentication):
 
     def authenticate_header(self, request):
         return 'Bearer'
+
+    
+
+#Token de verificacion para n8n    
+
+class N8NAuthenticatedUser:
+    """
+    Representa el servicio n8n como usuario autenticado
+    para las validaciones de Django
+    """
+
+    is_authenticated = True
+    is_anonymous = False
+
+
+class N8NApiKeyAuthentication(BaseAuthentication):
+    """
+    Autentica las solicitudes provenientes de n8n
+    mediante una API Key exclusiva.
+    """
+
+    def authenticate(self, request):
+        token = request.headers.get('X-N8N-API-KEY')
+
+        if not token:
+            return None
+
+        api_key_configurada = getattr(
+            settings,
+            'N8N_API_KEY',
+            ''
+        )
+
+        if not api_key_configurada:
+            raise ImproperlyConfigured(
+                'La variable N8N_API_KEY no está configurada.'
+            )
+
+        if not secrets.compare_digest(
+            token,
+            api_key_configurada
+        ):
+            raise AuthenticationFailed(
+                'La API Key de n8n es inválida.'
+            )
+
+        return N8NAuthenticatedUser(), token
+
+    def authenticate_header(self, request):
+        return 'ApiKey'

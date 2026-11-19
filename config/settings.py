@@ -52,7 +52,8 @@ ALLOWED_HOSTS = [
     'geriapp-backend.onrender.com',
 ]
 
-
+#VARUABLE S DE ENTORNO PARA N8N
+N8N_API_KEY = os.environ.get('N8N_API_KEY', '')
 
 # Application definition
 

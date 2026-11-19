@@ -4,6 +4,7 @@ import re
 from django.core.serializers import python
 from rest_framework import serializers
 from django.utils import timezone
+from .models import SolicitudCita
 
 from .models import (
     Medicamentos,
@@ -67,6 +68,7 @@ from .models import (
     RegistrosFaciales,
     DocumentosHistoriaClinica,
     EstadoPosturaPaciente,
+    SolicitudCita,
 )
 
 class ImagenFacialSerializer(serializers.Serializer):
@@ -1161,3 +1163,39 @@ class CambiarContrasenaSerializer(serializers.Serializer):
 
         return data
 
+class SolicitudCitaSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = SolicitudCita
+        fields = '__all__'
+        read_only_fields = [
+            'id_solicitud',
+            'estado',
+            'fecha_creacion',
+            'fecha_actualizacion',
+            'resultado_automatizacion',
+            'id_cita',
+        ]
+
+    def validate(self, attrs):
+        paciente = attrs.get('id_paciente')
+        familiar = attrs.get('id_familiar_responsable')
+
+        if paciente and familiar:
+            if familiar.id_paciente_id != paciente.id_paciente:
+                raise serializers.ValidationError({
+                    'id_familiar_responsable': (
+                        'El familiar responsable no está '
+                        'relacionado con el paciente seleccionado.'
+                    )
+                })
+
+        return attrs
+    
+    def create(self, validated_data):
+        ahora = timezone.now()
+
+        validated_data['fecha_creacion'] = ahora
+        validated_data['fecha_actualizacion'] = ahora
+
+        return super().create(validated_data)

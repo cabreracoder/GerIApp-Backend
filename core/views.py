@@ -9,6 +9,13 @@ from rest_framework.decorators import (
     authentication_classes,
     throttle_classes,
 )
+
+from rest_framework import mixins, viewsets
+from rest_framework.permissions import IsAuthenticated
+
+from .models import SolicitudCita
+from .serializers import SolicitudCitaSerializer
+
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from .throttling import (
@@ -106,6 +113,11 @@ from .notificaciones_utils import enviar_notificacion_fcm
 from .authentication import GeriAppTokenAuthentication, crear_token_usuario
 from .permissions import EsSuperadministradorOMetodoLectura
 
+# ==========================================
+# AUTENTICACIÓN N8N
+# ==========================================
+
+from .authentication import N8NApiKeyAuthentication
 
 # ==========================================
 # MODELOS
@@ -174,6 +186,7 @@ from .models import (
     DocumentosHistoriaClinica,
     RegistrosFacialesUsuarios,
     EstadoPosturaPaciente,
+    SolicitudCita,
 )
 
 
@@ -246,6 +259,7 @@ from .serializers import (
     DocumentosHistoriaClinicaSerializer,
     ImagenFacialSerializer,
     EstadoPosturaPacienteSerializer,
+    SolicitudCitaSerializer,
 )
 
 
@@ -5733,3 +5747,14 @@ def obtener_token_livekit(request):
         },
         status=status.HTTP_200_OK
     )
+
+
+class SolicitudCitaViewSet(
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet
+):
+    queryset = SolicitudCita.objects.all()
+    serializer_class = SolicitudCitaSerializer
+
+    authentication_classes = [N8NApiKeyAuthentication]
+    permission_classes = [IsAuthenticated]

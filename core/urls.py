@@ -102,6 +102,7 @@ from .views import (
     CuidadosEnfermeriaViewSet,
     ElementosPacienteViewSet,
     CitasViewSet,
+    SolicitudCitaViewSet,
 )
 
 
@@ -215,6 +216,7 @@ router.register(r'notificaciones', NotificacionesViewSet)
 router.register(r'notificacion_destinatario', NotificacionDestinatarioViewSet)
 router.register(r'citas', CitasViewSet)
 router.register(r'fcm_tokens', FcmTokensViewSet)
+router.register(r'solicitudes-citas', SolicitudCitaViewSet)
 
 router.register(r'camas', CamasViewSet)
 router.register(r'habitaciones', HabitacionesViewSet)

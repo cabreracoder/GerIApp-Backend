@@ -2514,6 +2514,16 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
                         'id_aplicacion'
                     ]
                 )
+            # Programar alerta de stock bajo / agotado para encargados al confirmar la transacción.
+            stock_minimo = item_inventario.cantidad_minima or 5
+            if item_inventario.cantidad_actual <= stock_minimo:
+                self._programar_alerta_stock_bajo(
+                    id_paciente=item_inventario.id_paciente_id,
+                    id_medicamento=item_inventario.id_medicamentos_id,
+                    stock_actual=item_inventario.cantidad_actual,
+                    stock_minimo=stock_minimo,
+                )
+
             headers = self.get_success_headers(serializer.data)
 
             # Devolver también las existencias confirmadas por Django.
@@ -2539,6 +2549,110 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    def _programar_alerta_stock_bajo(
+        self,
+        id_paciente,
+        id_medicamento,
+        stock_actual,
+        stock_minimo,
+    ):
+        def _enviar_alerta():
+            try:
+                paciente = (
+                    Pacientes.objects.filter(pk=id_paciente).first()
+                    if id_paciente is not None
+                    else None
+                )
+                medicamento = (
+                    Medicamentos.objects.filter(pk=id_medicamento).first()
+                    if id_medicamento is not None
+                    else None
+                )
+
+                sede_id = (
+                    getattr(paciente, 'id_sede_id', None)
+                    if paciente is not None
+                    else None
+                )
+                if sede_id is None and paciente and getattr(paciente, 'sede', None):
+                    sede_obj = Sedes.objects.filter(
+                        nombre__iexact=paciente.sede.strip()
+                    ).first()
+                    if sede_obj:
+                        sede_id = sede_obj.id_sede
+
+                filtros_encargados = {
+                    'id_rol_id': 2,
+                    'estado': True,
+                }
+                if sede_id is not None:
+                    filtros_encargados['id_sede_id'] = sede_id
+
+                encargados = list(Usuarios.objects.filter(**filtros_encargados))
+                if not encargados:
+                    return
+
+                nombre_medicamento = (
+                    medicamento.nombre.strip()
+                    if medicamento and medicamento.nombre
+                    else f"Medicamento #{id_medicamento or ''}".strip()
+                )
+                nombre_paciente = (
+                    f"{paciente.nombre or ''} {paciente.apellido or ''}".strip()
+                    if paciente
+                    else "Paciente"
+                )
+
+                if stock_actual <= 0:
+                    titulo = f"Medicamento agotado: {nombre_medicamento}"
+                    mensaje = (
+                        f"El medicamento {nombre_medicamento} del paciente "
+                        f"{nombre_paciente} se agotó (0 unidades restantes). "
+                        "Se requiere reposición."
+                    )
+                else:
+                    unidad_txt = "unidad" if stock_actual == 1 else "unidades"
+                    titulo = f"Stock bajo: {nombre_medicamento}"
+                    mensaje = (
+                        f"El medicamento {nombre_medicamento} del paciente "
+                        f"{nombre_paciente} tiene stock bajo: quedan "
+                        f"{stock_actual} {unidad_txt} (mínimo: {stock_minimo})."
+                    )
+
+                notificacion = Notificaciones.objects.create(
+                    titulo=titulo,
+                    tipo="STOCK_BAJO",
+                    mensaje=mensaje,
+                    enviar_correo=False,
+                    fecha_hora=timezone.now(),
+                    estado=True,
+                    id_paciente=paciente,
+                    id_usuario=None,
+                )
+
+                for encargado in encargados:
+                    try:
+                        NotificacionDestinatario.objects.get_or_create(
+                            id_notificacion=notificacion,
+                            id_usuario=encargado,
+                            defaults={
+                                "leida": False,
+                                "fecha_lectura": None,
+                            },
+                        )
+                        enviar_notificacion_fcm(notificacion, encargado)
+                    except Exception as error_encargado:
+                        print(
+                            "STOCK_BAJO - Error notificando al encargado "
+                            f"{encargado.pk}: {error_encargado}"
+                        )
+            except Exception as error:
+                print(
+                    f"STOCK_BAJO - Error procesando alerta de stock: {error}"
+                )
+
+        transaction.on_commit(_enviar_alerta)
 
 class TipoInsumoViewSet(viewsets.ModelViewSet):
     queryset = TipoInsumo.objects.all()

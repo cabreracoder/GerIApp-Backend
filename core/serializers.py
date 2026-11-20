@@ -1199,3 +1199,30 @@ class SolicitudCitaSerializer(serializers.ModelSerializer):
         validated_data['fecha_actualizacion'] = ahora
 
         return super().create(validated_data)
+
+class SolicitudCitaActualizacionSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = SolicitudCita
+        fields = [
+            'estado',
+            'observaciones',
+            'resultado_automatizacion',
+        ]
+
+    def validate_estado(self, value):
+        estados_validos = [
+            estado[0] for estado in SolicitudCita.ESTADOS
+        ]
+
+        if value not in estados_validos:
+            raise serializers.ValidationError(
+                'El estado proporcionado no es válido.'
+            )
+
+        return value
+
+    def update(self, instance, validated_data):
+        validated_data['fecha_actualizacion'] = timezone.now()
+
+        return super().update(instance, validated_data)

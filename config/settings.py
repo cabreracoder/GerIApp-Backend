@@ -9,6 +9,10 @@ NOMBRE_INSTITUCION = os.getenv(
     'NOMBRE_INSTITUCION',
     ''
 )
+
+#N8N_API_KEY para automatización de flujos de trabajo y no se debe tocar
+load_dotenv(BASE_DIR / '.env')
+
 GOOGLE_CLIENT_ID = os.getenv(
     'GOOGLE_CLIENT_ID'
 )

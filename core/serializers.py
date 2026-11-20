@@ -4,7 +4,10 @@ import re
 from django.core.serializers import python
 from rest_framework import serializers
 from django.utils import timezone
-from .asignaciones_vigencia import filtrar_asignaciones_vigentes
+from .asignaciones_vigencia import (
+    asegurar_aware_colombia,
+    filtrar_asignaciones_vigentes,
+)
 from .models import SolicitudCita
 
 from .models import (
@@ -819,17 +822,8 @@ class AsignacionPacienteCuidadorSerializer(serializers.ModelSerializer):
         )
 
         if fecha_inicio and fecha_fin:
-            tz_defecto = timezone.get_default_timezone()
-            inicio_cmp = (
-                timezone.make_aware(fecha_inicio, tz_defecto)
-                if timezone.is_naive(fecha_inicio)
-                else fecha_inicio
-            )
-            fin_cmp = (
-                timezone.make_aware(fecha_fin, tz_defecto)
-                if timezone.is_naive(fecha_fin)
-                else fecha_fin
-            )
+            inicio_cmp = asegurar_aware_colombia(fecha_inicio)
+            fin_cmp = asegurar_aware_colombia(fecha_fin)
 
             if inicio_cmp > fin_cmp:
                 raise serializers.ValidationError({

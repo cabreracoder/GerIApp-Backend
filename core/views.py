@@ -44,6 +44,7 @@ from .asignaciones_vigencia import (
     es_ultimo_dia_pendiente_grupo,
     filtrar_asignaciones_en_rango,
     filtrar_asignaciones_vigentes,
+    finalizar_asignaciones_del_bloque,
 )
 
 from django.views.decorators.csrf import csrf_exempt
@@ -3901,18 +3902,16 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
                 asignacion.estado = "Finalizado"
                 asignacion.save(update_fields=["estado"])
 
-                # Si es el último día pendiente del bloque (o sin grupo),
-                # desactivar las asignaciones activas de pacientes del cuidador.
+                # Si es el último día pendiente del bloque (o un turno individual sin grupo),
+                # desactivar únicamente las asignaciones activas de pacientes que
+                # correspondan al bloque que está finalizando.
                 if (
                     asignacion.id_usuario_id
                     and es_ultimo_dia_pendiente_grupo(asignacion)
                 ):
-                    AsignacionPacienteCuidador.objects.filter(
-                        id_usuario_id=asignacion.id_usuario_id,
-                        estado__iexact="Activo",
-                    ).update(
-                        estado="Inactivo",
-                        fecha_fin=cierre.fecha_hora,
+                    finalizar_asignaciones_del_bloque(
+                        asignacion=asignacion,
+                        fecha_cierre=cierre.fecha_hora,
                     )
 
             return Response(

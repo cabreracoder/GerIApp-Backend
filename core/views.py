@@ -2225,38 +2225,98 @@ class TratamientoMedicamentoViewSet(viewsets.ModelViewSet):
 
 class InventarioViewSet(viewsets.ModelViewSet):
 
-    # ========================================================
-    # QUERYSET BASE
-    # ========================================================
-
     queryset = Inventario.objects.all()
-
     serializer_class = InventarioSerializer
 
-    # ========================================================
-    # OBTENER INVENTARIO
-    # ========================================================
+    def _validar_paciente_sede(self, paciente):
+        from rest_framework.exceptions import PermissionDenied
+
+        usuario = self.request.user
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: acceso global.
+        if rol_id == 4:
+            return
+
+        if rol_id not in (1, 2, 3):
+            raise PermissionDenied(
+                "No tienes permiso para gestionar inventarios."
+            )
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            raise PermissionDenied(
+                "Tu usuario no tiene una sede asignada."
+            )
+
+        if paciente is None:
+            raise PermissionDenied(
+                "Debes asociar el inventario a un paciente de tu sede."
+            )
+
+        pertenece_sede = Habitaciones.objects.filter(
+            id_habitacion=paciente.habitacion,
+            id_sede_id=sede_id
+        ).exists()
+
+        if not pertenece_sede:
+            raise PermissionDenied(
+                "No puedes gestionar inventarios de pacientes de otra sede."
+            )
 
     def get_queryset(self):
+        usuario = self.request.user
 
-        queryset = Inventario.objects.all()
+        if not getattr(usuario, "is_authenticated", False):
+            return Inventario.objects.none()
 
-        # ====================================================
-        # OBTENER ID DEL PACIENTE DESDE LA URL
-        # ====================================================
+        rol_id = getattr(usuario, "id_rol_id", None)
 
-        id_paciente = self.request.query_params.get('id_paciente')
+        if rol_id == 4:
+            queryset = Inventario.objects.all()
 
-        # ====================================================
-        # FILTRAR INVENTARIO DEL PACIENTE
-        # ====================================================
+        elif rol_id in (1, 2, 3):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return Inventario.objects.none()
+
+            habitaciones_sede = Habitaciones.objects.filter(
+                id_sede_id=sede_id
+            ).values_list("id_habitacion", flat=True)
+
+            queryset = Inventario.objects.filter(
+                id_paciente__habitacion__in=habitaciones_sede
+            )
+
+        else:
+            return Inventario.objects.none()
+
+        id_paciente = self.request.query_params.get("id_paciente")
 
         if id_paciente:
             queryset = queryset.filter(
                 id_paciente=id_paciente
             )
 
-        return queryset
+        return queryset.distinct()
+
+    def perform_create(self, serializer):
+        self._validar_paciente_sede(
+            serializer.validated_data.get("id_paciente")
+        )
+        serializer.save()
+
+    def perform_update(self, serializer):
+        paciente = serializer.validated_data.get(
+            "id_paciente",
+            serializer.instance.id_paciente
+        )
+
+        self._validar_paciente_sede(paciente)
+        serializer.save()
+
 
 class EntregaMedicaViewSet(viewsets.ModelViewSet):
     queryset = EntregaMedica.objects.all()
@@ -4210,6 +4270,97 @@ class SedesViewSet(viewsets.ModelViewSet):
 class CamarasViewSet(viewsets.ModelViewSet):
     queryset = Camaras.objects.all()
     serializer_class = CamarasSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return Camaras.objects.none()
+
+        rol = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: acceso a todas las cámaras.
+        if rol == 4:
+            return Camaras.objects.all().select_related(
+                "id_habitacion",
+                "id_habitacion__id_sede"
+            )
+
+        # Administrador, encargado y cuidador:
+        # únicamente cámaras de su propia sede.
+        if rol in (1, 2, 3):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return Camaras.objects.none()
+
+            return Camaras.objects.filter(
+                id_habitacion__id_sede_id=sede_id
+            ).select_related(
+                "id_habitacion",
+                "id_habitacion__id_sede"
+            )
+
+        return Camaras.objects.none()
+
+    def _validar_habitacion_sede(self, serializer):
+
+        from rest_framework.exceptions import (
+            PermissionDenied,
+            ValidationError
+        )
+
+        usuario = self.request.user
+        rol = getattr(usuario, "id_rol_id", None)
+
+        # Solo roles operativos y superadministrador.
+        if rol == 4:
+            return
+
+        if rol not in (1, 2, 3):
+            raise PermissionDenied(
+                "No tienes permiso para gestionar cámaras."
+            )
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            raise PermissionDenied(
+                "Tu usuario no tiene una sede asignada."
+            )
+
+        habitacion = serializer.validated_data.get(
+            "id_habitacion",
+            getattr(serializer.instance, "id_habitacion", None)
+        )
+
+        if not habitacion:
+            raise ValidationError({
+                "id_habitacion":
+                    "Debes asignar una habitación de tu sede."
+            })
+
+        habitacion_valida = Habitaciones.objects.filter(
+            id_habitacion=habitacion.id_habitacion,
+            id_sede_id=sede_id,
+            estado=True
+        ).exists()
+
+        if not habitacion_valida:
+            raise ValidationError({
+                "id_habitacion":
+                    "La habitación no existe, está inactiva "
+                    "o no pertenece a tu sede."
+            })
+
+    def perform_create(self, serializer):
+        self._validar_habitacion_sede(serializer)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._validar_habitacion_sede(serializer)
+        serializer.save()
 
 class TiposEventoIaViewSet(viewsets.ModelViewSet):
     queryset = TiposEventoIa.objects.all()
@@ -5444,8 +5595,82 @@ class RegistrosFacialesViewSet(
 class ElementosPacienteViewSet(viewsets.ModelViewSet):
 
     queryset = ElementosPaciente.objects.all()
-
     serializer_class = ElementosPacienteSerializer
+    permission_classes = [IsAuthenticated]
+
+    # ========================================================
+    # FILTRAR ELEMENTOS SEGÚN LA SEDE DEL USUARIO
+    # ========================================================
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not getattr(usuario, "is_authenticated", False):
+            return ElementosPaciente.objects.none()
+
+        rol = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: acceso a todas las sedes.
+        if rol == 4:
+            return ElementosPaciente.objects.all()
+
+        # Administrador, encargado y cuidador: solo su sede.
+        if rol in (1, 2, 3):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return ElementosPaciente.objects.none()
+
+            habitaciones_sede = Habitaciones.objects.filter(
+                id_sede_id=sede_id
+            ).values_list("id_habitacion", flat=True)
+
+            return ElementosPaciente.objects.filter(
+                id_paciente__habitacion__in=habitaciones_sede
+            ).distinct()
+
+        return ElementosPaciente.objects.none()
+
+    # ========================================================
+    # VALIDAR QUE EL PACIENTE PERTENEZCA A LA SEDE
+    # ========================================================
+
+    def _validar_sede_paciente(self, paciente):
+        from rest_framework.exceptions import PermissionDenied
+
+        usuario = self.request.user
+        rol = getattr(usuario, "id_rol_id", None)
+
+        if paciente is None:
+            raise PermissionDenied(
+                "Debes asociar el elemento a un paciente."
+        )
+
+        # El superadministrador puede gestionar todas las sedes.
+        if rol == 4:
+            return
+
+        if rol not in (1, 2, 3):
+            raise PermissionDenied(
+                "No tienes permiso para gestionar elementos."
+            )
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            raise PermissionDenied(
+                "Tu usuario no tiene una sede asignada."
+            )
+
+        pertenece_sede = Habitaciones.objects.filter(
+            id_habitacion=paciente.habitacion,
+            id_sede_id=sede_id
+        ).exists()
+
+        if not pertenece_sede:
+            raise PermissionDenied(
+                "No puedes gestionar elementos de pacientes de otra sede."
+            )
 
     # ========================================================
     # CREAR ELEMENTO DEL PACIENTE
@@ -5453,21 +5678,20 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
 
-        # ====================================================
-        # GUARDAR EL ELEMENTO DEL PACIENTE
-        # ====================================================
+        elemento_paciente = serializer.validated_data.get("id_paciente")
+
+        if not elemento_paciente:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                "id_paciente": "Debes seleccionar un paciente."
+            })
+
+        self._validar_sede_paciente(elemento_paciente)
 
         elemento = serializer.save()
 
-        # ====================================================
-        # VALIDAR SI ES UN MEDICAMENTO
-        # ====================================================
-
+        # Crear inventario si el elemento es un medicamento.
         if elemento.id_medicamentos:
-
-            # =================================================
-            # CREAR SU REGISTRO CORRESPONDIENTE EN INVENTARIO
-            # =================================================
 
             Inventario.objects.create(
                 id_paciente=elemento.id_paciente,
@@ -5486,35 +5710,20 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
 
-        # ====================================================
-        # OBTENER EL ELEMENTO QUE SE ESTÁ EDITANDO
-        # ====================================================
+        elemento_paciente = serializer.validated_data.get(
+            "id_paciente",
+            serializer.instance.id_paciente
+        )
 
-        elemento = self.get_object()
-
-        # ====================================================
-        # GUARDAR LOS CAMBIOS
-        # ====================================================
+        self._validar_sede_paciente(elemento_paciente)
 
         elemento = serializer.save()
-
-        # ====================================================
-        # BUSCAR EL INVENTARIO RELACIONADO
-        # ====================================================
 
         inventario = Inventario.objects.filter(
             id_elemento=elemento.id_elemento
         ).first()
 
-        # ====================================================
-        # SI SIGUE SIENDO UN MEDICAMENTO
-        # ====================================================
-
         if elemento.id_medicamentos:
-
-            # =================================================
-            # SI YA TIENE INVENTARIO, ACTUALIZARLO
-            # =================================================
 
             if inventario:
 
@@ -5526,10 +5735,6 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
                 inventario.estado = True
 
                 inventario.save()
-
-            # =================================================
-            # SI NO TIENE INVENTARIO, CREARLO
-            # =================================================
 
             else:
 
@@ -5544,18 +5749,9 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
                     estado=True
                 )
 
-        # ====================================================
-        # SI EL ELEMENTO DEJÓ DE SER UN MEDICAMENTO
-        # ====================================================
-
         else:
 
-            # =================================================
-            # ELIMINAR SU INVENTARIO
-            # =================================================
-
             if inventario:
-
                 inventario.delete()
 
     # ========================================================
@@ -5564,27 +5760,15 @@ class ElementosPacienteViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
 
-        # ====================================================
-        # BUSCAR EL INVENTARIO RELACIONADO
-        # ====================================================
-
         inventario = Inventario.objects.filter(
             id_elemento=instance.id_elemento
         ).first()
 
-        # ====================================================
-        # ELIMINAR PRIMERO EL INVENTARIO
-        # ====================================================
-
         if inventario:
-
             inventario.delete()
 
-        # ====================================================
-        # ELIMINAR EL ELEMENTO DEL PACIENTE
-        # ====================================================
-
         instance.delete()
+
 
 class RecuperacionPasswordViewSet(viewsets.ModelViewSet):
     queryset = RecuperacionPassword.objects.all()

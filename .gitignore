@@ -35,3 +35,8 @@ __pycache__/
 
 # Archivos estáticos generados por Django
 staticfiles/
+
+# N8N API Key
+.env
+.env.*
+!.env.example

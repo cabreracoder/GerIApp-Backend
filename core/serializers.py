@@ -4,6 +4,7 @@ import re
 from django.core.serializers import python
 from rest_framework import serializers
 from django.utils import timezone
+from .asignaciones_vigencia import filtrar_asignaciones_vigentes
 from .models import SolicitudCita
 
 from .models import (
@@ -807,6 +808,39 @@ class AsignacionPacienteCuidadorSerializer(serializers.ModelSerializer):
         model = AsignacionPacienteCuidador
         fields = '__all__'
 
+    def validate(self, attrs):
+        fecha_inicio = attrs.get(
+            'fecha_inicio',
+            getattr(self.instance, 'fecha_inicio', None)
+        )
+        fecha_fin = attrs.get(
+            'fecha_fin',
+            getattr(self.instance, 'fecha_fin', None)
+        )
+
+        if fecha_inicio and fecha_fin:
+            tz_defecto = timezone.get_default_timezone()
+            inicio_cmp = (
+                timezone.make_aware(fecha_inicio, tz_defecto)
+                if timezone.is_naive(fecha_inicio)
+                else fecha_inicio
+            )
+            fin_cmp = (
+                timezone.make_aware(fecha_fin, tz_defecto)
+                if timezone.is_naive(fecha_fin)
+                else fecha_fin
+            )
+
+            if inicio_cmp > fin_cmp:
+                raise serializers.ValidationError({
+                    'fecha_fin': (
+                        'La fecha de fin debe ser mayor o igual '
+                        'a la fecha de inicio.'
+                    )
+                })
+
+        return attrs
+
 
 class TurnosSerializer(serializers.ModelSerializer):
     class Meta:
@@ -1017,11 +1051,8 @@ class CitasSerializer(serializers.ModelSerializer):
         # BUSCAR EL CUIDADOR ACTUAL DEL PACIENTE
 
         asignacion = (
-            AsignacionPacienteCuidador.objects
-            .filter(
-                id_paciente=cita.id_paciente,
-                estado__iexact="Activo"
-            )
+            filtrar_asignaciones_vigentes()
+            .filter(id_paciente=cita.id_paciente)
             .order_by("-fecha_inicio")
             .first()
         )

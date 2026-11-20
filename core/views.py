@@ -9,6 +9,8 @@ from rest_framework.decorators import (
     authentication_classes,
     throttle_classes,
 )
+from rest_framework import status
+from rest_framework.decorators import action
 
 from rest_framework import mixins, viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -4311,52 +4313,100 @@ class ResumenCuidadosTurnoView(APIView):
             )
 
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
-        queryset = AsignacionTurnoUsuario.objects.all()
-        serializer_class = AsignacionTurnoUsuarioSerializer
+    queryset = AsignacionTurnoUsuario.objects.all()
+    serializer_class = AsignacionTurnoUsuarioSerializer
 
-        def perform_create(self, serializer):
-            asignacion = serializer.save()
-            usuario = asignacion.id_usuario
+    @action(detail=True, methods=['post'], url_path='registrar-llegada', permission_classes=[IsAuthenticated])
+    @transaction.atomic
+    def registrar_llegada(self, request, pk=None):
+        asignacion = get_object_or_404(
+            AsignacionTurnoUsuario.objects.select_for_update(),
+            pk=pk
+        )
+        self.check_object_permissions(request, asignacion)
 
-            print("========== PUSH TURNO ==========")
-            print("Asignación creada:", asignacion.pk)
-            print("Usuario asignado:", usuario.pk if usuario else None)
-            print("Fecha del turno:", asignacion.fecha)
+        usuario_autenticado = getattr(request.user, 'id_usuario', None)
+        if hasattr(usuario_autenticado, 'pk'):
+            usuario_autenticado = usuario_autenticado.pk
+        if usuario_autenticado is None:
+            usuario_autenticado = request.user.pk
 
-            if not usuario:
-                print("ERROR: La asignación no tiene usuario.")
-                return
+        if asignacion.id_usuario_id != usuario_autenticado:
+            return Response(
+                {'error': 'No tienes autorización para registrar la llegada de este turno.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
-            try:
-                fecha_turno = asignacion.fecha.strftime("%d/%m/%Y")
+        if str(asignacion.estado).strip().lower() == 'finalizado':
+            return Response(
+                {'error': 'Este turno ya fue finalizado.'},
+                status=status.HTTP_409_CONFLICT
+            )
 
-                mensaje = (
-                    f"Te han asignado un nuevo turno para el día "
-                    f"{fecha_turno}. Consulta la sección Inicio de GerIApp."
-                )
+        if asignacion.fecha_hora_llegada:
+            return Response(
+                {
+                    'mensaje': 'La llegada ya estaba registrada.',
+                    'asignacion': self.get_serializer(asignacion).data
+                },
+                status=status.HTTP_200_OK
+            )
 
-                notificacion = Notificaciones.objects.create(
-                    titulo="Nuevo turno asignado",
-                    tipo="TURNO",
-                    mensaje=mensaje,
-                    enviar_correo=False,
-                    fecha_hora=timezone.now(),
-                    estado=True,
-                    id_usuario=usuario,
-                )
+        asignacion.fecha_hora_llegada = timezone.now()
+        asignacion.estado = 'En curso'
+        asignacion.save(update_fields=['fecha_hora_llegada', 'estado'])
 
-                print(
-                    "Notificación creada:",
-                    notificacion.id_notificacion
-                )
+        return Response(
+            {
+                'mensaje': 'Llegada registrada correctamente.',
+                'asignacion': self.get_serializer(asignacion).data
+            },
+            status=status.HTTP_200_OK
+        )
 
-                enviar_notificacion_fcm(notificacion, usuario)
+    def perform_create(self, serializer):
+        asignacion = serializer.save()
+        usuario = asignacion.id_usuario
 
-                print("Función de envío FCM ejecutada.")
+        print("========== PUSH TURNO ==========")
+        print("Asignación creada:", asignacion.pk)
+        print("Usuario asignado:", usuario.pk if usuario else None)
+        print("Fecha del turno:", asignacion.fecha)
 
-            except Exception as e:
-                print("ERROR EN PUSH TURNO:", repr(e))
-                raise
+        if not usuario:
+            print("ERROR: La asignación no tiene usuario.")
+            return
+
+        try:
+            fecha_turno = asignacion.fecha.strftime("%d/%m/%Y")
+
+            mensaje = (
+                f"Te han asignado un nuevo turno para el día "
+                f"{fecha_turno}. Consulta la sección Inicio de GerIApp."
+            )
+
+            notificacion = Notificaciones.objects.create(
+                titulo="Nuevo turno asignado",
+                tipo="TURNO",
+                mensaje=mensaje,
+                enviar_correo=False,
+                fecha_hora=timezone.now(),
+                estado=True,
+                id_usuario=usuario,
+            )
+
+            print(
+                "Notificación creada:",
+                notificacion.id_notificacion
+            )
+
+            enviar_notificacion_fcm(notificacion, usuario)
+
+            print("Función de envío FCM ejecutada.")
+
+        except Exception as e:
+            print("ERROR EN PUSH TURNO:", repr(e))
+            raise
 
 class PermisosViewSet(viewsets.ModelViewSet):
     queryset = Permisos.objects.all()

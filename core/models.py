@@ -133,7 +133,7 @@ class AsignacionTurnoUsuario(models.Model):
     fecha = models.DateField()
     estado = models.CharField()
     id_grupo_asignacion = models.CharField(blank=True, null=True)
-
+    fecha_hora_llegada = models.DateTimeField(blank=True,null=True)
     class Meta:
         managed = False
         db_table = 'asignacion_turno_usuario'

@@ -3236,10 +3236,62 @@ class CamasViewSet(viewsets.ModelViewSet):
     queryset = Camas.objects.all()
     serializer_class = CamasSerializer
 
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return Camas.objects.none()
+
+        rol = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: puede consultar todas las camas.
+        if rol == 4:
+            return Camas.objects.all()
+
+        # Administrador, encargado y cuidador:
+        # únicamente camas de su sede.
+        if rol in (1, 2, 3):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return Camas.objects.none()
+
+            return Camas.objects.filter(
+                id_habitacion__id_sede_id=sede_id
+            ).distinct()
+
+        return Camas.objects.none()
+
 class HabitacionesViewSet(viewsets.ModelViewSet):
 
     queryset = Habitaciones.objects.all()
     serializer_class = HabitacionesSerializer
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return Habitaciones.objects.none()
+
+        rol = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: todas las sedes.
+        if rol == 4:
+            return Habitaciones.objects.all()
+
+        # Usuarios operativos: únicamente su sede.
+        if rol in (1, 2, 3):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return Habitaciones.objects.none()
+
+            return Habitaciones.objects.filter(
+                id_sede_id=sede_id
+            )
+
+        return Habitaciones.objects.none()
+
 
     # --------------------------------------------------------
     # ELIMINAR SOLO SI NO EXISTEN RELACIONES

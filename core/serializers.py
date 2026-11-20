@@ -842,10 +842,12 @@ class TurnosSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+
 class AsignacionTurnoUsuarioSerializer(serializers.ModelSerializer):
     class Meta:
         model = AsignacionTurnoUsuario
         fields = '__all__'
+        read_only_fields = ('fecha_hora_llegada',)
 
 class PermisosSerializer(serializers.ModelSerializer):
     class Meta:

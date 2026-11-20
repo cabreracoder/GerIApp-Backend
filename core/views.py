@@ -40,6 +40,12 @@ from .models import (
 )
 from .serializers import EventosIaSerializer
 from .notificaciones_utils import enviar_notificacion_fcm
+from .asignaciones_vigencia import (
+    es_ultimo_dia_pendiente_grupo,
+    filtrar_asignaciones_en_rango,
+    filtrar_asignaciones_vigentes,
+    finalizar_asignaciones_del_bloque,
+)
 
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
@@ -2416,13 +2422,14 @@ class AplicacionMedicamentoViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Verificar que el cuidador siga asignado al paciente.
+            # Verificar que el cuidador siga asignado al paciente y vigente.
             asignacion_activa = (
-                AsignacionPacienteCuidador.objects.filter(
+                filtrar_asignaciones_vigentes()
+                .filter(
                     id_usuario_id=usuario_cuidador.id_usuario,
                     id_paciente_id=id_paciente,
-                    estado__iexact='Activo'
-                ).exists()
+                )
+                .exists()
             )
 
             if not asignacion_activa:
@@ -2800,6 +2807,16 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        vigentes = self.request.query_params.get('vigentes')
+        if (
+            vigentes is not None
+            and vigentes.strip().lower() in ('true', '1', 'si', 'sí')
+        ):
+            queryset = filtrar_asignaciones_vigentes(queryset)
+        return queryset
+
 
 
 class NotificacionesViewSet(viewsets.ModelViewSet):
@@ -3023,10 +3040,9 @@ class SeguimientoAdministracionMedicamentoViewSet(
 
     def _tiene_asignacion_activa(self, usuario, id_paciente):
 
-        return AsignacionPacienteCuidador.objects.filter(
+        return filtrar_asignaciones_vigentes().filter(
             id_usuario_id=usuario.id_usuario,
             id_paciente_id=id_paciente,
-            estado__iexact='Activo'
         ).exists()
 
     # =====================================================
@@ -4060,6 +4076,18 @@ class CierreTurnoViewSet(viewsets.ModelViewSet):
                 asignacion.estado = "Finalizado"
                 asignacion.save(update_fields=["estado"])
 
+                # Si es el último día pendiente del bloque (o un turno individual sin grupo),
+                # desactivar únicamente las asignaciones activas de pacientes que
+                # correspondan al bloque que está finalizando.
+                if (
+                    asignacion.id_usuario_id
+                    and es_ultimo_dia_pendiente_grupo(asignacion)
+                ):
+                    finalizar_asignaciones_del_bloque(
+                        asignacion=asignacion,
+                        fecha_cierre=cierre.fecha_hora,
+                    )
+
             return Response(
                 self.get_serializer(cierre).data,
                 status=status.HTTP_201_CREATED
@@ -4151,14 +4179,14 @@ class ResumenCuidadosTurnoView(APIView):
                 fecha_fin_consulta
             )
 
-            # 5. Obtener pacientes activos del cuidador
+            # 5. Obtener pacientes asignados al cuidador durante el rango del turno
             asignaciones_pacientes = (
-                AsignacionPacienteCuidador.objects
-                .select_related("id_paciente")
-                .filter(
-                    id_usuario_id=id_cuidador,
-                    estado__iexact="Activo"
+                filtrar_asignaciones_en_rango(
+                    id_usuario=id_cuidador,
+                    inicio=fecha_inicio,
+                    fin=fecha_fin_consulta,
                 )
+                .select_related("id_paciente")
             )
 
             pacientes_por_id = {}
@@ -4493,13 +4521,10 @@ class EventosIaViewSet(viewsets.ModelViewSet):
         # 2. Obtener el paciente relacionado
         paciente = evento.id_paciente
 
-        # 3. Buscar cuidadores con asignación activa
+        # 3. Buscar cuidadores con asignación activa y vigente
         asignaciones = (
-            AsignacionPacienteCuidador.objects
-            .filter(
-                id_paciente=paciente,
-                estado__iexact="Activo"
-            )
+            filtrar_asignaciones_vigentes()
+            .filter(id_paciente=paciente)
             .select_related("id_usuario")
         )
 
@@ -5979,13 +6004,12 @@ def obtener_token_livekit(request):
             status=status.HTTP_404_NOT_FOUND
         )
 
-    # Comprobar que el cuidador tenga asignado un paciente activo
+    # Comprobar que el cuidador tenga asignado un paciente activo y vigente
     # que figure actualmente en la habitación solicitada.
-    paciente_autorizado = AsignacionPacienteCuidador.objects.filter(
-    id_usuario_id=usuario.id_usuario,
-    id_paciente__habitacion=id_habitacion,
-    id_paciente__estado=True,
-    estado__iexact='Activo'
+    paciente_autorizado = filtrar_asignaciones_vigentes().filter(
+        id_usuario_id=usuario.id_usuario,
+        id_paciente__habitacion=id_habitacion,
+        id_paciente__estado=True,
     ).exists()
 
     if not paciente_autorizado:

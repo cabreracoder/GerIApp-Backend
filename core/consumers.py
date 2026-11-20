@@ -2,7 +2,7 @@
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 
-from .models import AsignacionPacienteCuidador
+from .asignaciones_vigencia import filtrar_asignaciones_vigentes
 from .permissions import ROL_CUIDADOR
 
 
@@ -21,11 +21,10 @@ def cuidador_puede_ver_paciente(usuario, id_paciente):
     if id_rol != ROL_CUIDADOR:
         return False
 
-    # Comprobar que tenga una asignación activa al paciente.
-    return AsignacionPacienteCuidador.objects.filter(
+    # Comprobar que tenga una asignación activa y vigente al paciente.
+    return filtrar_asignaciones_vigentes().filter(
         id_usuario_id=usuario_modelo.id_usuario,
         id_paciente_id=id_paciente,
-        estado__iexact="Activo",
     ).exists()
 
 

@@ -120,11 +120,12 @@ class AsignacionPacienteCuidador(models.Model):
     fecha_fin = models.DateTimeField()
     estado = models.CharField()
     observaciones = models.CharField()
+    id_grupo_asignacion = models.CharField(max_length=255, blank=True, null=True)
 
     class Meta:
         managed = False
         db_table = 'asignacion_paciente_cuidador'
-
+        
 
 class AsignacionTurnoUsuario(models.Model):
     id_asignacion_turno_usuario = models.AutoField(primary_key=True)

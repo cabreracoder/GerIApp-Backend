@@ -44,9 +44,11 @@ from .serializers import EventosIaSerializer
 from .notificaciones_utils import enviar_notificacion_fcm
 from .asignaciones_vigencia import (
     es_ultimo_dia_pendiente_grupo,
+    existe_asignacion_conflictiva_otro_cuidador,
     filtrar_asignaciones_en_rango,
     filtrar_asignaciones_vigentes,
     finalizar_asignaciones_del_bloque,
+    obtener_ids_pacientes_ocupados_por_otros,
 )
 
 from django.views.decorators.csrf import csrf_exempt
@@ -1556,9 +1558,25 @@ class PacientesViewSet(viewsets.ModelViewSet):
             id_sede_id=sede_id
         ).values_list("id_habitacion", flat=True)
 
-        return Pacientes.objects.filter(
+        queryset = Pacientes.objects.filter(
             habitacion__in=habitaciones_sede
         ).distinct()
+
+        disponibles_seleccion = self.request.query_params.get(
+            "disponibles_seleccion"
+        )
+        if (
+            disponibles_seleccion is not None
+            and disponibles_seleccion.strip().lower() in ("true", "1", "si", "sí")
+        ):
+            id_usuario = getattr(usuario, "id_usuario", None)
+            ids_ocupados = obtener_ids_pacientes_ocupados_por_otros(
+                id_usuario=id_usuario
+            )
+            if ids_ocupados:
+                queryset = queryset.exclude(id_paciente__in=ids_ocupados)
+
+        return queryset
 
     def _validar_sede_habitacion(self, serializer):
         from rest_framework.exceptions import ValidationError
@@ -3032,6 +3050,19 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
+    MENSAJE_PACIENTE_OCUPADO = (
+        "Este paciente ya fue seleccionado por otro cuidador "
+        "y no se encuentra disponible para este turno."
+    )
+
+    def _obtener_id_rol(self, usuario):
+        rol = getattr(usuario, "id_rol", None)
+        return (
+            getattr(rol, "id_rol", None)
+            if rol is not None
+            else getattr(usuario, "id_rol_id", None)
+        )
+
     def get_queryset(self):
         usuario = self.request.user
 
@@ -3082,6 +3113,185 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
             queryset = filtrar_asignaciones_vigentes(queryset)
 
         return queryset.distinct()
+
+    def _guardar_con_exclusividad(
+        self,
+        request,
+        serializer,
+        instance=None,
+        status_exito=status.HTTP_200_OK,
+    ):
+        serializer.is_valid(raise_exception=True)
+
+        datos = serializer.validated_data
+        usuario_autenticado = request.user
+        rol_id = self._obtener_id_rol(usuario_autenticado)
+        id_usuario_autenticado = getattr(
+            usuario_autenticado,
+            "id_usuario",
+            None,
+        )
+
+        # Un cuidador solo puede gestionar sus propias asignaciones.
+        if rol_id == 3:
+            if (
+                instance is not None
+                and instance.id_usuario_id != id_usuario_autenticado
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "No tienes permiso para modificar la asignación "
+                            "de otro cuidador."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            usuario_objetivo = datos.get(
+                "id_usuario",
+                getattr(instance, "id_usuario", None),
+            )
+            if (
+                usuario_objetivo is not None
+                and usuario_objetivo.id_usuario != id_usuario_autenticado
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "No tienes permiso para registrar asignaciones "
+                            "para otro cuidador."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        estado_objetivo = (
+            datos.get("estado", getattr(instance, "estado", "")) or ""
+        ).strip().lower()
+
+        extra_save = {}
+        usuario_objetivo = datos.get(
+            "id_usuario",
+            getattr(instance, "id_usuario", None),
+        )
+        if usuario_objetivo is None and rol_id == 3:
+            usuario_modelo = getattr(usuario_autenticado, "usuario", None)
+            if usuario_modelo is not None:
+                usuario_objetivo = usuario_modelo
+                extra_save["id_usuario"] = usuario_modelo
+
+        # Deselección o guardado en estado no activo: conserva el flujo actual.
+        if estado_objetivo != "activo":
+            serializer.save(**extra_save)
+            headers = (
+                self.get_success_headers(serializer.data)
+                if instance is None
+                else {}
+            )
+            return Response(
+                serializer.data,
+                status=status_exito,
+                headers=headers,
+            )
+
+        paciente_objetivo = datos.get(
+            "id_paciente",
+            getattr(instance, "id_paciente", None),
+        )
+        fecha_inicio = datos.get(
+            "fecha_inicio",
+            getattr(instance, "fecha_inicio", None),
+        )
+        fecha_fin = datos.get(
+            "fecha_fin",
+            getattr(instance, "fecha_fin", None),
+        )
+
+        if paciente_objetivo is None:
+            return Response(
+                {"error": "Debes indicar el paciente a asignar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if usuario_objetivo is None:
+            return Response(
+                {"error": "Debes indicar el cuidador de la asignación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                # Bloquea la fila estable del paciente en PostgreSQL para
+                # serializar solicitudes simultáneas sobre el mismo paciente.
+                Pacientes.objects.select_for_update().get(
+                    id_paciente=paciente_objetivo.id_paciente
+                )
+
+                hay_conflicto = existe_asignacion_conflictiva_otro_cuidador(
+                    id_paciente=paciente_objetivo.id_paciente,
+                    id_usuario=usuario_objetivo.id_usuario,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin,
+                    excluir_id_asignacion=getattr(
+                        instance,
+                        "id_asignacion",
+                        None,
+                    ),
+                )
+
+                if hay_conflicto:
+                    return Response(
+                        {
+                            "error": self.MENSAJE_PACIENTE_OCUPADO,
+                            "detail": self.MENSAJE_PACIENTE_OCUPADO,
+                            "codigo": "PACIENTE_OCUPADO",
+                            "id_paciente": paciente_objetivo.id_paciente,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                serializer.save(**extra_save)
+        except Pacientes.DoesNotExist:
+            return Response(
+                {"error": "No se encontró el paciente indicado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        headers = (
+            self.get_success_headers(serializer.data)
+            if instance is None
+            else {}
+        )
+        return Response(
+            serializer.data,
+            status=status_exito,
+            headers=headers,
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        return self._guardar_con_exclusividad(
+            request=request,
+            serializer=serializer,
+            instance=None,
+            status_exito=status.HTTP_201_CREATED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        return self._guardar_con_exclusividad(
+            request=request,
+            serializer=serializer,
+            instance=instance,
+            status_exito=status.HTTP_200_OK,
+        )
 
 
 

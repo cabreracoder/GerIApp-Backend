@@ -422,3 +422,125 @@ def finalizar_asignaciones_del_bloque(asignacion, fecha_cierre, queryset=None):
         desactivadas += 1
 
     return desactivadas
+
+
+def _filtro_solapamiento_rango(inicio, fin):
+    """
+    Construye el filtro de superposición temporal compatible con
+    filtrar_asignaciones_en_rango(), evitando falsos conflictos en el límite
+    exacto entre turnos consecutivos.
+    """
+    inicio_aware = _asegurar_aware(inicio)
+    fin_aware = _asegurar_aware(fin)
+
+    if inicio_aware == fin_aware:
+        return Q(
+            fecha_inicio__lte=fin_aware,
+            fecha_fin__gte=inicio_aware,
+        )
+
+    return (
+        Q(fecha_inicio__lt=fin_aware, fecha_fin__gt=inicio_aware)
+        | Q(
+            fecha_inicio=F("fecha_fin"),
+            fecha_inicio__gte=inicio_aware,
+            fecha_inicio__lte=fin_aware,
+        )
+    )
+
+
+def existe_asignacion_conflictiva_otro_cuidador(
+    id_paciente,
+    id_usuario,
+    fecha_inicio,
+    fecha_fin,
+    excluir_id_asignacion=None,
+    ahora=None,
+    queryset=None,
+):
+    """
+    Verifica si existe otra asignación activa y no vencida de un cuidador
+    distinto para el mismo paciente cuyo periodo se superponga con
+    [fecha_inicio, fecha_fin].
+    """
+    if not id_paciente or fecha_inicio is None or fecha_fin is None:
+        return False
+
+    ahora_aware = _asegurar_aware(ahora)
+    inicio_aware = _asegurar_aware(fecha_inicio)
+    fin_aware = _asegurar_aware(fecha_fin)
+
+    if inicio_aware > fin_aware:
+        return False
+
+    qs = (
+        queryset
+        if queryset is not None
+        else AsignacionPacienteCuidador.objects.all()
+    )
+    qs = (
+        qs.filter(id_paciente_id=id_paciente)
+        .annotate(_estado_limpio=Lower(Trim("estado")))
+        .filter(
+            _estado_limpio="activo",
+            fecha_fin__gte=ahora_aware,
+        )
+    )
+
+    if id_usuario is not None:
+        qs = qs.exclude(id_usuario_id=id_usuario)
+
+    if excluir_id_asignacion is not None:
+        qs = qs.exclude(id_asignacion=excluir_id_asignacion)
+
+    return qs.filter(_filtro_solapamiento_rango(inicio_aware, fin_aware)).exists()
+
+
+def obtener_ids_pacientes_ocupados_por_otros(
+    id_usuario,
+    ahora=None,
+    queryset=None,
+):
+    """
+    Devuelve los IDs de pacientes actualmente ocupados por otros cuidadores.
+    - Si el cuidador tiene un bloque de turno activo, evalúa asignaciones
+      activas no vencidas de otros cuidadores superpuestas con su bloque
+      (incluyendo llegada anticipada desde ahora).
+    - Si no tiene bloque de turno activo, reutiliza filtrar_asignaciones_vigentes().
+    """
+    ahora_aware = _asegurar_aware(ahora)
+    qs_base = (
+        queryset
+        if queryset is not None
+        else AsignacionPacienteCuidador.objects.all()
+    )
+
+    rango_bloque = (
+        obtener_rango_bloque_turno_usuario(id_usuario, ahora=ahora_aware)
+        if id_usuario
+        else None
+    )
+
+    if rango_bloque:
+        inicio_bloque, fin_bloque = rango_bloque
+        inicio_efectivo = min(inicio_bloque, ahora_aware)
+
+        qs_ocupados = (
+            qs_base.annotate(_estado_limpio=Lower(Trim("estado")))
+            .filter(
+                _estado_limpio="activo",
+                fecha_fin__gte=ahora_aware,
+                id_paciente__isnull=False,
+            )
+            .filter(_filtro_solapamiento_rango(inicio_efectivo, fin_bloque))
+        )
+    else:
+        qs_ocupados = filtrar_asignaciones_vigentes(
+            queryset=qs_base,
+            ahora=ahora_aware,
+        ).filter(id_paciente__isnull=False)
+
+    if id_usuario is not None:
+        qs_ocupados = qs_ocupados.exclude(id_usuario_id=id_usuario)
+
+    return set(qs_ocupados.values_list("id_paciente_id", flat=True).distinct())

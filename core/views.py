@@ -2053,7 +2053,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
             ):
                 campos_permitidos = campos_personales
 
-            elif rol_objetivo in (2, 3):
+            elif rol_objetivo in (None, 2, 3):
                 campos_permitidos = campos_personales | {
                     "estado",
                     "id_rol",

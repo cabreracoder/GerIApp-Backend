@@ -271,6 +271,8 @@ from .serializers import (
     SolicitudCitaActualizacionSerializer,
 )
 
+from rest_framework.exceptions import PermissionDenied
+
 
 # ==========================================
 # CONFIGURACIÓN DEL LOGGER
@@ -1261,15 +1263,105 @@ def _es_archivo_pdf(archivo, nombre_alternativo=''):
     return nombre.endswith('.pdf') or content_type == 'application/pdf'
 
 
+def _pacientes_permitidos_por_sede(usuario):
+    """
+    Obtiene los pacientes que puede consultar el usuario.
+    El superadministrador no tiene acceso a información clínica.
+    """
+    if not getattr(usuario, "is_authenticated", False):
+        return Pacientes.objects.none()
+
+    rol_id = getattr(usuario, "id_rol_id", None)
+
+    # El superadministrador no accede a pacientes.
+    if rol_id == 4:
+        return Pacientes.objects.none()
+
+    if rol_id not in (1, 2, 3):
+        return Pacientes.objects.none()
+
+    sede_id = getattr(usuario, "id_sede_id", None)
+
+    if not sede_id:
+        return Pacientes.objects.none()
+
+    habitaciones = Habitaciones.objects.filter(
+        id_sede_id=sede_id
+    ).values_list("id_habitacion", flat=True)
+
+    pacientes = Pacientes.objects.filter(
+        habitacion__in=habitaciones
+    )
+
+    # El cuidador solamente puede consultar sus pacientes asignados.
+    if rol_id == 3:
+        asignaciones = filtrar_asignaciones_vigentes().filter(
+            id_usuario_id=usuario.id_usuario,
+            id_paciente__habitacion__in=habitaciones
+        ).values_list("id_paciente_id", flat=True)
+
+        pacientes = pacientes.filter(
+            id_paciente__in=asignaciones
+        )
+
+    return pacientes.distinct()
+
+
+def _filtrar_registros_por_paciente(queryset, campo_paciente, usuario):
+    """
+    Restringe registros operativos a los pacientes autorizados.
+    campo_paciente indica la relación ORM con el paciente.
+    """
+    pacientes = _pacientes_permitidos_por_sede(
+        usuario
+    ).values_list("id_paciente", flat=True)
+
+    return queryset.filter(
+        **{f"{campo_paciente}__in": pacientes}
+    )
+
+
+
 class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = DocumentosHistoriaClinica.objects.all()
     serializer_class = DocumentosHistoriaClinicaSerializer
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    def get_queryset(self):
+        pacientes = _pacientes_permitidos_por_sede(
+            self.request.user
+        )
+
+        return DocumentosHistoriaClinica.objects.filter(
+            id_paciente__in=pacientes.values_list(
+                'id_paciente',
+                flat=True
+            )
+        )
+
+    def _validar_paciente_autorizado(self, paciente):
+        from rest_framework.exceptions import PermissionDenied
+
+        if not paciente or not _pacientes_permitidos_por_sede(
+            self.request.user
+        ).filter(
+            id_paciente=paciente.id_paciente
+        ).exists():
+            raise PermissionDenied(
+                "No tienes permiso para acceder a los documentos "
+                "de este paciente."
+            )
+
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        paciente = serializer.validated_data.get(
+            'id_paciente'
+        )
+
+        self._validar_paciente_autorizado(paciente)
 
         archivo_subido = request.FILES.get('archivo')
         if not archivo_subido:
@@ -1363,7 +1455,10 @@ class ProcesarHistoriaPdfView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, id_paciente):
-        paciente = get_object_or_404(Pacientes, id_paciente=id_paciente)
+        paciente = get_object_or_404(
+            _pacientes_permitidos_por_sede(request.user),
+            id_paciente=id_paciente
+        )
         archivo_pdf = (
             request.FILES.get('archivo')
             or request.FILES.get('pdf')
@@ -2751,24 +2846,140 @@ class MovimientoInsumoViewSet(viewsets.ModelViewSet):
 class BitacoraViewSet(viewsets.ModelViewSet):
     queryset = Bitacora.objects.all()
     serializer_class = BitacoraSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return _filtrar_registros_por_paciente(
+            Bitacora.objects.all(),
+            'id_paciente',
+            self.request.user
+        )
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+
+        paciente = serializer.validated_data.get('id_paciente')
+
+        if not paciente or not _pacientes_permitidos_por_sede(
+            self.request.user
+        ).filter(id_paciente=paciente.id_paciente).exists():
+            raise PermissionDenied(
+                "No tienes permiso para registrar bitácoras "
+                "de este paciente."
+            )
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+
+        paciente = serializer.validated_data.get(
+            'id_paciente',
+            serializer.instance.id_paciente
+        )
+
+        if not paciente or not _pacientes_permitidos_por_sede(
+            self.request.user
+        ).filter(id_paciente=paciente.id_paciente).exists():
+            raise PermissionDenied(
+                "No tienes permiso para modificar esta bitácora."
+            )
+
+        serializer.save()
 
 
 class ActividadesViewSet(viewsets.ModelViewSet):
     queryset = Actividades.objects.all()
     serializer_class = ActividadesSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        pacientes = _pacientes_permitidos_por_sede(
+            self.request.user
+        ).values_list("id_paciente", flat=True)
+
+        return Actividades.objects.filter(
+            id_bitacora__id_paciente__in=pacientes
+        ).distinct()
+
+    def _validar_bitacora_autorizada(self, bitacora):
+        if (
+            not bitacora
+            or not bitacora.id_paciente_id
+            or not _pacientes_permitidos_por_sede(
+                self.request.user
+            ).filter(
+                id_paciente=bitacora.id_paciente_id
+            ).exists()
+        ):
+            raise PermissionDenied(
+                "No tienes permiso para registrar "
+                "actividades de este paciente."
+            )
+
+    def perform_create(self, serializer):
+        bitacora = serializer.validated_data.get("id_bitacora")
+
+        self._validar_bitacora_autorizada(bitacora)
+
+        serializer.save()
+
+    def perform_update(self, serializer):
+        bitacora = serializer.validated_data.get(
+            "id_bitacora",
+            serializer.instance.id_bitacora
+        )
+
+        self._validar_bitacora_autorizada(bitacora)
+
+        serializer.save()
 
 
 class SignosVitalesViewSet(viewsets.ModelViewSet):
     queryset = SignosVitales.objects.all()
     serializer_class = SignosVitalesSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        pacientes = _pacientes_permitidos_por_sede(
+            usuario
+        ).values_list("id_paciente", flat=True)
+
+        return SignosVitales.objects.filter(
+            id_bitacora__id_paciente__in=pacientes
+        ).distinct()
+
+    def _validar_bitacora_autorizada(self, bitacora):
+        from rest_framework.exceptions import PermissionDenied
+
+        if (
+            not bitacora
+            or not _pacientes_permitidos_por_sede(
+                self.request.user
+            ).filter(
+                id_paciente=bitacora.id_paciente_id
+            ).exists()
+        ):
+            raise PermissionDenied(
+                "No tienes permiso para registrar o modificar "
+                "signos vitales de este paciente."
+            )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
+        bitacora = serializer.validated_data.get("id_bitacora")
+
+        self._validar_bitacora_autorizada(bitacora)
+
         signo = serializer.save()
 
         respuesta = dict(serializer.data)
         mensaje_alerta = getattr(signo, 'alerta_generada', None)
+
         if mensaje_alerta:
             respuesta['alerta'] = True
             respuesta['mensaje_alerta'] = mensaje_alerta
@@ -2776,11 +2987,23 @@ class SignosVitalesViewSet(viewsets.ModelViewSet):
             respuesta['alerta'] = False
 
         headers = self.get_success_headers(serializer.data)
+
         return Response(
             respuesta,
             status=status.HTTP_201_CREATED,
             headers=headers,
         )
+
+    def perform_update(self, serializer):
+        bitacora = serializer.validated_data.get(
+            "id_bitacora",
+            serializer.instance.id_bitacora
+        )
+
+        self._validar_bitacora_autorizada(bitacora)
+
+        serializer.save()
+
 
 
 class TipoEventoViewSet(viewsets.ModelViewSet):
@@ -2810,14 +3033,55 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     serializer_class = AsignacionPacienteCuidadorSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        usuario = self.request.user
+
+        if not getattr(usuario, "is_authenticated", False):
+            return AsignacionPacienteCuidador.objects.none()
+
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: conserva acceso global.
+        if rol_id == 4:
+            queryset = AsignacionPacienteCuidador.objects.all()
+
+        # Administrador, encargado y cuidador:
+        # únicamente asignaciones de su propia sede.
+        elif rol_id in (1, 2):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return AsignacionPacienteCuidador.objects.none()
+
+            queryset = AsignacionPacienteCuidador.objects.filter(
+                id_paciente__id_sede_id=sede_id,
+                id_usuario__id_sede_id=sede_id
+            )
+
+        elif rol_id == 3:
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return AsignacionPacienteCuidador.objects.none()
+
+            queryset = AsignacionPacienteCuidador.objects.filter(
+                id_usuario_id=usuario.id_usuario,
+                id_usuario__id_sede_id=sede_id,
+                id_paciente__id_sede_id=sede_id
+            )
+
+        else:
+            return AsignacionPacienteCuidador.objects.none()
+
+        # Conservar el filtro original de asignaciones vigentes.
         vigentes = self.request.query_params.get('vigentes')
+
         if (
             vigentes is not None
             and vigentes.strip().lower() in ('true', '1', 'si', 'sí')
         ):
             queryset = filtrar_asignaciones_vigentes(queryset)
-        return queryset
+
+        return queryset.distinct()
 
 
 
@@ -2825,6 +3089,74 @@ class NotificacionesViewSet(viewsets.ModelViewSet):
 
     queryset = Notificaciones.objects.all()
     serializer_class = NotificacionesSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return Notificaciones.objects.none()
+
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Conservar el comportamiento actual del superadministrador.
+        if rol_id == 4:
+            return Notificaciones.objects.all()
+
+        # Obtener pacientes autorizados de la sede.
+        pacientes = _pacientes_permitidos_por_sede(
+            usuario
+        ).values_list("id_paciente", flat=True)
+
+        # Consultar notificaciones propias o relacionadas
+        # con pacientes autorizados.
+        return Notificaciones.objects.filter(
+            Q(id_paciente_id__in=pacientes)
+            | Q(
+                id_usuario_id=usuario.id_usuario,
+                id_paciente__isnull=True
+            )
+        ).distinct()
+
+    def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+
+        usuario = self.request.user
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # No modificar el comportamiento del superadministrador.
+        if rol_id == 4:
+            serializer.save()
+            return
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if rol_id not in (1, 2, 3) or not sede_id:
+            raise PermissionDenied(
+                "No tienes permiso para crear notificaciones."
+            )
+
+        paciente = serializer.validated_data.get("id_paciente")
+
+        if paciente and not _pacientes_permitidos_por_sede(
+            usuario
+        ).filter(
+            id_paciente=paciente.id_paciente
+        ).exists():
+            raise PermissionDenied(
+                "No puedes generar notificaciones "
+                "para pacientes de otra sede."
+            )
+
+        destinatario = serializer.validated_data.get("id_usuario")
+
+        if destinatario and destinatario.id_sede_id != sede_id:
+            raise PermissionDenied(
+                "No puedes enviar notificaciones "
+                "a usuarios de otra sede."
+            )
+
+        serializer.save()
 
     def create(self, request, *args, **kwargs):
 
@@ -3616,6 +3948,22 @@ class NotificacionDestinatarioViewSet(
     queryset = NotificacionDestinatario.objects.all()
     serializer_class = NotificacionDestinatarioSerializer
 
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        usuario_id = getattr(
+            self.request.user,
+            "id_usuario",
+            None
+        )
+
+        if not self.request.user.is_authenticated or not usuario_id:
+            return NotificacionDestinatario.objects.none()
+
+        return NotificacionDestinatario.objects.filter(
+            id_usuario_id=usuario_id
+        )
+
     # ============================================================
     # LISTAR DESTINATARIOS
     # ============================================================
@@ -3627,8 +3975,10 @@ class NotificacionDestinatarioViewSet(
         # destinatario para el usuario indicado en id_usuario
         # --------------------------------------------------------
 
+        usuario_id = request.user.id_usuario
+
         notificaciones = Notificaciones.objects.filter(
-            id_usuario__isnull=False
+            id_usuario_id=usuario_id
         )
 
         for notificacion in notificaciones:
@@ -3668,8 +4018,10 @@ class NotificacionDestinatarioViewSet(
             "id_notificacion"
         )
 
-        id_usuario = request.data.get(
-            "id_usuario"
+        id_usuario = getattr(
+            request.user,
+            "id_usuario",
+            None
         )
 
         # --------------------------------------------------------
@@ -3684,29 +4036,13 @@ class NotificacionDestinatarioViewSet(
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if not id_usuario:
-            return Response(
-                {
-                    "error": "Se requiere id_usuario."
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         try:
-
-            id_notificacion = int(
-                id_notificacion
-            )
-
-            id_usuario = int(
-                id_usuario
-            )
+            id_notificacion = int(id_notificacion)
 
         except (TypeError, ValueError):
-
             return Response(
                 {
-                    "error": "Los IDs deben ser números."
+                    "error": "El ID de la notificación debe ser un número."
                 },
                 status=status.HTTP_400_BAD_REQUEST
             )
@@ -3729,6 +4065,33 @@ class NotificacionDestinatarioViewSet(
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        # --------------------------------------------------------
+        # VALIDAR QUE LA NOTIFICACIÓN PERTENEZCA AL USUARIO
+        # --------------------------------------------------------
+
+        rol_id = getattr(request.user, "id_rol_id", None)
+
+        if rol_id != 4:
+            pacientes = _pacientes_permitidos_por_sede(
+                request.user
+            ).values_list("id_paciente", flat=True)
+
+            notificacion_permitida = Notificaciones.objects.filter(
+                id_notificacion=id_notificacion
+            ).filter(
+                Q(id_paciente_id__in=pacientes)
+                | Q(
+                    id_usuario_id=id_usuario,
+                    id_paciente__isnull=True
+                )
+            ).exists()
+
+            if not notificacion_permitida:
+                return Response(
+                    {"error": "No tienes acceso a esta notificación."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
 
         # --------------------------------------------------------
         # BUSCAR O CREAR DESTINATARIO
@@ -4005,6 +4368,7 @@ class TurnosViewSet(viewsets.ModelViewSet):
 class CierreTurnoViewSet(viewsets.ModelViewSet):
     queryset = CierreTurno.objects.all()
     serializer_class = CierreTurnoSerializer
+    permission_classes = [IsAuthenticated]
 
     def create(self, request, *args, **kwargs):
         """
@@ -4316,11 +4680,42 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
     queryset = AsignacionTurnoUsuario.objects.all()
     serializer_class = AsignacionTurnoUsuarioSerializer
 
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not usuario.is_authenticated:
+            return AsignacionTurnoUsuario.objects.none()
+
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: acceso global.
+        if rol_id == 4:
+            return AsignacionTurnoUsuario.objects.all()
+
+        sede_id = getattr(usuario, "id_sede_id", None)
+
+        if not sede_id:
+            return AsignacionTurnoUsuario.objects.none()
+
+        # Administrador y encargado: asignaciones de su sede.
+        if rol_id in (1, 2):
+            return AsignacionTurnoUsuario.objects.filter(
+                id_usuario__id_sede_id=sede_id
+            )
+
+        # Cuidador: únicamente sus propios turnos.
+        if rol_id == 3:
+            return AsignacionTurnoUsuario.objects.filter(
+                id_usuario_id=usuario.id_usuario
+            )
+
+        return AsignacionTurnoUsuario.objects.none()
+
     @action(detail=True, methods=['post'], url_path='registrar-llegada', permission_classes=[IsAuthenticated])
     @transaction.atomic
     def registrar_llegada(self, request, pk=None):
         asignacion = get_object_or_404(
-            AsignacionTurnoUsuario.objects.select_for_update(),
+            self.get_queryset().select_for_update(),
             pk=pk
         )
         self.check_object_permissions(request, asignacion)
@@ -4365,6 +4760,34 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
+        usuario_actual = self.request.user
+        rol_id = getattr(usuario_actual, "id_rol_id", None)
+
+        if rol_id != 4:
+            if rol_id not in (1, 2, 3):
+                raise PermissionDenied(
+                    "No tienes permiso para asignar turnos."
+                )
+
+            sede_id = getattr(usuario_actual, "id_sede_id", None)
+
+            if not sede_id:
+                raise PermissionDenied(
+                    "Tu usuario no tiene una sede asignada."
+                )
+
+            usuario_asignado = serializer.validated_data.get(
+                "id_usuario"
+            )
+
+            if (
+                not usuario_asignado
+                or usuario_asignado.id_sede_id != sede_id
+            ):
+                raise PermissionDenied(
+                    "No puedes asignar turnos a usuarios "
+                    "de otra sede."
+                )
         asignacion = serializer.save()
         usuario = asignacion.id_usuario
 
@@ -4408,6 +4831,44 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
             print("ERROR EN PUSH TURNO:", repr(e))
             raise
 
+    def perform_update(self, serializer):
+
+        usuario_actual = self.request.user
+        rol_id = getattr(usuario_actual, "id_rol_id", None)
+
+        # Superadministrador: acceso global.
+        if rol_id == 4:
+            serializer.save()
+            return
+
+        if rol_id not in (1, 2, 3):
+            raise PermissionDenied(
+                "No tienes permiso para modificar asignaciones."
+            )
+
+        sede_id = getattr(usuario_actual, "id_sede_id", None)
+
+        if not sede_id:
+            raise PermissionDenied(
+                "Tu usuario no tiene una sede asignada."
+            )
+
+        usuario_asignado = serializer.validated_data.get(
+            "id_usuario",
+            serializer.instance.id_usuario
+        )
+
+        if (
+            not usuario_asignado
+            or usuario_asignado.id_sede_id != sede_id
+        ):
+            raise PermissionDenied(
+                "No puedes asignar turnos a usuarios "
+                "de otra sede."
+            )
+
+        serializer.save()
+
 class PermisosViewSet(viewsets.ModelViewSet):
     queryset = Permisos.objects.all()
     serializer_class = PermisosSerializer
@@ -4449,6 +4910,34 @@ class CuidadosEnfermeriaViewSet(viewsets.ModelViewSet):
 class AsignacionHabitacionViewSet(viewsets.ModelViewSet):
     queryset = AsignacionHabitacion.objects.all()
     serializer_class = AsignacionHabitacionSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        usuario = self.request.user
+
+        if not getattr(usuario, "is_authenticated", False):
+            return AsignacionHabitacion.objects.none()
+
+        rol_id = getattr(usuario, "id_rol_id", None)
+
+        # Superadministrador: consulta todas las sedes.
+        if rol_id == 4:
+            return AsignacionHabitacion.objects.all()
+
+        # Administrador, encargado y cuidador:
+        # solamente asignaciones de su propia sede.
+        if rol_id in (1, 2, 3):
+            sede_id = getattr(usuario, "id_sede_id", None)
+
+            if not sede_id:
+                return AsignacionHabitacion.objects.none()
+
+            return AsignacionHabitacion.objects.filter(
+                id_paciente__id_sede_id=sede_id,
+                id_habitacion__id_sede_id=sede_id
+            ).distinct()
+
+        return AsignacionHabitacion.objects.none()
 
 class FundacionesViewSet(viewsets.ModelViewSet):
     queryset = Fundaciones.objects.all()

@@ -1,5 +1,6 @@
 from django.core.serializers import python
 from django.db import models
+from django.utils import timezone
 import uuid
 
 class RegistrosFacialesUsuarios(models.Model):
@@ -120,7 +121,7 @@ class AsignacionPacienteCuidador(models.Model):
     fecha_fin = models.DateTimeField()
     estado = models.CharField()
     observaciones = models.CharField()
-    id_grupo_asignacion = models.CharField(max_length=255, blank=True, null=True)
+    id_grupo_asignacion = models.CharField(max_length=36, blank=True, null=True)
 
     class Meta:
         managed = False
@@ -133,7 +134,7 @@ class AsignacionTurnoUsuario(models.Model):
     id_turno = models.ForeignKey('Turnos', models.DO_NOTHING, db_column='id_turno', blank=True, null=True)
     fecha = models.DateField()
     estado = models.CharField()
-    id_grupo_asignacion = models.CharField(blank=True, null=True)
+    id_grupo_asignacion = models.CharField(max_length=36, blank=True, null=True)
     fecha_hora_llegada = models.DateTimeField(blank=True,null=True)
     class Meta:
         managed = False
@@ -1316,3 +1317,66 @@ class SolicitudCita(models.Model):
             f'Solicitud {self.id_solicitud} - '
             f'{self.especialidad}'
         )
+
+class RecordatorioCita(models.Model):
+
+    ESTADOS = [
+        ('PENDIENTE', 'Pendiente'),
+        ('EN_PROCESO', 'En proceso'),
+        ('ENVIADO', 'Enviado'),
+        ('CANCELADO', 'Cancelado'),
+        ('ERROR', 'Error'),
+    ]
+
+    id_recordatorio = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
+    id_cita = models.OneToOneField(
+        'Citas',
+        on_delete=models.DO_NOTHING,
+        db_column='id_cita'
+    )
+
+    fecha_programada = models.DateTimeField()
+
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default='PENDIENTE'
+    )
+
+    fecha_envio = models.DateTimeField(
+        blank=True,
+        null=True
+    )
+
+    id_notificacion = models.ForeignKey(
+        'Notificaciones',
+        on_delete=models.SET_NULL,
+        db_column='id_notificacion',
+        blank=True,
+        null=True
+    )
+
+    fecha_creacion = models.DateTimeField(
+        default=timezone.now
+    )
+
+    ultimo_error = models.TextField(
+        blank=True,
+        null=True
+    )
+
+    fecha_procesamiento = models.DateTimeField(
+    blank=True,
+    null=True
+    )
+
+    intentos = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'recordatorio_cita'

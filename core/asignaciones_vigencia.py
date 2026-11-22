@@ -253,6 +253,53 @@ def filtrar_asignaciones_vigentes(queryset=None, ahora=None):
     )
 
 
+def obtener_cuidador_para_cita(cita, fecha_hora_cita):
+
+    if not cita.id_paciente_id:
+        return None
+
+    fecha_hora_cita = asegurar_aware_colombia(
+        fecha_hora_cita
+    )
+
+    asignaciones = (
+        AsignacionPacienteCuidador.objects
+        .select_related('id_usuario', 'id_paciente')
+        .annotate(
+            estado_limpio=Lower(Trim('estado'))
+        )
+        .filter(
+            id_paciente_id=cita.id_paciente_id,
+            fecha_inicio__lte=fecha_hora_cita,
+            fecha_fin__gte=fecha_hora_cita,
+            estado_limpio='activo',
+            id_usuario__isnull=False
+        )
+        .order_by('-fecha_inicio')
+    )
+
+    asignacion = asignaciones.first()
+
+    if not asignacion:
+        logger.warning(
+            "No se encontró cuidador para la cita %s "
+            "en la fecha %s",
+            cita.id_cita,
+            fecha_hora_cita
+        )
+        return None
+
+    if asignaciones.count() > 1:
+        logger.warning(
+            "Se encontraron varias asignaciones para el paciente "
+            "%s durante la cita %s.",
+            cita.id_paciente_id,
+            cita.id_cita
+        )
+
+    return asignacion.id_usuario
+
+
 def filtrar_asignaciones_en_rango(id_usuario, inicio, fin, queryset=None):
     """
     Filtra asignaciones paciente-cuidador de un cuidador cuyo periodo se solapa

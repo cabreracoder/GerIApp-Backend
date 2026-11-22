@@ -4,6 +4,7 @@ import re
 from django.core.serializers import python
 from rest_framework import serializers
 from django.utils import timezone
+from datetime import datetime, timedelta
 from .asignaciones_vigencia import (
     asegurar_aware_colombia,
     filtrar_asignaciones_vigentes,
@@ -73,6 +74,7 @@ from .models import (
     DocumentosHistoriaClinica,
     EstadoPosturaPaciente,
     SolicitudCita,
+    RecordatorioCita,
 )
 
 class ImagenFacialSerializer(serializers.Serializer):
@@ -1023,61 +1025,46 @@ class CitasSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
 
+        # Obtener fecha y hora de la cita
+        fecha = validated_data.get('fecha')
+        hora = validated_data.get('hora')
 
+        try:
+            fecha_cita = datetime.strptime(
+                str(fecha), "%Y-%m-%d"
+            ).date()
+
+            hora_cita = datetime.strptime(
+                str(hora), "%H:%M"
+            ).time()
+
+        except (ValueError, TypeError):
+            raise serializers.ValidationError(
+                "La fecha debe tener formato YYYY-MM-DD "
+                "y la hora formato HH:MM."
+            )
+
+        # Calcular el recordatorio: dos horas antes
+        fecha_hora_cita = datetime.combine(
+            fecha_cita,
+            hora_cita
+        )
+
+        fecha_programada = fecha_hora_cita - timedelta(hours=2)
+
+        fecha_programada = timezone.make_aware(
+            fecha_programada,
+            timezone.get_current_timezone()
+        )
+
+        # Crear la cita
         cita = Citas.objects.create(**validated_data)
 
-        # VERIFICAR QUE LA CITA TENGA PACIENTE
-
-        if not cita.id_paciente:
-            return cita
-
-        # BUSCAR EL CUIDADOR ACTUAL DEL PACIENTE
-
-        asignacion = (
-            filtrar_asignaciones_vigentes()
-            .filter(id_paciente=cita.id_paciente)
-            .order_by("-fecha_inicio")
-            .first()
-        )
-
-
-        if not asignacion or not asignacion.id_usuario:
-            return cita
-
-        # CREAR LA NOTIFICACIÓN
-
-        nombre_paciente = (
-            f"{cita.id_paciente.nombre} "
-            f"{cita.id_paciente.apellido}"
-        ).strip()
-
-        mensaje = (
-            f"El paciente {nombre_paciente} tiene una nueva cita "
-            f"el {cita.fecha} a las {cita.hora}."
-        )
-
-        if cita.lugar:
-            mensaje += f" Lugar: {cita.lugar}."
-
-        if cita.motivo:
-            mensaje += f" Motivo: {cita.motivo}."
-
-        notificacion = Notificaciones.objects.create(
-            titulo="Nueva cita",
-            tipo="CITA",
-            mensaje=mensaje,
-            enviar_correo=False,
-            fecha_hora=timezone.now(),
-            estado=True,
-            id_paciente=cita.id_paciente,
-            id_usuario=asignacion.id_usuario
-        )
-
-        from core.notificaciones_utils import enviar_notificacion_fcm
-
-        enviar_notificacion_fcm(
-            notificacion,
-            asignacion.id_usuario
+        # Crear un único recordatorio para esta cita
+        RecordatorioCita.objects.create(
+            id_cita=cita,
+            fecha_programada=fecha_programada,
+            estado='PENDIENTE'
         )
 
         return cita
@@ -1240,3 +1227,14 @@ class SolicitudCitaActualizacionSerializer(serializers.ModelSerializer):
         validated_data['fecha_actualizacion'] = timezone.now()
 
         return super().update(instance, validated_data)
+
+class RecordatorioCitaSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = RecordatorioCita
+        fields = '__all__'
+        read_only_fields = [
+            'id_recordatorio',
+            'fecha_envio',
+            'fecha_creacion'
+        ]

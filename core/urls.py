@@ -33,6 +33,7 @@ from .views import (
     RegistrosFacialesViewSet,
     DocumentosHistoriaClinicaViewSet,
     ProcesarHistoriaPdfView,
+    ProcesarRecordatoriosCitaView,
 )
 
 
@@ -103,6 +104,7 @@ from .views import (
     ElementosPacienteViewSet,
     CitasViewSet,
     SolicitudCitaViewSet,
+    RecordatorioCitaViewSet,
 )
 
 
@@ -191,6 +193,12 @@ router.register(r'movimiento_insumo', MovimientoInsumoViewSet)
 router.register(r'bitacora', BitacoraViewSet)
 router.register(r'actividades', ActividadesViewSet)
 router.register(r'signos_vitales', SignosVitalesViewSet)
+
+router.register(
+    r'recordatorios-cita',
+    RecordatorioCitaViewSet,
+    basename='recordatorios-cita'
+)
 
 router.register(r'tipo_evento', TipoEventoViewSet)
 router.register(r'tipo_emergencia', TipoEmergenciaViewSet)
@@ -355,6 +363,12 @@ urlpatterns = [
         'resumen-cuidados-turno/<int:id_asignacion>/',
         ResumenCuidadosTurnoView.as_view(),
         name='resumen_cuidados_turno'
+    ),
+
+    path(
+    'procesar-recordatorios-citas/',
+    ProcesarRecordatoriosCitaView.as_view(),
+    name='procesar-recordatorios-citas'
     ),
 
     # --------------------------

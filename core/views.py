@@ -2001,6 +2001,43 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
                 campos_permitidos = campos_personales
 
+            # NUEVO: asignar sede a usuarios que todavía no tienen rol.
+            elif rol_objetivo is None:
+                campos_permitidos = {"id_sede"}
+
+                if "id_sede" not in campos_recibidos:
+                    return Response(
+                        {
+                            "error": (
+                                "Debes seleccionar una sede "
+                                "para este usuario."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                try:
+                    sede_id = int(request.data.get("id_sede"))
+                except (TypeError, ValueError):
+                    return Response(
+                        {"error": "La sede seleccionada no es válida."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if not Sedes.objects.filter(
+                    id_sede=sede_id,
+                    estado=True
+                ).exists():
+                    return Response(
+                        {
+                            "error": (
+                                "La sede seleccionada no existe "
+                                "o está inactiva."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
             # Puede gestionar cuentas de administradores.
             elif rol_objetivo == 1:
                 campos_permitidos = campos_personales | {
@@ -2047,17 +2084,35 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         # Administrador.
         elif rol_actual == 1:
+
             if (
                 usuario_objetivo.id_usuario
                 == usuario_actual.id_usuario
             ):
                 campos_permitidos = campos_personales
 
-            elif rol_objetivo in (2, 3):
+            # NUEVO: también puede asignar rol a usuarios sin rol,
+            # siempre que pertenezcan a su sede.
+            elif rol_objetivo in (None, 2, 3):
+
                 campos_permitidos = campos_personales | {
                     "estado",
                     "id_rol",
                 }
+
+                # Un usuario pendiente debe recibir un rol.
+                if (
+                    rol_objetivo is None
+                    and "id_rol" not in campos_recibidos
+                ):
+                    return Response(
+                        {
+                            "error": (
+                                "Debes asignar un rol al usuario."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
                 if "id_rol" in campos_recibidos:
                     try:
@@ -2095,6 +2150,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
 
         # Encargado y demás roles.
         else:
+
             # Poder consultar un cuidador no significa poder editarlo.
             if (
                 usuario_objetivo.id_usuario
@@ -2130,6 +2186,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
             )
 
         return super().update(request, *args, **kwargs)
+
 
     # =====================================================
     # ELIMINAR USUARIO

@@ -4,7 +4,16 @@ from core.firebase_config import inicializar_firebase
 from .models import FcmTokens, NotificacionDestinatario
 
 
+
 def enviar_notificacion_fcm(notificacion, usuario):
+
+    resultado = {
+        "exito": False,
+        "enviados": 0,
+        "fallidos": 0,
+        "sin_tokens": False,
+        "error": None
+    }
 
     # Registrar destinatario sin duplicarlo.
     NotificacionDestinatario.objects.get_or_create(
@@ -22,24 +31,26 @@ def enviar_notificacion_fcm(notificacion, usuario):
     )
 
     if not tokens.exists():
-        print(
-            f"FCM: El usuario {usuario.pk} "
-            "no tiene tokens activos."
-        )
-        return
+        resultado["sin_tokens"] = True
+        resultado["error"] = "El usuario no tiene tokens FCM activos."
+        print(f"FCM: {resultado['error']} Usuario: {usuario.pk}")
+        return resultado
 
     try:
         app = inicializar_firebase()
 
         if app is None:
-            print("FCM: Firebase no pudo inicializarse.")
-            return
+            resultado["error"] = "Firebase no pudo inicializarse."
+            print(f"FCM: {resultado['error']}")
+            return resultado
 
     except Exception as error:
+        resultado["error"] = str(error)
         print(f"FCM: Error inicializando Firebase: {error}")
-        return
+        return resultado
 
     for fcm_token in tokens:
+
         mensaje = messaging.Message(
             notification=messaging.Notification(
                 title=notificacion.titulo,
@@ -62,10 +73,22 @@ def enviar_notificacion_fcm(notificacion, usuario):
 
         try:
             respuesta = messaging.send(mensaje)
+
+            resultado["enviados"] += 1
+
             print(f"FCM enviado correctamente: {respuesta}")
 
         except Exception as error:
+            resultado["fallidos"] += 1
+
             print(
                 f"FCM: Error enviando al token "
                 f"{fcm_token.id_fcm_token}: {error}"
             )
+
+    resultado["exito"] = resultado["enviados"] > 0
+
+    if not resultado["exito"]:
+        resultado["error"] = "No se pudo enviar a ningún token FCM."
+
+    return resultado

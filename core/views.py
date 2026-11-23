@@ -1,4 +1,3 @@
-
 from rest_framework import viewsets, status, parsers, mixins
 from rest_framework.views import APIView
 from rest_framework.decorators import (
@@ -11,12 +10,14 @@ from rest_framework.decorators import (
 )
 from rest_framework import status
 from rest_framework.decorators import action
+from math import ceil
 
 from rest_framework import mixins, viewsets
-from rest_framework.permissions import IsAuthenticated
 
 from .models import SolicitudCita
 from .serializers import SolicitudCitaSerializer
+
+from .asignaciones_vigencia import obtener_cuidador_para_cita
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -34,6 +35,7 @@ from rest_framework.parsers import (
 from rest_framework import viewsets
 from django.utils import timezone
 from django.db import transaction
+from zoneinfo import ZoneInfo
 
 from .models import (
     EventosIa,
@@ -44,9 +46,11 @@ from .serializers import EventosIaSerializer
 from .notificaciones_utils import enviar_notificacion_fcm
 from .asignaciones_vigencia import (
     es_ultimo_dia_pendiente_grupo,
+    existe_asignacion_conflictiva_otro_cuidador,
     filtrar_asignaciones_en_rango,
     filtrar_asignaciones_vigentes,
     finalizar_asignaciones_del_bloque,
+    obtener_ids_pacientes_ocupados_por_otros,
 )
 
 from django.views.decorators.csrf import csrf_exempt
@@ -195,6 +199,7 @@ from .models import (
     RegistrosFacialesUsuarios,
     EstadoPosturaPaciente,
     SolicitudCita,
+    RecordatorioCita,
 )
 
 
@@ -269,6 +274,7 @@ from .serializers import (
     EstadoPosturaPacienteSerializer,
     SolicitudCitaSerializer,
     SolicitudCitaActualizacionSerializer,
+    RecordatorioCitaSerializer,
 )
 
 from rest_framework.exceptions import PermissionDenied
@@ -1556,9 +1562,25 @@ class PacientesViewSet(viewsets.ModelViewSet):
             id_sede_id=sede_id
         ).values_list("id_habitacion", flat=True)
 
-        return Pacientes.objects.filter(
+        queryset = Pacientes.objects.filter(
             habitacion__in=habitaciones_sede
         ).distinct()
+
+        disponibles_seleccion = self.request.query_params.get(
+            "disponibles_seleccion"
+        )
+        if (
+            disponibles_seleccion is not None
+            and disponibles_seleccion.strip().lower() in ("true", "1", "si", "sí")
+        ):
+            id_usuario = getattr(usuario, "id_usuario", None)
+            ids_ocupados = obtener_ids_pacientes_ocupados_por_otros(
+                id_usuario=id_usuario
+            )
+            if ids_ocupados:
+                queryset = queryset.exclude(id_paciente__in=ids_ocupados)
+
+        return queryset
 
     def _validar_sede_habitacion(self, serializer):
         from rest_framework.exceptions import ValidationError
@@ -2091,10 +2113,9 @@ class UsuariosViewSet(viewsets.ModelViewSet):
             ):
                 campos_permitidos = campos_personales
 
-            # NUEVO: también puede asignar rol a usuarios sin rol,
+            # Permite asignar rol a usuarios sin rol,
             # siempre que pertenezcan a su sede.
             elif rol_objetivo in (None, 2, 3):
-
                 campos_permitidos = campos_personales | {
                     "estado",
                     "id_rol",
@@ -2114,28 +2135,17 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                if "id_rol" in campos_recibidos:
-                    try:
-                        nuevo_rol = int(request.data["id_rol"])
-                    except (TypeError, ValueError):
-                        return Response(
-                            {
-                                "error": "El rol indicado no es válido."
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
-
-                    if nuevo_rol not in (2, 3):
-                        return Response(
-                            {
-                                "error": (
-                                    "El Administrador solo puede "
-                                    "asignar los roles operativos "
-                                    "autorizados."
-                                )
-                            },
-                            status=status.HTTP_403_FORBIDDEN,
-                        )
+                if nuevo_rol not in (2, 3):
+                    return Response(
+                        {
+                            "error": (
+                                "El Administrador solo puede "
+                                "asignar los roles operativos "
+                                "autorizados."
+                            )
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
             else:
                 return Response(
@@ -3089,6 +3099,19 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
     queryset = AsignacionPacienteCuidador.objects.all()
     serializer_class = AsignacionPacienteCuidadorSerializer
 
+    MENSAJE_PACIENTE_OCUPADO = (
+        "Este paciente ya fue seleccionado por otro cuidador "
+        "y no se encuentra disponible para este turno."
+    )
+
+    def _obtener_id_rol(self, usuario):
+        rol = getattr(usuario, "id_rol", None)
+        return (
+            getattr(rol, "id_rol", None)
+            if rol is not None
+            else getattr(usuario, "id_rol_id", None)
+        )
+
     def get_queryset(self):
         usuario = self.request.user
 
@@ -3139,6 +3162,185 @@ class AsignacionPacienteCuidadorViewSet(viewsets.ModelViewSet):
             queryset = filtrar_asignaciones_vigentes(queryset)
 
         return queryset.distinct()
+
+    def _guardar_con_exclusividad(
+        self,
+        request,
+        serializer,
+        instance=None,
+        status_exito=status.HTTP_200_OK,
+    ):
+        serializer.is_valid(raise_exception=True)
+
+        datos = serializer.validated_data
+        usuario_autenticado = request.user
+        rol_id = self._obtener_id_rol(usuario_autenticado)
+        id_usuario_autenticado = getattr(
+            usuario_autenticado,
+            "id_usuario",
+            None,
+        )
+
+        # Un cuidador solo puede gestionar sus propias asignaciones.
+        if rol_id == 3:
+            if (
+                instance is not None
+                and instance.id_usuario_id != id_usuario_autenticado
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "No tienes permiso para modificar la asignación "
+                            "de otro cuidador."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            usuario_objetivo = datos.get(
+                "id_usuario",
+                getattr(instance, "id_usuario", None),
+            )
+            if (
+                usuario_objetivo is not None
+                and usuario_objetivo.id_usuario != id_usuario_autenticado
+            ):
+                return Response(
+                    {
+                        "error": (
+                            "No tienes permiso para registrar asignaciones "
+                            "para otro cuidador."
+                        )
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        estado_objetivo = (
+            datos.get("estado", getattr(instance, "estado", "")) or ""
+        ).strip().lower()
+
+        extra_save = {}
+        usuario_objetivo = datos.get(
+            "id_usuario",
+            getattr(instance, "id_usuario", None),
+        )
+        if usuario_objetivo is None and rol_id == 3:
+            usuario_modelo = getattr(usuario_autenticado, "usuario", None)
+            if usuario_modelo is not None:
+                usuario_objetivo = usuario_modelo
+                extra_save["id_usuario"] = usuario_modelo
+
+        # Deselección o guardado en estado no activo: conserva el flujo actual.
+        if estado_objetivo != "activo":
+            serializer.save(**extra_save)
+            headers = (
+                self.get_success_headers(serializer.data)
+                if instance is None
+                else {}
+            )
+            return Response(
+                serializer.data,
+                status=status_exito,
+                headers=headers,
+            )
+
+        paciente_objetivo = datos.get(
+            "id_paciente",
+            getattr(instance, "id_paciente", None),
+        )
+        fecha_inicio = datos.get(
+            "fecha_inicio",
+            getattr(instance, "fecha_inicio", None),
+        )
+        fecha_fin = datos.get(
+            "fecha_fin",
+            getattr(instance, "fecha_fin", None),
+        )
+
+        if paciente_objetivo is None:
+            return Response(
+                {"error": "Debes indicar el paciente a asignar."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if usuario_objetivo is None:
+            return Response(
+                {"error": "Debes indicar el cuidador de la asignación."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                # Bloquea la fila estable del paciente en PostgreSQL para
+                # serializar solicitudes simultáneas sobre el mismo paciente.
+                Pacientes.objects.select_for_update().get(
+                    id_paciente=paciente_objetivo.id_paciente
+                )
+
+                hay_conflicto = existe_asignacion_conflictiva_otro_cuidador(
+                    id_paciente=paciente_objetivo.id_paciente,
+                    id_usuario=usuario_objetivo.id_usuario,
+                    fecha_inicio=fecha_inicio,
+                    fecha_fin=fecha_fin,
+                    excluir_id_asignacion=getattr(
+                        instance,
+                        "id_asignacion",
+                        None,
+                    ),
+                )
+
+                if hay_conflicto:
+                    return Response(
+                        {
+                            "error": self.MENSAJE_PACIENTE_OCUPADO,
+                            "detail": self.MENSAJE_PACIENTE_OCUPADO,
+                            "codigo": "PACIENTE_OCUPADO",
+                            "id_paciente": paciente_objetivo.id_paciente,
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                serializer.save(**extra_save)
+        except Pacientes.DoesNotExist:
+            return Response(
+                {"error": "No se encontró el paciente indicado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        headers = (
+            self.get_success_headers(serializer.data)
+            if instance is None
+            else {}
+        )
+        return Response(
+            serializer.data,
+            status=status_exito,
+            headers=headers,
+        )
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        return self._guardar_con_exclusividad(
+            request=request,
+            serializer=serializer,
+            instance=None,
+            status_exito=status.HTTP_201_CREATED,
+        )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(
+            instance,
+            data=request.data,
+            partial=partial,
+        )
+        return self._guardar_con_exclusividad(
+            request=request,
+            serializer=serializer,
+            instance=instance,
+            status_exito=status.HTTP_200_OK,
+        )
 
 
 
@@ -4733,10 +4935,75 @@ class ResumenCuidadosTurnoView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
 class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
     queryset = AsignacionTurnoUsuario.objects.all()
     serializer_class = AsignacionTurnoUsuarioSerializer
 
+    # =================================================
+    # CONSTRUIR FECHA Y HORA DEL TURNO
+    # =================================================
+    def obtener_hora_programada(self, asignacion):
+
+        if not asignacion.id_turno:
+            return None
+
+        if not asignacion.id_turno.hora_inicio:
+            return None
+
+        zona_colombia = ZoneInfo('America/Bogota')
+
+        fecha_hora = datetime.combine(
+            asignacion.fecha,
+            asignacion.id_turno.hora_inicio
+        )
+
+        return timezone.make_aware(
+            fecha_hora,
+            zona_colombia
+        )
+
+    # =================================================
+    # CONSULTAR FECHA Y HORA PROGRAMADA
+    # =================================================
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='hora-programada',
+        permission_classes=[IsAuthenticated]
+    )
+    def hora_programada(self, request, pk=None):
+
+        asignacion = get_object_or_404(
+            self.get_queryset().select_related('id_turno'),
+            pk=pk
+        )
+
+        self.check_object_permissions(request, asignacion)
+
+        fecha_hora_inicio = self.obtener_hora_programada(asignacion)
+
+        if fecha_hora_inicio is None:
+            return Response(
+                {
+                    'error': 'El turno no tiene una hora de inicio configurada.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {
+                'id_asignacion_turno_usuario': asignacion.pk,
+                'fecha': asignacion.fecha,
+                'hora_inicio': asignacion.id_turno.hora_inicio,
+                'fecha_hora_programada': fecha_hora_inicio
+            },
+            status=status.HTTP_200_OK
+        )
+
+    # =================================================
+    # CONSULTAR ASIGNACIONES SEGÚN EL ROL Y LA SEDE
+    # =================================================
     def get_queryset(self):
         usuario = self.request.user
 
@@ -4768,24 +5035,40 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
 
         return AsignacionTurnoUsuario.objects.none()
 
-    @action(detail=True, methods=['post'], url_path='registrar-llegada', permission_classes=[IsAuthenticated])
+    # =================================================
+    # REGISTRAR LLEGADA REAL
+    # =================================================
+    @action(
+        detail=True,
+        methods=['post'],
+        url_path='registrar-llegada',
+        permission_classes=[IsAuthenticated]
+    )
     @transaction.atomic
     def registrar_llegada(self, request, pk=None):
+
         asignacion = get_object_or_404(
             self.get_queryset().select_for_update(),
             pk=pk
         )
+
         self.check_object_permissions(request, asignacion)
 
-        usuario_autenticado = getattr(request.user, 'id_usuario', None)
+        usuario_autenticado = getattr(
+            request.user, 'id_usuario', None
+        )
+
         if hasattr(usuario_autenticado, 'pk'):
             usuario_autenticado = usuario_autenticado.pk
+
         if usuario_autenticado is None:
             usuario_autenticado = request.user.pk
 
         if asignacion.id_usuario_id != usuario_autenticado:
             return Response(
-                {'error': 'No tienes autorización para registrar la llegada de este turno.'},
+                {
+                    'error': 'No tienes autorización para registrar la llegada de este turno.'
+                },
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -4806,7 +5089,10 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
 
         asignacion.fecha_hora_llegada = timezone.now()
         asignacion.estado = 'En curso'
-        asignacion.save(update_fields=['fecha_hora_llegada', 'estado'])
+
+        asignacion.save(
+            update_fields=['fecha_hora_llegada', 'estado']
+        )
 
         return Response(
             {
@@ -4816,11 +5102,16 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
             status=status.HTTP_200_OK
         )
 
+    # =================================================
+    # CREAR ASIGNACIÓN Y NOTIFICAR AL CUIDADOR
+    # =================================================
     def perform_create(self, serializer):
+
         usuario_actual = self.request.user
         rol_id = getattr(usuario_actual, "id_rol_id", None)
 
         if rol_id != 4:
+
             if rol_id not in (1, 2, 3):
                 raise PermissionDenied(
                     "No tienes permiso para asignar turnos."
@@ -4845,6 +5136,7 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
                     "No puedes asignar turnos a usuarios "
                     "de otra sede."
                 )
+
         asignacion = serializer.save()
         usuario = asignacion.id_usuario
 
@@ -4888,6 +5180,9 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
             print("ERROR EN PUSH TURNO:", repr(e))
             raise
 
+    # =================================================
+    # ACTUALIZAR ASIGNACIÓN
+    # =================================================
     def perform_update(self, serializer):
 
         usuario_actual = self.request.user
@@ -4925,6 +5220,7 @@ class AsignacionTurnoUsuarioViewSet(viewsets.ModelViewSet):
             )
 
         serializer.save()
+
 
 class PermisosViewSet(viewsets.ModelViewSet):
     queryset = Permisos.objects.all()
@@ -6685,3 +6981,301 @@ class SolicitudCitaViewSet(
             return SolicitudCitaActualizacionSerializer
 
         return SolicitudCitaSerializer
+
+
+
+class ProcesarRecordatoriosCitaView(APIView):
+
+    authentication_classes = [N8NApiKeyAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    MINUTOS_RECUPERACION = 10
+
+    def post(self, request):
+
+        ahora = timezone.now()
+        limite_recuperacion = ahora - timedelta(
+            minutes=self.MINUTOS_RECUPERACION
+        )
+
+        procesados = 0
+        enviados = 0
+        errores = 0
+        sin_cuidador = 0
+        omitidos = 0
+
+        # Pendientes que ya llegaron a su hora y procesos
+        # interrumpidos hace más de 10 minutos.
+        recordatorios_ids = list(
+            RecordatorioCita.objects.filter(
+                Q(
+                    estado='PENDIENTE',
+                    fecha_programada__lte=ahora
+                )
+                | Q(
+                    estado='EN_PROCESO',
+                    fecha_programada__lte=ahora
+                ) & (
+                    Q(fecha_procesamiento__isnull=True)
+                    | Q(fecha_procesamiento__lte=limite_recuperacion)
+                )
+            )
+            .order_by('fecha_programada')
+            .values_list('id_recordatorio', flat=True)[:100]
+        )
+
+        for recordatorio_id in recordatorios_ids:
+
+            recordatorio = None
+            notificacion = None
+            cuidador = None
+
+            try:
+
+                # FASE 1: reclamar el recordatorio.
+                # La transacción termina antes de llamar a FCM.
+                with transaction.atomic():
+
+                    recordatorio = (
+                        RecordatorioCita.objects
+                        .select_for_update(skip_locked=True)
+                        .select_related(
+                            'id_cita',
+                            'id_cita__id_paciente',
+                            'id_notificacion'
+                        )
+                        .filter(
+                            id_recordatorio=recordatorio_id
+                        )
+                        .first()
+                    )
+
+                    if not recordatorio:
+                        omitidos += 1
+                        continue
+
+                    ahora = timezone.now()
+
+                    pendiente = (
+                        recordatorio.estado == 'PENDIENTE'
+                    )
+
+                    proceso_abandonado = (
+                        recordatorio.estado == 'EN_PROCESO'
+                        and (
+                            recordatorio.fecha_procesamiento is None
+                            or recordatorio.fecha_procesamiento
+                            <= ahora - timedelta(
+                                minutes=self.MINUTOS_RECUPERACION
+                            )
+                        )
+                    )
+
+                    if not (pendiente or proceso_abandonado):
+                        omitidos += 1
+                        continue
+
+                    if recordatorio.fecha_programada > ahora:
+                        omitidos += 1
+                        continue
+
+                    # Reclamar el registro.
+                    recordatorio.estado = 'EN_PROCESO'
+                    recordatorio.fecha_procesamiento = ahora
+                    recordatorio.intentos += 1
+
+                    recordatorio.save(
+                        update_fields=[
+                            'estado',
+                            'fecha_procesamiento',
+                            'intentos'
+                        ]
+                    )
+
+                    cita = recordatorio.id_cita
+
+                    # Validar paciente.
+                    if not cita.id_paciente_id:
+                        raise ValueError(
+                            'La cita no tiene un paciente asociado.'
+                        )
+
+                    # Convertir fecha y hora de la cita.
+                    fecha_cita = datetime.strptime(
+                        str(cita.fecha),
+                        '%Y-%m-%d'
+                    ).date()
+
+                    hora_cita = datetime.strptime(
+                        str(cita.hora),
+                        '%H:%M'
+                    ).time()
+
+                    fecha_hora_cita = timezone.make_aware(
+                        datetime.combine(
+                            fecha_cita,
+                            hora_cita
+                        ),
+                        timezone.get_current_timezone()
+                    )
+
+                    # Buscar al cuidador asignado durante la cita.
+                    cuidador = obtener_cuidador_para_cita(
+                        cita,
+                        fecha_hora_cita
+                    )
+
+                    if not cuidador:
+
+                        recordatorio.estado = 'PENDIENTE'
+                        recordatorio.fecha_procesamiento = None
+                        recordatorio.ultimo_error = (
+                            'No existe un cuidador activo asignado '
+                            'al paciente durante la fecha y hora de la cita.'
+                        )
+
+                        recordatorio.save(
+                            update_fields=[
+                                'estado',
+                                'fecha_procesamiento',
+                                'ultimo_error'
+                            ]
+                        )
+
+                        sin_cuidador += 1
+                        continue
+
+                    nombre_paciente = (
+                        f'{cita.id_paciente.nombre} '
+                        f'{cita.id_paciente.apellido}'
+                    ).strip()
+
+                    mensaje = (
+                        f'Recordatorio: el paciente {nombre_paciente} '
+                        f'tiene una cita el {cita.fecha} '
+                        f'a las {cita.hora}.'
+                    )
+
+                    if cita.lugar:
+                        mensaje += f' Lugar: {cita.lugar}.'
+
+                    if cita.motivo:
+                        mensaje += f' Motivo: {cita.motivo}.'
+
+                    # Reutilizar la notificación si pertenece
+                    # al mismo cuidador.
+                    notificacion = recordatorio.id_notificacion
+
+                    if (
+                        not notificacion
+                        or notificacion.id_usuario_id != cuidador.pk
+                    ):
+
+                        notificacion = Notificaciones.objects.create(
+                            titulo='Recordatorio de cita',
+                            tipo='CITA',
+                            mensaje=mensaje,
+                            enviar_correo=False,
+                            fecha_hora=timezone.now(),
+                            estado=True,
+                            id_paciente=cita.id_paciente,
+                            id_usuario=cuidador
+                        )
+
+                        recordatorio.id_notificacion = notificacion
+
+                        recordatorio.save(
+                            update_fields=['id_notificacion']
+                        )
+
+                # FASE 2: enviar FCM fuera de la transacción.
+                resultado = enviar_notificacion_fcm(
+                    notificacion,
+                    cuidador
+                )
+
+                # FASE 3: guardar el resultado.
+                with transaction.atomic():
+
+                    registro_final = (
+                        RecordatorioCita.objects
+                        .select_for_update()
+                        .get(id_recordatorio=recordatorio_id)
+                    )
+
+                    if resultado.get('exito'):
+
+                        registro_final.estado = 'ENVIADO'
+                        registro_final.fecha_envio = timezone.now()
+                        registro_final.ultimo_error = None
+
+                        enviados += 1
+
+                    else:
+
+                        registro_final.estado = 'PENDIENTE'
+                        registro_final.ultimo_error = (
+                            resultado.get('error')
+                            or 'No fue posible enviar la notificación.'
+                        )
+
+                        errores += 1
+
+                    registro_final.fecha_procesamiento = None
+
+                    registro_final.save(
+                        update_fields=[
+                            'estado',
+                            'fecha_envio',
+                            'fecha_procesamiento',
+                            'ultimo_error'
+                        ]
+                    )
+
+                    procesados += 1
+
+            except Exception as error:
+
+                errores += 1
+
+                print(
+                    f'Error procesando recordatorio '
+                    f'{recordatorio_id}: {error}'
+                )
+
+                # Liberar el registro para un nuevo intento.
+                RecordatorioCita.objects.filter(
+                    id_recordatorio=recordatorio_id,
+                    estado='EN_PROCESO'
+                ).update(
+                    estado='PENDIENTE',
+                    fecha_procesamiento=None,
+                    ultimo_error=str(error)
+                )
+
+        return Response(
+            {
+                'mensaje': 'Procesamiento de recordatorios finalizado.',
+                'total_procesados': procesados,
+                'total_enviados': enviados,
+                'total_errores': errores,
+                'sin_cuidador': sin_cuidador,
+                'omitidos': omitidos
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class RecordatorioCitaViewSet(
+    viewsets.ReadOnlyModelViewSet
+):
+    queryset = RecordatorioCita.objects.select_related(
+        'id_cita',
+        'id_cita__id_paciente',
+        'id_notificacion'
+    ).all()
+
+    serializer_class = RecordatorioCitaSerializer
+
+    authentication_classes = [N8NApiKeyAuthentication]
+    permission_classes = [IsAuthenticated]

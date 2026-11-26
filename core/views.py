@@ -123,7 +123,10 @@ from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
 
 from .authentication import GeriAppTokenAuthentication, crear_token_usuario
-from .permissions import EsSuperadministradorOMetodoLectura
+from .permissions import (
+    EsSuperadministradorOMetodoLectura,
+    EsAdministradorOSuperadministrador,
+)
 
 # ==========================================
 # AUTENTICACIÓN N8N
@@ -1646,7 +1649,7 @@ class MedicamentosViewSet(viewsets.ModelViewSet):
 class RolesViewSet(viewsets.ModelViewSet):
     queryset = Roles.objects.all()
     serializer_class = RolesSerializer
-    permission_classes = [EsSuperadministradorOMetodoLectura]
+    permission_classes = [EsAdministradorOSuperadministrador]
 
 class SeguimientoAdministracionMedicamentoViewSet(viewsets.ModelViewSet):
     queryset = SeguimientoAdministracionMedicamento.objects.all()
@@ -2104,49 +2107,52 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_403_FORBIDDEN,
                     )
 
-        # Administrador.
+        
+        # Administrador de sede.
         elif rol_actual == 1:
 
+            # Puede modificar sus propios datos personales,
+            # pero no sus privilegios.
             if (
                 usuario_objetivo.id_usuario
                 == usuario_actual.id_usuario
             ):
                 campos_permitidos = campos_personales
 
-            # Permite asignar rol a usuarios sin rol,
-            # siempre que pertenezcan a su sede.
-            elif rol_objetivo in (None, 2, 3):
+            # Solo puede gestionar cuidadores y encargados.
+            elif rol_objetivo in (2, 3):
+
                 campos_permitidos = campos_personales | {
                     "estado",
                     "id_rol",
                 }
 
-                # Un usuario pendiente debe recibir un rol.
-                if (
-                    rol_objetivo is None
-                    and "id_rol" not in campos_recibidos
-                ):
-                    return Response(
-                        {
-                            "error": (
-                                "Debes asignar un rol al usuario."
-                            )
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                # Validar únicamente cuando solicita cambiar el rol.
+                if "id_rol" in campos_recibidos:
 
-                if nuevo_rol not in (2, 3):
-                    return Response(
-                        {
-                            "error": (
-                                "El Administrador solo puede "
-                                "asignar los roles operativos "
-                                "autorizados."
-                            )
-                        },
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
+                    try:
+                        nuevo_rol = int(
+                            request.data.get("id_rol")
+                        )
+                    except (TypeError, ValueError):
+                        return Response(
+                            {"error": "El rol seleccionado no es válido."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
 
+                    # Solo permite Encargado o Cuidador.
+                    if nuevo_rol not in (2, 3):
+                        return Response(
+                            {
+                                "error": (
+                                    "Solo puedes asignar los roles "
+                                    "Encargado y Cuidador."
+                                )
+                            },
+                            status=status.HTTP_403_FORBIDDEN,
+                        )
+
+            # Bloquear cualquier otro usuario.
             else:
                 return Response(
                     {
@@ -2157,6 +2163,7 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
+
 
         # Encargado y demás roles.
         else:

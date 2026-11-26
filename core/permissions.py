@@ -48,3 +48,23 @@ class EsSuperadministradorOMetodoLectura(BasePermission):
             return True
 
         return obtener_id_rol(request.user) == ROL_SUPERADMINISTRADOR
+
+class EsAdministradorOSuperadministrador(BasePermission):
+    """
+    Permite realizar operaciones al Administrador
+    y al Súper Administrador.
+    """
+
+    message = (
+        'Solo el Administrador o el Súper Administrador '
+        'pueden modificar este recurso.'
+    )
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        return obtener_id_rol(request.user) in (
+            ROL_ADMINISTRADOR,
+            ROL_SUPERADMINISTRADOR
+        )

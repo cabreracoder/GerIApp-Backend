@@ -123,10 +123,7 @@ from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
 
 from .authentication import GeriAppTokenAuthentication, crear_token_usuario
-from .permissions import (
-    EsSuperadministradorOMetodoLectura,
-    EsAdministradorOSuperadministrador,
-)
+from .permissions import EsSuperadministradorOMetodoLectura, EsAdministradorOSuperadministrador
 
 # ==========================================
 # AUTENTICACIÓN N8N
@@ -2111,23 +2108,37 @@ class UsuariosViewSet(viewsets.ModelViewSet):
         # Administrador de sede.
         elif rol_actual == 1:
 
-            # Puede modificar sus propios datos personales,
-            # pero no sus privilegios.
+            # Puede modificar sus propios datos personales.
             if (
                 usuario_objetivo.id_usuario
                 == usuario_actual.id_usuario
             ):
                 campos_permitidos = campos_personales
 
-            # Solo puede gestionar cuidadores y encargados.
-            elif rol_objetivo in (2, 3):
+            # Puede gestionar usuarios pendientes,
+            # encargados y cuidadores de su propia sede.
+            elif rol_objetivo in (None, 2, 3):
 
                 campos_permitidos = campos_personales | {
                     "estado",
                     "id_rol",
                 }
 
-                # Validar únicamente cuando solicita cambiar el rol.
+                # Un usuario pendiente debe recibir un rol.
+                if (
+                    rol_objetivo is None
+                    and "id_rol" not in campos_recibidos
+                ):
+                    return Response(
+                        {
+                            "error": (
+                                "Debes asignar un rol al usuario."
+                            )
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Validar únicamente si se solicita cambiar el rol.
                 if "id_rol" in campos_recibidos:
 
                     try:
@@ -2136,23 +2147,28 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                         )
                     except (TypeError, ValueError):
                         return Response(
-                            {"error": "El rol seleccionado no es válido."},
+                            {
+                                "error": (
+                                    "El rol seleccionado no es válido."
+                                )
+                            },
                             status=status.HTTP_400_BAD_REQUEST,
                         )
 
-                    # Solo permite Encargado o Cuidador.
+                    # Solo puede asignar Encargado o Cuidador.
                     if nuevo_rol not in (2, 3):
                         return Response(
                             {
                                 "error": (
-                                    "Solo puedes asignar los roles "
-                                    "Encargado y Cuidador."
+                                    "El Administrador solo puede "
+                                    "asignar los roles operativos "
+                                    "autorizados."
                                 )
                             },
                             status=status.HTTP_403_FORBIDDEN,
                         )
 
-            # Bloquear cualquier otro usuario.
+            # No puede modificar administradores ni superadministradores.
             else:
                 return Response(
                     {
@@ -2163,7 +2179,6 @@ class UsuariosViewSet(viewsets.ModelViewSet):
                     },
                     status=status.HTTP_403_FORBIDDEN,
                 )
-
 
         # Encargado y demás roles.
         else:

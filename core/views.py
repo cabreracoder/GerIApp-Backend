@@ -4362,23 +4362,26 @@ class NotificacionDestinatarioViewSet(
                     status=status.HTTP_404_NOT_FOUND
                 )
 
+
         # --------------------------------------------------------
-        # BUSCAR O CREAR DESTINATARIO
+        # BUSCAR DESTINATARIO REAL
         # --------------------------------------------------------
 
-        destinatario, creado = (
-            NotificacionDestinatario.objects.get_or_create(
+        destinatario = NotificacionDestinatario.objects.filter(
+            id_notificacion_id=id_notificacion,
+            id_usuario_id=id_usuario
+        ).first()
 
-                id_notificacion=notificacion,
-
-                id_usuario_id=id_usuario,
-
-                defaults={
-                    "leida": False,
-                    "fecha_lectura": None
-                }
+        if not destinatario:
+            return Response(
+                {
+                    "error": (
+                        "No tienes acceso a esta notificación "
+                        "como destinatario."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN
             )
-        )
 
         # --------------------------------------------------------
         # MARCAR COMO LEÍDA
@@ -4406,7 +4409,7 @@ class NotificacionDestinatarioViewSet(
                     destinatario.id_notificacion_destinatario,
                 "id_usuario": id_usuario,
                 "leida": True,
-                "creado": creado
+                
             },
             status=status.HTTP_200_OK
         )

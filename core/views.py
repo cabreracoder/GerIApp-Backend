@@ -4232,53 +4232,23 @@ class NotificacionDestinatarioViewSet(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        usuario_id = getattr(
-            self.request.user,
-            "id_usuario",
-            None
-        )
+        usuario = self.request.user
 
-        if not self.request.user.is_authenticated or not usuario_id:
+        if not getattr(usuario, "is_authenticated", False):
             return NotificacionDestinatario.objects.none()
 
-        return NotificacionDestinatario.objects.filter(
-            id_usuario_id=usuario_id
-        )
+        usuario_id = getattr(usuario, "id_usuario", None)
 
-    # ============================================================
-    # LISTAR DESTINATARIOS
-    # ============================================================
+        if not usuario_id:
+            return NotificacionDestinatario.objects.none()
 
-    def list(self, request, *args, **kwargs):
+        queryset = NotificacionDestinatario.objects.all()
 
-        # --------------------------------------------------------
-        # Reparar notificaciones antiguas que no tengan
-        # destinatario para el usuario indicado en id_usuario
-        # --------------------------------------------------------
-
-        usuario_id = request.user.id_usuario
-
-        notificaciones = Notificaciones.objects.filter(
-            id_usuario_id=usuario_id
-        )
-
-        for notificacion in notificaciones:
-
-            NotificacionDestinatario.objects.get_or_create(
-                id_notificacion=notificacion,
-                id_usuario=notificacion.id_usuario,
-                defaults={
-                    "leida": False,
-                    "fecha_lectura": None
-                }
-            )
-
-        return super().list(
-            request,
-            *args,
-            **kwargs
-        )
-
+        return queryset.filter(
+            Q(id_usuario_id=usuario_id)
+            |
+            Q(id_notificacion__id_usuario_id=usuario_id)
+        ).distinct()
     # ============================================================
     # MARCAR CUALQUIER NOTIFICACIÓN COMO LEÍDA
     # ============================================================

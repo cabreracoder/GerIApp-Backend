@@ -527,11 +527,23 @@ class NotificacionesSerializer(serializers.ModelSerializer):
         model = Notificaciones
         fields = '__all__'
 
+
 class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
+
+    nombre_destinatario = serializers.CharField(
+        source='id_usuario.nombres',
+        read_only=True
+    )
+
+    apellido_destinatario = serializers.CharField(
+        source='id_usuario.apellidos',
+        read_only=True
+    )
 
     class Meta:
         model = NotificacionDestinatario
         fields = '__all__'
+
         read_only_fields = [
             'id_notificacion_destinatario',
             'fecha_lectura'
@@ -554,18 +566,14 @@ class NotificacionDestinatarioSerializer(serializers.ModelSerializer):
         instance.leida = nueva_leida
 
         if nueva_leida:
-
             if not instance.fecha_lectura:
                 instance.fecha_lectura = timezone.now()
-
         else:
-
             instance.fecha_lectura = None
 
         instance.save()
 
         return instance
-
 
 class AplicacionMedicamentoSerializer(serializers.ModelSerializer):
     class Meta:

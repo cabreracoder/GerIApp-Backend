@@ -2413,6 +2413,7 @@ def procesar_camara(nombre, modelo):
         postura_detectada = "DESCONOCIDO"
         confianza = 0.0
         indice = None
+        cuerpo_validado = False
 
         bbox_rostro = estado_paciente.get(
             "rostro_paciente_bbox"
@@ -2535,10 +2536,12 @@ def procesar_camara(nombre, modelo):
             # de CONFIANZA_MINIMA_PUNTO para las articulaciones utilizadas.
             confianza = confianza_cuerpo(confianzas)
 
-            if (
+            cuerpo_validado = (
                 cuerpo_valido(puntos, confianzas)
                 and confianza >= CONFIANZA_MINIMA_CUERPO
-            ):
+            )
+
+            if cuerpo_validado:
                 print(
                     f"[{nombre}] PACIENTE {id_paciente} | "
                     f"CUERPO VÁLIDO: {cuerpo_valido(puntos, confianzas)} | "
@@ -2684,30 +2687,37 @@ def procesar_camara(nombre, modelo):
             f"Paciente {id_paciente}"
         )
 
-        # Información organizada en líneas independientes.
+        # --------------------------------------------------
+        # MENSAJES SIMPLES SOBRE EL VIDEO (SOLO VISUAL)
+        # Se conserva intacta la lógica de reconocimiento y detección.
+        # --------------------------------------------------
+        texto_postura = (
+            postura_detectada if cuerpo_validado else "SIN PERSONA"
+        )
+
         lineas_paciente = [
             nombre_paciente,
-            f"POSTURA: {estado_paciente.get('postura_actual', 'DESCONOCIDO')}",
-            texto_alerta
+            f"POSTURA: {texto_postura}",
+            texto_alerta,
         ]
 
-        # Posición inicial de la información.
         x_texto = 20
-        y_texto = 115 + (indice_visual * 100)
+        y_texto = 95 + (indice_visual * 95)
 
-        # Dibujar cada dato debajo del anterior.
         for numero_linea, linea in enumerate(lineas_paciente):
+            color_linea = color
+            if "ALERTA" in linea and "SIN ALERTA" not in linea:
+                color_linea = (0, 0, 255)
+            elif "SIN ALERTA" in linea:
+                color_linea = (0, 255, 0)
 
             cv2.putText(
                 frame_mostrar,
                 linea,
-                (
-                    x_texto,
-                    y_texto + (numero_linea * 30)
-                ),
+                (x_texto, y_texto + (numero_linea * 28)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                color,
+                0.65,
+                color_linea,
                 2,
                 cv2.LINE_AA
             )

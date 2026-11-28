@@ -4250,10 +4250,12 @@ class NotificacionDestinatarioViewSet(
         )
 
         # Bandeja de entrada: solo destinatarios del usuario.
-        if self.request.query_params.get(
-            "incluir_historial"
-        ) != "true":
-
+        if (
+        self.action != "list"
+        or self.request.query_params.get(
+        "incluir_historial"
+        ) != "true"
+    ):
             return queryset.filter(
                 id_usuario_id=usuario_id
             )

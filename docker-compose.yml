@@ -1,0 +1,23 @@
+
+services:
+  geriapp-ia:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: geriapp-ia
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      PYTHONUNBUFFERED: "1"
+      MODO_CAPTURA: "docker"
+      PUERTO_RECEPCION_FRAMES: "8000"
+      PUERTO_VIDEO: "8081"
+
+    ports:
+      - "8000:8000"
+      - "8081:8081"

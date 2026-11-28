@@ -24,29 +24,28 @@ class TransmisionLiveKit:
         self.api_secret = os.environ.get("LIVEKIT_API_SECRET")
 
         if not self.api_key or not self.api_secret:
-            raise RuntimeError(
-                "Faltan LIVEKIT_API_KEY o LIVEKIT_API_SECRET."
-            )
+            raise RuntimeError("Faltan LIVEKIT_API_KEY o LIVEKIT_API_SECRET.")
 
         self.loop = asyncio.new_event_loop()
         self.hilo = threading.Thread(
             target=self._ejecutar_loop,
             daemon=True,
+            name="LiveKit-EventLoop",
         )
         self.iniciado = threading.Event()
+
         self.conexiones = {}
         self.lock = threading.Lock()
 
-        # Conservar solamente el último fotograma pendiente por cámara.
+        # Buffer latest-frame-wins: nunca se acumulan fotogramas antiguos.
         self.frames_pendientes = {}
         self.publicacion_programada = set()
+        self.ultimo_frame_publicado = {}
 
         self.hilo.start()
 
         if not self.iniciado.wait(timeout=10):
-            raise RuntimeError(
-                "No se pudo iniciar el bucle de LiveKit."
-            )
+            raise RuntimeError("No se pudo iniciar el bucle de LiveKit.")
 
     def _ejecutar_loop(self):
         asyncio.set_event_loop(self.loop)
@@ -92,21 +91,16 @@ class TransmisionLiveKit:
                 ),
             )
 
-            await sala.local_participant.publish_track(
-                pista,
-                opciones,
-            )
+            await sala.local_participant.publish_track(pista, opciones)
 
-            self.conexiones[int(id_camara)] = {
-                "sala": sala,
-                "fuente": fuente,
-                "habitacion": int(id_habitacion),
-            }
+            with self.lock:
+                self.conexiones[int(id_camara)] = {
+                    "sala": sala,
+                    "fuente": fuente,
+                    "habitacion": int(id_habitacion),
+                }
 
-            print(
-                f"[LiveKit] Camara {id_camara} publicada "
-                f"en {sala_nombre}."
-            )
+            print(f"[LiveKit] Camara {id_camara} publicada en {sala_nombre}.")
 
         except Exception:
             await sala.disconnect()
@@ -114,50 +108,30 @@ class TransmisionLiveKit:
 
     def iniciar_camara(self, id_camara, id_habitacion):
         futuro = asyncio.run_coroutine_threadsafe(
-            self._conectar_camara(
-                int(id_camara),
-                int(id_habitacion),
-            ),
+            self._conectar_camara(int(id_camara), int(id_habitacion)),
             self.loop,
         )
         futuro.result(timeout=30)
 
-    
     def publicar_frame(self, id_camara, frame):
-        """Publica el fotograma más reciente sin acumular imágenes antiguas."""
+        """
+        Entrega el último fotograma a LiveKit.
+        La conversión BGR->RGBA y la creación del VideoFrame ya no se
+        ejecutan en el hilo que llama desde el procesamiento YOLO.
+        """
         id_camara = int(id_camara)
 
         if frame is None:
             return
 
         with self.lock:
-            conexion = self.conexiones.get(id_camara)
+            if id_camara not in self.conexiones:
+                return
 
-        if conexion is None:
-            return
+            # El fotograma procesado no vuelve a modificarse después de
+            # esta llamada. Se guarda su copia como máximo pendiente.
+            self.frames_pendientes[id_camara] = frame.copy()
 
-        imagen = cv2.resize(
-            frame,
-            (self.ANCHO, self.ALTO),
-        )
-        imagen_rgba = cv2.cvtColor(
-            imagen,
-            cv2.COLOR_BGR2RGBA,
-        )
-        imagen_rgba = np.ascontiguousarray(imagen_rgba)
-
-        fotograma = rtc.VideoFrame(
-            self.ANCHO,
-            self.ALTO,
-            rtc.VideoBufferType.RGBA,
-            imagen_rgba.tobytes(),
-        )
-
-        # Guardar el último fotograma, reemplazando cualquier pendiente.
-        with self.lock:
-            self.frames_pendientes[id_camara] = fotograma
-
-            # Solo programar una llamada pendiente por cámara.
             if id_camara in self.publicacion_programada:
                 return
 
@@ -174,32 +148,80 @@ class TransmisionLiveKit:
                 self.frames_pendientes.pop(id_camara, None)
 
     def _publicar_fotograma_pendiente(self, id_camara):
-        """Entrega a LiveKit el último fotograma pendiente de la cámara."""
+        """Convierte y entrega el fotograma más reciente a LiveKit."""
         with self.lock:
             conexion = self.conexiones.get(id_camara)
-            fotograma = self.frames_pendientes.pop(id_camara, None)
-            self.publicacion_programada.discard(id_camara)
 
-        if conexion is None or fotograma is None:
-            return
+            if conexion is None:
+                self.frames_pendientes.pop(id_camara, None)
+                self.publicacion_programada.discard(id_camara)
+                return
+
+            frame = self.frames_pendientes.get(id_camara)
+            if frame is None:
+                self.publicacion_programada.discard(id_camara)
+                return
+
+            # Si aún no se cumple el intervalo de publicación, esperar
+            # dentro del event loop conservando el último frame pendiente.
+            ahora = time.monotonic()
+            ultimo = self.ultimo_frame_publicado.get(id_camara, 0.0)
+            restante = (1.0 / self.FPS) - (ahora - ultimo)
+
+            if restante > 0:
+                self.loop.call_later(
+                    restante,
+                    self._publicar_fotograma_pendiente,
+                    id_camara,
+                )
+                return
+
+            # Tomar el último fotograma y liberar la programación.
+            frame = self.frames_pendientes.pop(id_camara, None)
+            self.publicacion_programada.discard(id_camara)
+            if frame is None:
+                return
+
+            self.ultimo_frame_publicado[id_camara] = ahora
 
         try:
+            # Evitar un resize innecesario si ya es 640x480.
+            if frame.shape[1] != self.ANCHO or frame.shape[0] != self.ALTO:
+                frame = cv2.resize(
+                    frame,
+                    (self.ANCHO, self.ALTO),
+                    interpolation=cv2.INTER_LINEAR,
+                )
+
+            imagen_rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+            imagen_rgba = np.ascontiguousarray(imagen_rgba)
+
+            fotograma = rtc.VideoFrame(
+                self.ANCHO,
+                self.ALTO,
+                rtc.VideoBufferType.RGBA,
+                imagen_rgba.tobytes(),
+            )
+
+            # Se conserva la publicación mediante el event loop de LiveKit.
             conexion["fuente"].capture_frame(fotograma)
 
         except Exception as error:
-            print(
-                f"[LiveKit] Error publicando cámara "
-                f"{id_camara}: {error}"
-            )
+            print(f"[LiveKit] Error publicando cámara {id_camara}: {error}")
 
     async def _cerrar_conexiones(self):
-        for conexion in list(self.conexiones.values()):
+        with self.lock:
+            conexiones = list(self.conexiones.values())
+            self.conexiones.clear()
+            self.frames_pendientes.clear()
+            self.publicacion_programada.clear()
+            self.ultimo_frame_publicado.clear()
+
+        for conexion in conexiones:
             try:
                 await conexion["sala"].disconnect()
             except Exception as error:
                 print("[LiveKit] Error al cerrar sala:", error)
-
-        self.conexiones.clear()
 
     def cerrar(self):
         if not self.loop.is_running():

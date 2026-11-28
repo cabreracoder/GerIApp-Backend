@@ -3,10 +3,17 @@ import numpy as np
 import threading
 import time
 import queue
+import socket
 from ultralytics import YOLO
 import os
 from dotenv import load_dotenv
 load_dotenv()
+MODO_CAPTURA = os.getenv(
+    "MODO_CAPTURA",
+    "windows"
+).strip().lower()
+
+MODO_DOCKER = MODO_CAPTURA == "docker"
 
 from conexion_backend import (
     enviar_evento_geriapp,
@@ -22,7 +29,7 @@ from reconocimiento_facial.reconocedor import ReconocedorFacial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 from transmision_livekit import TransmisionLiveKit
-
+from receptor_frames_docker import iniciar_receptor
 
 # ============================================================
 # CAPTURA DE CÁMARAS MEDIANTE ÍNDICES DE OPENCV
@@ -310,6 +317,9 @@ def crear_estado():
         "camara": None,
         "frame": None,
         "frame_mostrar": None,
+        "frame_jpeg": None,
+        "frame_seq": 0,
+        "jpeg_seq": 0,
         "frame_lock": threading.Lock(),
         "activa": False,
 
@@ -429,9 +439,18 @@ def eliminar_estado_paciente(nombre, id_paciente):
 
 HOST_VIDEO = "0.0.0.0"
 PUERTO_VIDEO = 8081
+FPS_STREAM_LOCAL = 20
+CALIDAD_JPEG_STREAM = 60
 
 
 class ServidorVideoHandler(BaseHTTPRequestHandler):
+    """Entrega el último JPEG ya codificado por un hilo independiente.
+
+    El servidor no ejecuta YOLO, no dibuja superposiciones y no codifica
+    imágenes por cliente. Cada cámara mantiene un único JPEG reciente.
+    """
+
+    protocol_version = "HTTP/1.1"
 
     def do_GET(self):
         ruta = urlparse(self.path)
@@ -447,56 +466,56 @@ class ServidorVideoHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Cámara no encontrada")
             return
 
+        try:
+            self.connection.setsockopt(
+                socket.IPPROTO_TCP,
+                socket.TCP_NODELAY,
+                1,
+            )
+        except OSError:
+            pass
+
         self.send_response(200)
         self.send_header(
             "Content-Type",
             "multipart/x-mixed-replace; boundary=fotograma",
         )
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+        self.send_header("Pragma", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
+
+        ultimo_seq_enviado = -1
 
         try:
             while ejecutando.is_set():
                 estado = estados.get(nombre)
-
                 if estado is None:
                     break
 
                 with estado["frame_lock"]:
-                    frame = estado["frame_mostrar"]
+                    imagen_jpg = estado.get("frame_jpeg")
+                    secuencia = estado.get("jpeg_seq", 0)
 
-                    if frame is not None:
-                        frame = frame.copy()
-
-                if frame is None:
-                    time.sleep(0.1)
+                # Esperar una imagen nueva: no reenviar el mismo fotograma.
+                if imagen_jpg is None or secuencia == ultimo_seq_enviado:
+                    time.sleep(0.005)
                     continue
 
-                correcto, imagen_jpg = cv2.imencode(
-                    ".jpg",
-                    frame,
-                    [cv2.IMWRITE_JPEG_QUALITY, 55],
+                encabezado = (
+                    b"--fotograma\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(imagen_jpg)}\r\n\r\n".encode("ascii")
                 )
+                self.wfile.write(encabezado + imagen_jpg + b"\r\n")
+                ultimo_seq_enviado = secuencia
 
-                if not correcto:
-                    time.sleep(0.1)
-                    continue
-
-                self.wfile.write(b"--fotograma\r\n")
-                self.wfile.write(
-                    b"Content-Type: image/jpeg\r\n\r\n"
-                )
-                self.wfile.write(imagen_jpg.tobytes())
-                self.wfile.write(b"\r\n")
-
-                time.sleep(0.1)
-
-        except (BrokenPipeError, ConnectionResetError, OSError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
             pass
 
     def log_message(self, formato, *argumentos):
         pass
+
 
 
 # ============================================================
@@ -974,9 +993,98 @@ def capturar_camara(nombre):
         estado["activa"] = True
 
         with estado["frame_lock"]:
-            estado["frame"] = imagen.copy()
+            estado["frame"] = imagen
+            estado["frame_seq"] += 1
 
 
+def codificar_stream_camara(nombre):
+    """Diagnóstico de recepción y codificación MJPEG."""
+    estado = estados[nombre]
+
+    ultima_secuencia = -1
+    ultimo_encode = 0.0
+    ultimo_diagnostico = time.time()
+
+    intervalo = 1.0 / FPS_STREAM_LOCAL
+
+    print(f"[MJPEG-DIAGNOSTICO] Hilo iniciado: {nombre}")
+
+    while ejecutando.is_set():
+
+        try:
+            with estado["frame_lock"]:
+                secuencia = estado.get("frame_seq", 0)
+                frame = estado.get("frame")
+
+                frame_jpeg_actual = estado.get("frame_jpeg")
+                jpeg_seq_actual = estado.get("jpeg_seq", 0)
+
+                if frame is not None and secuencia != ultima_secuencia:
+                    frame = frame.copy()
+                else:
+                    frame = None
+
+            # Diagnóstico cada 5 segundos
+            if time.time() - ultimo_diagnostico >= 5:
+
+                print(
+                    f"[MJPEG-DIAGNOSTICO] {nombre} | "
+                    f"frame_seq={secuencia} | "
+                    f"jpeg_seq={jpeg_seq_actual} | "
+                    f"frame={'SI' if frame is not None else 'NO'} | "
+                    f"jpeg={'SI' if frame_jpeg_actual is not None else 'NO'}"
+                )
+
+                ultimo_diagnostico = time.time()
+
+            if frame is None:
+                time.sleep(0.003)
+                continue
+
+            ahora = time.perf_counter()
+
+            espera = intervalo - (ahora - ultimo_encode)
+
+            if espera > 0:
+                time.sleep(espera)
+
+            correcto, buffer_jpg = cv2.imencode(
+                ".jpg",
+                frame,
+                [cv2.IMWRITE_JPEG_QUALITY, CALIDAD_JPEG_STREAM],
+            )
+
+            if correcto:
+
+                datos_jpg = buffer_jpg.tobytes()
+
+                with estado["frame_lock"]:
+                    estado["frame_jpeg"] = datos_jpg
+                    estado["jpeg_seq"] = secuencia
+
+                ultima_secuencia = secuencia
+                ultimo_encode = time.perf_counter()
+
+            else:
+
+                print(
+                    f"[MJPEG-ERROR] No se pudo codificar "
+                    f"el frame de {nombre}"
+                )
+
+                ultima_secuencia = secuencia
+
+        except Exception as error:
+
+            print(
+                f"[MJPEG-ERROR] Error en {nombre}: {error}"
+            )
+
+            import traceback
+            traceback.print_exc()
+
+            time.sleep(1)
+            
 # ============================================================
 # REGISTRAR EVENTO Y CONSERVAR SU IMAGEN
 # ============================================================
@@ -2176,6 +2284,13 @@ def actualizar_postura(
 
 transmisor_livekit = None
 
+# Los modelos y el reconocedor se comparten entre cámaras.
+# Los bloqueos evitan llamadas simultáneas inseguras sobre la misma instancia.
+bloqueo_modelo_yolo = threading.Lock()
+bloqueo_reconocedor_facial = threading.Lock()
+bloqueo_livekit = threading.Lock()
+
+
 def procesar_camara(nombre, modelo):
 
     estado = estados[nombre]
@@ -2197,11 +2312,19 @@ def procesar_camara(nombre, modelo):
 
         frame = estado["frame"].copy()
 
+    
     # ==================================================
-    # RECONOCIMIENTO FACIAL
+    # MEDIR RECONOCIMIENTO FACIAL
     # ==================================================
 
-    actualizar_identidad_facial(nombre, frame)
+    inicio_facial = time.perf_counter()
+
+    with bloqueo_reconocedor_facial:
+        actualizar_identidad_facial(nombre, frame)
+
+    tiempo_facial = (
+        time.perf_counter() - inicio_facial
+    ) * 1000
 
     # ==================================================
     # DETECCIÓN YOLO POSE
@@ -2209,16 +2332,32 @@ def procesar_camara(nombre, modelo):
 
     try:
 
-        resultados = modelo.predict(
-            source=frame,
-            verbose=False,
-            conf=CONFIANZA_DETECCION,
-            imgsz=TAMANO_YOLO,
-        )
+        inicio_yolo = time.perf_counter()
+
+        with bloqueo_modelo_yolo:
+            resultados = modelo.predict(
+                source=frame,
+                verbose=False,
+                conf=CONFIANZA_DETECCION,
+                imgsz=TAMANO_YOLO,
+            )
+
+        tiempo_yolo = (
+            time.perf_counter() - inicio_yolo
+        ) * 1000
 
         resultado = resultados[0]
 
-        frame_mostrar = resultado.plot()
+        # Mostrar el fotograma original sin cajas ni puntos de YOLO.
+        # Las detecciones siguen ejecutándose y se usan para calcular
+        # posturas, asociar pacientes y generar alertas.
+        frame_mostrar = frame.copy()
+
+        print(
+            f"[RENDIMIENTO] {nombre} | "
+            f"YOLO: {tiempo_yolo:.1f} ms | "
+            f"FACIAL: {tiempo_facial:.1f} ms"
+        )
 
     except Exception as error:
 
@@ -2227,6 +2366,7 @@ def procesar_camara(nombre, modelo):
         )
 
         return
+
 
     # ==================================================
     # VALIDAR DETECCIONES
@@ -2522,19 +2662,6 @@ def procesar_camara(nombre, modelo):
         else:
             color = (0, 255, 0)
 
-        # Dibujar el cuerpo cuando exista asociación.
-        if caja is not None:
-
-            x1, y1, x2, y2 = map(int, caja)
-
-            cv2.rectangle(
-                frame_mostrar,
-                (x1, y1),
-                (x2, y2),
-                color,
-                2
-            )
-
         # Obtener el estado de la alerta.
         if estado_paciente.get("levantamiento_detectado", False):
 
@@ -2581,30 +2708,6 @@ def procesar_camara(nombre, modelo):
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 color,
-                2,
-                cv2.LINE_AA
-            )
-
-        # Dibujar el rostro asociado cuando esté disponible.
-        if rostro_reciente and bbox_rostro is not None:
-
-            rx1, ry1, rx2, ry2 = map(int, bbox_rostro)
-
-            cv2.rectangle(
-                frame_mostrar,
-                (rx1, ry1),
-                (rx2, ry2),
-                (255, 255, 0),
-                2
-            )
-
-            cv2.putText(
-                frame_mostrar,
-                nombre_paciente,
-                (rx1, max(20, ry1 - 10)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                (255, 255, 0),
                 2,
                 cv2.LINE_AA
             )
@@ -2768,16 +2871,32 @@ def procesar_camara(nombre, modelo):
 
     if transmisor_livekit is not None:
 
-        transmisor_livekit.publicar_frame(
-            CAMARAS_CONFIG[nombre]["id_camara"],
-            frame_mostrar,
-        )
+        with bloqueo_livekit:
+            transmisor_livekit.publicar_frame(
+                CAMARAS_CONFIG[nombre]["id_camara"],
+                frame_mostrar,
+            )
 
-    # ==================================================
-    # MOSTRAR VENTANA OPENCV
-    # ==================================================
+    # Las ventanas OpenCV se actualizan desde el hilo principal.
+    # Este hilo solo publica el fotograma procesado en el estado.
 
-    cv2.imshow(nombre, frame_mostrar)
+
+def hilo_procesamiento_camara(nombre, modelo):
+    """Procesa continuamente la cámara indicada en un hilo independiente."""
+    print(f"[HILO] Procesamiento iniciado para {nombre}")
+
+    while ejecutando.is_set():
+        try:
+            procesar_camara(nombre, modelo)
+        except Exception as error:
+            print(f"[{nombre}] Error en hilo de procesamiento: {error}")
+            time.sleep(0.05)
+
+        # Evita un bucle ocupado cuando todavía no corresponde inferir.
+        time.sleep(0.002)
+
+    print(f"[HILO] Procesamiento detenido para {nombre}")
+
 
 # ============================================================
 # PROGRAMA PRINCIPAL
@@ -2789,9 +2908,16 @@ def main():
     global reconocedor_facial
     global estados
 
+   
     hilos_captura = []
+    hilos_stream = []
+    hilos_procesamiento = []
+
     hilo_backend = None
     hilo_posturas = None
+
+    servidor_receptor = None
+    hilo_receptor = None
 
     # Estados compartidos por todas las cámaras.
     estados = {}
@@ -2853,6 +2979,7 @@ def main():
                 error
             )
 
+        
         # ----------------------------------------------------
         # CONFIGURAR CÁMARAS
         # ----------------------------------------------------
@@ -2863,7 +2990,6 @@ def main():
             id_habitacion = camara_api.get("id_habitacion")
 
             try:
-
                 id_camara_int = int(id_camara)
 
             except (TypeError, ValueError):
@@ -2871,51 +2997,6 @@ def main():
                 print(
                     f"[AVISO] ID de cámara inválido: {id_camara}"
                 )
-
-                continue
-
-            indice_opencv = INDICES_CAMARAS.get(
-                id_camara_int
-            )
-
-            if indice_opencv is None:
-
-                print(
-                    f"[AVISO] Cámara GerIApp {id_camara}: "
-                    "no tiene índice OpenCV configurado."
-                )
-
-                continue
-
-            prueba = abrir_camara_opencv(
-                indice_opencv
-            )
-
-            disponible = False
-
-            if prueba is not None:
-
-                try:
-
-                    correcto, frame_prueba = prueba.read()
-
-                    disponible = (
-                        correcto
-                        and frame_prueba is not None
-                    )
-
-                finally:
-
-                    prueba.release()
-
-            if not disponible:
-
-                print(
-                    f"[AVISO] Cámara GerIApp {id_camara}: "
-                    f"OpenCV índice {indice_opencv} "
-                    "no entregó una imagen."
-                )
-
                 continue
 
             nombre = (
@@ -2923,14 +3004,65 @@ def main():
                 or f"Cámara {id_camara}"
             )
 
+            # ----------------------------------------------------
+            # CONFIGURACIÓN SEGÚN EL ENTORNO
+            # ----------------------------------------------------
+
+            indice_opencv = None
+
+            if not MODO_DOCKER:
+
+                # En Windows sí necesitamos el índice físico.
+                indice_opencv = INDICES_CAMARAS.get(id_camara_int)
+
+                if indice_opencv is None:
+                    print(
+                        f"[AVISO] Cámara GerIApp {id_camara}: "
+                        "no tiene índice OpenCV configurado."
+                    )
+                    continue
+
+                # Comprobar que la cámara física esté disponible.
+                prueba = abrir_camara_opencv(indice_opencv)
+
+                disponible = False
+
+                if prueba is not None:
+                    try:
+                        correcto, frame_prueba = prueba.read()
+
+                        disponible = (
+                            correcto and frame_prueba is not None
+                        )
+
+                    finally:
+                        prueba.release()
+
+                if not disponible:
+                    print(
+                        f"[AVISO] Cámara GerIApp {id_camara}: "
+                        f"OpenCV índice {indice_opencv} "
+                        "no entregó una imagen."
+                    )
+                    continue
+
+            else:
+                print(
+                    f"[DOCKER] Cámara GerIApp {id_camara} "
+                    "configurada para recibir imágenes desde Windows."
+                )
+
             plantillas_faciales = []
 
             if reconocedor_facial is not None:
+
                 try:
                     plantillas_faciales = obtener_plantillas_faciales(
                         id_camara_int
                     )
+
                 except Exception as error:
+
                     print(
                         f"[{nombre}] No se pudieron obtener las plantillas "
                         f"faciales. Los eventos no se asociarán a pacientes: "
@@ -2943,7 +3075,6 @@ def main():
                 "id_camara": id_camara,
                 "id_habitacion": id_habitacion,
 
-                # La identidad inicia vacía y solo se asigna por reconocimiento.
                 "id_paciente": None,
                 "plantillas_faciales": plantillas_faciales,
 
@@ -2954,15 +3085,18 @@ def main():
                 f"GerIApp ID: {id_camara} | "
                 f"OpenCV índice: {indice_opencv} | "
                 f"Habitación: {id_habitacion} | "
-                f"Plantillas faciales: {len(plantillas_faciales)}"
+                f"Plantillas faciales: {len(plantillas_faciales)} | "
+                f"Modo: {MODO_CAPTURA.upper()}"
             )
 
             if not plantillas_faciales:
+
                 print(
                     f"[AVISO] {nombre}: no hay plantillas faciales "
                     "disponibles. YOLO funcionará, pero no se asociarán "
                     "eventos a pacientes."
                 )
+
 
         if not CAMARAS_CONFIG:
 
@@ -3016,67 +3150,149 @@ def main():
             )
 
         # ----------------------------------------------------
-        # ABRIR CÁMARAS
+        # ABRIR CÁMARAS O ESPERAR FOTOGRAMAS DE WINDOWS
         # ----------------------------------------------------
 
-        for nombre, config in CAMARAS_CONFIG.items():
+        if MODO_DOCKER:
 
-            indice_opencv = config["indice_opencv"]
+            print("\n[MODO DOCKER] Esperando cámaras desde Windows...")
 
-            camara = abrir_camara_opencv(
-                indice_opencv
+            servidor_receptor, hilo_receptor = iniciar_receptor(
+                estados,
+                CAMARAS_CONFIG,
+                host="0.0.0.0",
+                puerto=8000,
             )
 
-            if camara is None:
+            activas = list(CAMARAS_CONFIG.keys())
 
-                print(
-                    f"[{nombre}] No se pudo abrir "
-                    f"OpenCV índice {indice_opencv}."
-                )
-
-                continue
-
-            correcto, primer_frame = camara.read()
-
-            if (
-                not correcto
-                or primer_frame is None
-            ):
-
-                camara.release()
-
-                print(
-                    f"[{nombre}] OpenCV índice "
-                    f"{indice_opencv} abrió, "
-                    "pero no entregó imágenes."
-                )
-
-                continue
-
-            estados[nombre]["camara"] = camara
-
-            estados[nombre]["frame"] = (
-                primer_frame.copy()
+            print(
+                "[DOCKER] Receptor HTTP iniciado en "
+                "0.0.0.0:8000"
             )
 
             print(
-                f"[{nombre}] Conectada | "
-                f"OpenCV índice {indice_opencv} | "
-                f"GerIApp ID {config['id_camara']}"
+                "[DOCKER] Esperando el primer fotograma "
+                "de cada cámara..."
             )
 
-        activas = [
-            nombre
-            for nombre in CAMARAS_CONFIG
-            if estados[nombre]["camara"] is not None
-        ]
+            inicio_espera = time.time()
+            tiempo_maximo_espera = None
+
+            while ejecutando.is_set():
+
+                camaras_con_frame = []
+
+                for nombre in activas:
+
+                    estado = estados[nombre]
+
+                    with estado["frame_lock"]:
+
+                        tiene_frame = (
+                            estado.get("frame") is not None
+                            and estado.get("frame_seq", 0) > 0
+                        )
+
+                    if tiene_frame:
+                        camaras_con_frame.append(nombre)
+
+                # Continuar cuando todas las cámaras hayan enviado
+                # al menos un fotograma.
+                if len(camaras_con_frame) == len(activas):
+                    break
+
+                # None significa que no existe límite de espera.
+                if tiempo_maximo_espera is not None:
+
+                    tiempo_transcurrido = time.time() - inicio_espera
+
+                    if tiempo_transcurrido >= tiempo_maximo_espera:
+                        print(
+                            "[AVISO] Tiempo de espera agotado. "
+                            "Se continuará con las cámaras disponibles."
+                        )
+                        break
+
+                time.sleep(0.2)
+
+            if not ejecutando.is_set():
+                raise RuntimeError(
+                    "El proceso se detuvo antes de recibir las cámaras."
+                )
+
+            activas = camaras_con_frame
+
+            if not activas:
+                raise RuntimeError(
+                    "Ninguna cámara envió imágenes."
+                )
+
+            print(
+                f"[DOCKER] Cámaras recibiendo imágenes: "
+                f"{len(activas)} de {len(CAMARAS_CONFIG)}"
+            )
+
+            for nombre in CAMARAS_CONFIG:
+
+                if nombre not in activas:
+                    print(
+                        f"[AVISO] {nombre} no está enviando imágenes "
+                        "y no será procesada."
+                    )
+
+        else:
+
+            print("\n[MODO WINDOWS] Abriendo cámaras físicas...")
+
+            for nombre, config in CAMARAS_CONFIG.items():
+
+                indice_opencv = config["indice_opencv"]
+
+                camara = abrir_camara_opencv(indice_opencv)
+
+                if camara is None:
+
+                    print(
+                        f"[{nombre}] No se pudo abrir "
+                        f"OpenCV índice {indice_opencv}."
+                    )
+                    continue
+
+                correcto, primer_frame = camara.read()
+
+                if not correcto or primer_frame is None:
+
+                    camara.release()
+
+                    print(
+                        f"[{nombre}] La cámara abrió, "
+                        "pero no entregó imágenes."
+                    )
+                    continue
+
+                estados[nombre]["camara"] = camara
+                estados[nombre]["frame"] = primer_frame.copy()
+                estados[nombre]["frame_seq"] = 1
+                estados[nombre]["activa"] = True
+
+                print(
+                    f"[{nombre}] Conectada | "
+                    f"OpenCV índice {indice_opencv}"
+                )
+
+            activas = [
+                nombre
+                for nombre in CAMARAS_CONFIG
+                if estados[nombre]["camara"] is not None
+            ]
 
         if not activas:
 
             raise RuntimeError(
-                "No se pudo abrir ninguna cámara."
+                "No hay cámaras disponibles para procesar."
             )
-
+        
         # ----------------------------------------------------
         # CARGAR YOLO
         # ----------------------------------------------------
@@ -3108,21 +3324,52 @@ def main():
             "[LiveKit] Todas las cámaras activas están conectadas."
         )
 
-        # ----------------------------------------------------
-        # INICIAR HILOS DE CAPTURA
+                # ----------------------------------------------------
+        # INICIAR HILOS DE CAPTURA Y STREAM
         # ----------------------------------------------------
 
         for nombre in activas:
 
-            hilo = threading.Thread(
-                target=capturar_camara,
+            # En Windows se capturan directamente las cámaras.
+            # En Docker los fotogramas llegan por HTTP.
+
+            if not MODO_DOCKER:
+
+                hilo = threading.Thread(
+                    target=capturar_camara,
+                    args=(nombre,),
+                    name=f"Captura-{nombre}",
+                    daemon=True,
+                )
+
+                hilo.start()
+                hilos_captura.append(hilo)
+
+            # En ambos modos se codifica el stream MJPEG.
+
+            hilo_stream = threading.Thread(
+                target=codificar_stream_camara,
                 args=(nombre,),
+                name=f"MJPEG-{nombre}",
                 daemon=True,
             )
 
-            hilo.start()
+            hilo_stream.start()
+            hilos_stream.append(hilo_stream)
 
-            hilos_captura.append(hilo)
+        print(
+            "[CAPTURA] "
+            + (
+                "Recibiendo fotogramas desde Windows."
+                if MODO_DOCKER
+                else "Captura directa desde cámaras OpenCV."
+            )
+        )
+
+        print(
+            f"[MJPEG] Stream local activo: "
+            f"hasta {FPS_STREAM_LOCAL} FPS."
+        )
 
         # ----------------------------------------------------
         # INICIAR HILO DEL BACKEND
@@ -3148,34 +3395,69 @@ def main():
         )
 
         # ----------------------------------------------------
+        # INICIAR UN HILO DE PROCESAMIENTO POR CÁMARA
+        # ----------------------------------------------------
+
+        for nombre in activas:
+            hilo_procesamiento = threading.Thread(
+                target=hilo_procesamiento_camara,
+                args=(nombre, modelo),
+                name=f"Procesamiento-{nombre}",
+                daemon=True,
+            )
+            hilo_procesamiento.start()
+            hilos_procesamiento.append(hilo_procesamiento)
+
+        print(
+            f"[PROCESAMIENTO] {len(hilos_procesamiento)} hilo(s) "
+            "independiente(s), uno por cámara."
+        )
+
+        # ----------------------------------------------------
         # BUCLE PRINCIPAL
         # ----------------------------------------------------
 
-        while ejecutando.is_set():
+        if MODO_DOCKER:
 
-            for nombre in activas:
+            print(
+                "[DOCKER] Procesamiento activo. "
+                "Presiona Ctrl+C para detener."
+            )
 
-                procesar_camara(
-                    nombre,
-                    modelo,
-                )
+            while ejecutando.is_set():
+                time.sleep(0.5)
 
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+        else:
 
-                break
+            print(
+                "[WINDOWS] Procesamiento activo. "
+                "Presiona Q para salir."
+            )
 
-    except KeyboardInterrupt:
+            while ejecutando.is_set():
 
-        print(
-            "Cierre solicitado desde el teclado."
-        )
+                for nombre in activas:
 
-    except Exception as error:
+                    estado = estados[nombre]
 
-        print(
-            "Error en el programa:",
-            error,
-        )
+                    with estado["frame_lock"]:
+
+                        frame_ventana = estado.get("frame_mostrar")
+
+                        if frame_ventana is not None:
+                            frame_ventana = frame_ventana.copy()
+
+                    if frame_ventana is not None:
+
+                        cv2.imshow(
+                            nombre,
+                            frame_ventana
+                        )
+
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+
+                time.sleep(0.005)
 
     finally:
 
@@ -3211,6 +3493,39 @@ def main():
             hilo_video.join(timeout=3)
 
         # ----------------------------------------------------
+        # CERRAR RECEPTOR DE FOTOGRAMAS DOCKER
+        # ----------------------------------------------------
+
+        if servidor_receptor is not None:
+
+            try:
+
+                servidor_receptor.shutdown()
+                servidor_receptor.server_close()
+
+                print(
+                    "[DOCKER] Receptor HTTP cerrado."
+                )
+
+            except Exception as error:
+
+                print(
+                    f"[DOCKER] Error cerrando receptor: {error}"
+                )
+
+        if hilo_receptor is not None:
+
+            hilo_receptor.join(timeout=3)
+
+
+        # ----------------------------------------------------
+        # ESPERAR A QUE TERMINEN LOS HILOS DE PROCESAMIENTO
+        # ----------------------------------------------------
+
+        for hilo in hilos_procesamiento:
+            hilo.join(timeout=5)
+
+        # ----------------------------------------------------
         # LIBERAR CÁMARAS
         # ----------------------------------------------------
 
@@ -3234,8 +3549,14 @@ def main():
         # ----------------------------------------------------
 
         for hilo in hilos_captura:
-
             hilo.join(timeout=3)
+
+        for hilo in hilos_stream:
+            hilo.join(timeout=3)
+
+                # ----------------------------------------------------
+        # CERRAR COLAS Y ESPERAR HILOS DEL BACKEND
+        # ----------------------------------------------------
 
         if hilo_backend is not None:
 
@@ -3259,12 +3580,17 @@ def main():
             if hilo_posturas.is_alive():
 
                 print(
-                    "Advertencia: el hilo de sincronización de posturas "
-                    "sigue activo."
+                    "Advertencia: el hilo de sincronización "
+                    "de posturas sigue activo."
                 )
 
-        cv2.destroyAllWindows()
+        # ----------------------------------------------------
+        # CERRAR VENTANAS OPENCV
+        # ----------------------------------------------------
 
+        if not MODO_DOCKER:
+
+            cv2.destroyAllWindows()
         print(
             "\nPrograma detenido."
         )

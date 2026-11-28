@@ -1,0 +1,42 @@
+# Entornos virtuales
+venv/
+venv_facial/
+.venv/
+
+# Variables y secretos
+.env
+.env.*
+!.env.example
+
+# Git
+.git/
+.gitignore
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Archivos temporales
+*.log
+*.tmp
+*.bak
+
+# Datos de pruebas y capturas
+dataset*/
+datasets/
+nuevas_capturas/
+seleccionadas/
+pruebas_umbral/
+*.jpg
+*.jpeg
+*.png
+*.mp4
+
+# Entornos y herramientas locales
+.vscode/
+.idea/
+
+# Otros archivos
+Thumbs.db
+.DS_Store

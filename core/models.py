@@ -400,9 +400,9 @@ class GrupoMedicacion(models.Model):
 class HistoriaClinicas(models.Model):
     id_historia_clinica = models.AutoField(primary_key=True)
     fecha_apertura = models.DateTimeField()
-    antecedentes = models.CharField(max_length=200)
-    alergias = models.CharField()
-    observaciones = models.CharField()
+    antecedentes = models.TextField(blank=True, default='')
+    alergias = models.TextField(blank=True, default='')
+    observaciones = models.TextField(blank=True, default='')
     estado = models.BooleanField()
     id_paciente = models.ForeignKey('Pacientes', models.DO_NOTHING, db_column='id_paciente', blank=True, null=True)
     rangos_vitales_json = models.JSONField(null=True, blank=True)

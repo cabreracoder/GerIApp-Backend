@@ -470,9 +470,65 @@ class DocumentosSerializer(serializers.ModelSerializer):
 
 
 class HistoriaClinicasSerializer(serializers.ModelSerializer):
+    CAMPOS_TEXTO_CLINICO = ('antecedentes', 'alergias', 'observaciones')
+
+    antecedentes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        trim_whitespace=False,
+    )
+    alergias = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        trim_whitespace=False,
+    )
+    observaciones = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        trim_whitespace=False,
+    )
+
     class Meta:
         model = HistoriaClinicas
         fields = '__all__'
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        es_creacion = self.instance is None
+        for campo in self.CAMPOS_TEXTO_CLINICO:
+            if campo in attrs:
+                if attrs[campo] is None:
+                    attrs[campo] = ''
+            elif es_creacion:
+                attrs[campo] = ''
+        return attrs
+
+    def create(self, validated_data):
+        for campo in self.CAMPOS_TEXTO_CLINICO:
+            if validated_data.get(campo) is None:
+                validated_data[campo] = ''
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        for campo in self.CAMPOS_TEXTO_CLINICO:
+            nulo_enviado = campo in validated_data and validated_data[campo] is None
+            nulo_previo = (
+                campo not in validated_data
+                and getattr(instance, campo, None) is None
+            )
+            if nulo_enviado or nulo_previo:
+                validated_data[campo] = ''
+        return super().update(instance, validated_data)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        for campo in self.CAMPOS_TEXTO_CLINICO:
+            if data.get(campo) is None:
+                data[campo] = ''
+        return data
 
 
 class EnfermedadesSerializer(serializers.ModelSerializer):
@@ -666,7 +722,7 @@ def evaluar_rangos_signos_vitales(signo):
 
     historia = (
         HistoriaClinicas.objects
-        .filter(id_paciente=paciente, rangos_vitales_json__isnull=False)
+        .filter(id_paciente=paciente, estado=True)
         .order_by("-id_historia_clinica")
         .first()
     )

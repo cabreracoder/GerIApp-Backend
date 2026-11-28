@@ -1,0 +1,11 @@
+numpy==2.5.3
+opencv-python==5.0.0.93
+ultralytics==8.4.173
+torch==2.14.1
+torchvision==0.29.1
+requests==2.34.2
+python-dotenv==1.2.3
+cryptography==50.0.1
+livekit==1.1.21
+livekit-api==1.2.2
+livekit-protocol==1.1.28

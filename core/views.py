@@ -55,7 +55,7 @@ from .asignaciones_vigencia import (
 
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth.hashers import check_password, make_password
-from django.db import transaction
+from django.db import DatabaseError, DataError
 from django.db.models import Q
 from django.conf import settings
 from django.shortcuts import get_object_or_404
@@ -77,6 +77,7 @@ import os
 import numpy as np
 import random
 import re
+import uuid
 
 
 # ==========================================
@@ -112,7 +113,12 @@ from reconocimiento_facial.cifrado import (
     cifrar_embedding,
     descifrar_embedding
 )
-from core.services.gemini_service import analizar_pdf_geriatrico
+from core.services.gemini_service import (
+    ArchivoPdfInvalidoError,
+    DocumentoClinicoIlegibleError,
+    analizar_pdf_geriatrico,
+    extraer_historia_clinica_pdf,
+)
 
 
 # ==========================================
@@ -123,7 +129,15 @@ from .firebase_config import inicializar_firebase
 from .notificaciones_utils import enviar_notificacion_fcm
 
 from .authentication import GeriAppTokenAuthentication, crear_token_usuario
-from .permissions import EsSuperadministradorOMetodoLectura, EsAdministradorOSuperadministrador
+from .permissions import (
+    EsAdministradorOSuperadministrador,
+    EsSuperadministradorOMetodoLectura,
+    PermisoHistoriaClinica,
+    ROL_ADMINISTRADOR,
+    obtener_id_rol_real,
+    obtener_pacientes_consulta_historia,
+    puede_escribir_historia_paciente,
+)
 
 # ==========================================
 # AUTENTICACIÓN N8N
@@ -277,7 +291,11 @@ from .serializers import (
     RecordatorioCitaSerializer,
 )
 
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import (
+    APIException,
+    PermissionDenied,
+    ValidationError,
+)
 
 
 # ==========================================
@@ -1237,6 +1255,29 @@ def cambiar_password_recuperacion(request):
 # VIEWSETS
 # ============================================================
 
+def _lanzar_conflicto_historia(mensaje):
+    """Lanza HTTP 409 Conflict con estructura uniforme detail/error para historias clínicas."""
+    error_conflicto = APIException(
+        detail={
+            'detail': mensaje,
+            'error': mensaje,
+        }
+    )
+    error_conflicto.status_code = status.HTTP_409_CONFLICT
+    raise error_conflicto
+
+
+def _es_booleano_falso_explicito(valor):
+    """Detecta intentos explícitos de enviar estado=False en JSON o FormData."""
+    if valor is False:
+        return True
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return valor == 0
+    if isinstance(valor, str):
+        return valor.strip().lower() in ('false', '0', 'no')
+    return False
+
+
 def _guardar_rangos_historia_clinica(paciente, rangos_json):
     """Guarda o actualiza los rangos vitales JSON en HistoriaClinicas del paciente."""
     historia = (
@@ -1250,7 +1291,7 @@ def _guardar_rangos_historia_clinica(paciente, rangos_json):
         historia.save(update_fields=['rangos_vitales_json'])
         return historia
 
-    resumen = (rangos_json.get('resumen_condicion') or '').strip()
+    resumen = (rangos_json.get('resumen_condicion') or '').strip() if isinstance(rangos_json, dict) else ''
     return HistoriaClinicas.objects.create(
         id_paciente=paciente,
         fecha_apertura=timezone.now(),
@@ -1267,6 +1308,182 @@ def _es_archivo_pdf(archivo, nombre_alternativo=''):
     nombre = (getattr(archivo, 'name', '') or nombre_alternativo or '').lower()
     content_type = (getattr(archivo, 'content_type', '') or '').lower()
     return nombre.endswith('.pdf') or content_type == 'application/pdf'
+
+
+def _extraer_asset_id_opaco(resultado_cloudinary):
+    """Retorna únicamente un asset_id hexadecimal opaco; jamás expone public_id, URLs ni nombres."""
+    if not isinstance(resultado_cloudinary, dict):
+        return 'no_disponible'
+    candidato = str(resultado_cloudinary.get('asset_id') or '').strip()
+    if re.fullmatch(r'[0-9a-fA-F]{16,64}', candidato):
+        return candidato
+    return 'no_disponible'
+
+
+def _normalizar_extraccion_clinica_para_bd(extraccion):
+    """
+    Normaliza la salida de extraer_historia_clinica_pdf() garantizando:
+    - Reemplazo íntegro de antecedentes, alergias y observaciones ('' cuando están ausentes, nunca None).
+    - Conservación literal de negaciones explícitas devueltas por Gemini.
+    - rangos_vitales_json poblado exclusivamente si existen referencias explícitas válidas; None en caso contrario.
+    """
+    if not isinstance(extraccion, dict):
+        raise TypeError(
+            'El servicio de extracción clínica no devolvió una estructura válida.'
+        )
+
+    if extraccion.get('documento_legible') is False:
+        raise DocumentoClinicoIlegibleError(
+            'El documento PDF no es legible para extraer la historia clínica.'
+        )
+
+    antecedentes = (
+        ''
+        if extraccion.get('antecedentes') is None
+        else str(extraccion.get('antecedentes'))
+    )
+    alergias = (
+        ''
+        if extraccion.get('alergias') is None
+        else str(extraccion.get('alergias'))
+    )
+    observaciones = (
+        ''
+        if extraccion.get('observaciones') is None
+        else str(extraccion.get('observaciones'))
+    )
+
+    tiene_referencias = extraccion.get('tiene_referencias_explicitas')
+    rangos_candidatos = extraccion.get('rangos_vitales')
+    if (
+        tiene_referencias is False
+        or not isinstance(rangos_candidatos, dict)
+        or not rangos_candidatos
+    ):
+        rangos_json = None
+    else:
+        rangos_json = rangos_candidatos
+
+    return {
+        'antecedentes': antecedentes,
+        'alergias': alergias,
+        'observaciones': observaciones,
+        'rangos_vitales_json': rangos_json,
+    }
+
+
+def _resolver_fecha_apertura_reemplazo(historias_ordenadas_desc, operacion_id):
+    """
+    Determina de forma determinista la fecha_apertura al versionar una historia clínica:
+    1. Exactamente 1 historia vigente (estado=True): conserva su fecha_apertura original.
+    2. Múltiples vigentes heredadas (anomalía): conserva la fecha_apertura de la vigente
+       activa efectiva (mayor id_historia_clinica) y registra advertencia opaca.
+    3. Sin vigentes activas pero con históricos previos (estado=False): conserva la del
+       último registro histórico registrado.
+    4. Sin ningún registro previo del paciente: usa timezone.now().
+    """
+    vigentes_previas = [
+        historia for historia in historias_ordenadas_desc if historia.estado is True
+    ]
+
+    if len(vigentes_previas) == 1:
+        return vigentes_previas[0].fecha_apertura
+
+    if len(vigentes_previas) > 1:
+        logger.warning(
+            'Anomalía heredada de múltiples historias vigentes normalizada en reemplazo '
+            '(op=%s, vigentes_previas=%d).',
+            operacion_id,
+            len(vigentes_previas),
+        )
+        return vigentes_previas[0].fecha_apertura
+
+    if historias_ordenadas_desc:
+        logger.warning(
+            'Reemplazo clínico ejecutado sobre paciente con registros históricos sin '
+            'historia vigente activa previa (op=%s).',
+            operacion_id,
+        )
+        return historias_ordenadas_desc[0].fecha_apertura
+
+    return timezone.now()
+
+
+def _reemplazar_documento_e_historia_atomico(
+    *,
+    paciente,
+    serializer_documento,
+    url_cloudinary,
+    datos_clinicos,
+    operacion_id,
+):
+    """
+    Persiste atómicamente el nuevo documento PDF vigente y la nueva versión vigente de
+    HistoriaClinicas, pasando a estado=False los documentos e historias vigentes anteriores
+    sin eliminar filas históricas ni alterar sus textos o rangos_vitales_json previos.
+
+    Limitaciones documentadas de esta etapa (Etapa 3.2):
+    - select_for_update() sobre Pacientes, DocumentosHistoriaClinica e HistoriaClinicas
+      garantiza la serialización de escrituras en PostgreSQL (una única versión estado=True),
+      pero no evita que dos peticiones simultáneas ejecuten previamente Gemini y suban dos
+      archivos a Cloudinary; el proyecto no dispone aún de clave/tabla de idempotencia sin
+      modificar modelos o Cloudinary.
+    - Esta etapa mantiene el esquema actual de subida a Cloudinary sin eliminaciones
+      automáticas y no resuelve todavía la privacidad de acceso a los documentos almacenados.
+    """
+    with transaction.atomic():
+        Pacientes.objects.select_for_update().get(
+            id_paciente=paciente.id_paciente
+        )
+
+        ids_docs_vigentes = list(
+            DocumentosHistoriaClinica.objects
+            .select_for_update()
+            .filter(id_paciente=paciente, estado=True)
+            .values_list('id_documento', flat=True)
+        )
+        if ids_docs_vigentes:
+            DocumentosHistoriaClinica.objects.filter(
+                id_documento__in=ids_docs_vigentes
+            ).update(estado=False)
+
+        documento = serializer_documento.save(
+            archivo=url_cloudinary,
+            estado=True,
+        )
+
+        historias_previas = list(
+            HistoriaClinicas.objects
+            .select_for_update()
+            .filter(id_paciente=paciente)
+            .order_by('-id_historia_clinica')
+        )
+        fecha_apertura = _resolver_fecha_apertura_reemplazo(
+            historias_previas,
+            operacion_id,
+        )
+
+        ids_historias_vigentes = [
+            historia.id_historia_clinica
+            for historia in historias_previas
+            if historia.estado is True
+        ]
+        if ids_historias_vigentes:
+            HistoriaClinicas.objects.filter(
+                id_historia_clinica__in=ids_historias_vigentes
+            ).update(estado=False)
+
+        nueva_historia = HistoriaClinicas.objects.create(
+            id_paciente=paciente,
+            fecha_apertura=fecha_apertura,
+            antecedentes=datos_clinicos['antecedentes'],
+            alergias=datos_clinicos['alergias'],
+            observaciones=datos_clinicos['observaciones'],
+            estado=True,
+            rangos_vitales_json=datos_clinicos['rangos_vitales_json'],
+        )
+
+    return documento, nueva_historia
 
 
 def _pacientes_permitidos_por_sede(usuario):
@@ -1331,35 +1548,88 @@ def _filtrar_registros_por_paciente(queryset, campo_paciente, usuario):
 class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
     queryset = DocumentosHistoriaClinica.objects.all()
     serializer_class = DocumentosHistoriaClinicaSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PermisoHistoriaClinica]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
-        pacientes = _pacientes_permitidos_por_sede(
-            self.request.user
-        )
+        usuario = self.request.user
+        rol_id = obtener_id_rol_real(usuario)
+        pacientes = obtener_pacientes_consulta_historia(usuario)
 
-        return DocumentosHistoriaClinica.objects.filter(
+        queryset = DocumentosHistoriaClinica.objects.filter(
             id_paciente__in=pacientes.values_list(
                 'id_paciente',
-                flat=True
+                flat=True,
             )
         )
 
-    def _validar_paciente_autorizado(self, paciente):
-        from rest_framework.exceptions import PermissionDenied
+        id_paciente = self.request.query_params.get('id_paciente')
+        if id_paciente not in (None, ''):
+            try:
+                queryset = queryset.filter(id_paciente_id=int(id_paciente))
+            except (TypeError, ValueError):
+                return DocumentosHistoriaClinica.objects.none()
 
-        if not paciente or not _pacientes_permitidos_por_sede(
-            self.request.user
-        ).filter(
-            id_paciente=paciente.id_paciente
-        ).exists():
+        incluir_historicos = (
+            self.request.query_params.get('incluir_historicos') or ''
+        ).strip().lower() in ('true', '1', 'si', 'sí')
+
+        if incluir_historicos and rol_id != ROL_ADMINISTRADOR:
             raise PermissionDenied(
-                "No tienes permiso para acceder a los documentos "
-                "de este paciente."
+                'Solo el Administrador de la sede puede consultar documentos históricos.'
+            )
+
+        if self.action == 'list' and not (
+            rol_id == ROL_ADMINISTRADOR and incluir_historicos
+        ):
+            queryset = queryset.filter(estado=True)
+
+        return queryset.order_by('-fecha_subida', '-id_documento')
+
+    def _validar_escritura_paciente(self, paciente, paciente_original=None):
+        if paciente is None or not puede_escribir_historia_paciente(
+            self.request.user,
+            paciente,
+        ):
+            raise PermissionDenied(
+                'Solo el Administrador de la sede del paciente puede gestionar '
+                'sus documentos de historia clínica.'
+            )
+
+        if (
+            paciente_original is not None
+            and paciente.id_paciente != paciente_original.id_paciente
+        ):
+            raise PermissionDenied(
+                'No está permitido reasignar un documento clínico a otro paciente.'
             )
 
     def create(self, request, *args, **kwargs):
+        operacion_id = uuid.uuid4().hex
+
+        id_paciente_raw = request.data.get('id_paciente')
+        if id_paciente_raw not in (None, ''):
+            try:
+                paciente_previo = Pacientes.objects.filter(
+                    id_paciente=int(id_paciente_raw)
+                ).first()
+            except (TypeError, ValueError):
+                paciente_previo = None
+
+            if paciente_previo is not None:
+                self._validar_escritura_paciente(paciente_previo)
+
+        if (
+            'estado' in request.data
+            and _es_booleano_falso_explicito(request.data.get('estado'))
+        ):
+            raise ValidationError({
+                'estado': (
+                    'No está permitido cargar un documento de historia clínica '
+                    'con estado inactivo (histórico).'
+                )
+            })
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -1367,12 +1637,35 @@ class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
             'id_paciente'
         )
 
-        self._validar_paciente_autorizado(paciente)
+        self._validar_escritura_paciente(paciente)
+
+        if serializer.validated_data.get('estado', True) is not True:
+            raise ValidationError({
+                'estado': (
+                    'No está permitido cargar un documento de historia clínica '
+                    'con estado inactivo (histórico).'
+                )
+            })
 
         archivo_subido = request.FILES.get('archivo')
         if not archivo_subido:
             return Response(
                 {'error': 'Debe adjuntar un archivo en el campo "archivo".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        nombre_archivo = (
+            getattr(archivo_subido, 'name', '')
+            or serializer.validated_data.get('nombre_archivo')
+            or 'documento.pdf'
+        )
+        content_type_subido = getattr(archivo_subido, 'content_type', '') or ''
+        if not _es_archivo_pdf(archivo_subido, nombre_archivo):
+            mensaje_formato = (
+                'Solo se permiten archivos en formato PDF para historias clínicas.'
+            )
+            return Response(
+                {'error': mensaje_formato, 'detail': mensaje_formato},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1393,58 +1686,134 @@ class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
 
         archivo_subido.seek(0)
         archivo_bytes = archivo_subido.read()
-        nombre_archivo = (
-            getattr(archivo_subido, 'name', '')
-            or serializer.validated_data.get('nombre_archivo')
-            or 'documento.pdf'
+
+        # 1. Extraer y validar íntegramente en memoria con Gemini antes de subir a Cloudinary
+        try:
+            extraccion_raw = extraer_historia_clinica_pdf(
+                io.BytesIO(archivo_bytes),
+                nombre_archivo=nombre_archivo,
+                content_type=content_type_subido,
+            )
+            datos_clinicos = _normalizar_extraccion_clinica_para_bd(extraccion_raw)
+        except (
+            ArchivoPdfInvalidoError,
+            DocumentoClinicoIlegibleError,
+        ) as exc:
+            logger.warning(
+                'Carga de PDF clínico rechazada en validación/legibilidad (op=%s, tipo=%s).',
+                operacion_id,
+                type(exc).__name__,
+            )
+            mensaje_pdf = str(exc)
+            return Response(
+                {'error': mensaje_pdf, 'detail': mensaje_pdf},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                'Fallo en extracción multimodal de historia clínica con Gemini (op=%s, tipo=%s).',
+                operacion_id,
+                type(exc).__name__,
+            )
+            mensaje_ia = (
+                'No fue posible procesar el PDF de historia clínica con Gemini. '
+                'La historia vigente no fue modificada.'
+            )
+            return Response(
+                {'error': mensaje_ia, 'detail': mensaje_ia},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # 2. Prevalidar la estructura clínica antes de subir el binario a almacenamiento remoto
+        prevalidacion_historia = HistoriaClinicasSerializer(
+            data={
+                'id_paciente': paciente.id_paciente,
+                'fecha_apertura': timezone.now().isoformat(),
+                'antecedentes': datos_clinicos['antecedentes'],
+                'alergias': datos_clinicos['alergias'],
+                'observaciones': datos_clinicos['observaciones'],
+                'estado': True,
+                'rangos_vitales_json': datos_clinicos['rangos_vitales_json'],
+            }
         )
-        es_pdf = _es_archivo_pdf(archivo_subido, nombre_archivo)
+        prevalidacion_historia.is_valid(raise_exception=True)
 
-        # Analizar en memoria antes de la subida remota para evitar fallos leyendo desde URL
-        rangos_json = None
-        ia_error = None
-        if es_pdf:
-            try:
-                rangos_json = analizar_pdf_geriatrico(io.BytesIO(archivo_bytes))
-            except Exception as exc:
-                logger.exception(
-                    'Error analizando PDF clínico para paciente %s: %s',
-                    serializer.validated_data.get('id_paciente'),
-                    exc,
-                )
-                ia_error = str(exc)
-
+        # 3. Subir el documento PDF a Cloudinary (sin tocar configuración ni servicio Cloudinary)
         buffer_cloudinary = io.BytesIO(archivo_bytes)
         buffer_cloudinary.name = nombre_archivo
+        resultado_cloudinary = None
         try:
             resultado_cloudinary = subir_documento(
                 buffer_cloudinary,
                 carpeta='geriapp/documentos_historia_clinica',
             )
-            url_cloudinary = resultado_cloudinary['secure_url']
-        except Exception as exc:
-            logger.exception(
-                'Error subiendo documento de historia clínica a Cloudinary: %s',
-                exc,
+            url_cloudinary = (
+                resultado_cloudinary.get('secure_url')
+                if isinstance(resultado_cloudinary, dict)
+                else None
+            )
+            if not url_cloudinary:
+                raise RuntimeError('Cloudinary no devolvió una URL segura válida.')
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                'Fallo al subir documento clínico a almacenamiento remoto (op=%s, tipo=%s).',
+                operacion_id,
+                type(exc).__name__,
+            )
+            mensaje_cloud = (
+                'No fue posible subir el documento PDF a Cloudinary. '
+                'La historia vigente no fue modificada.'
             )
             return Response(
-                {'error': f'Error al subir el documento a Cloudinary: {exc}'},
+                {'error': mensaje_cloud, 'detail': mensaje_cloud},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
-        documento = serializer.save(archivo=url_cloudinary)
-
-        if rangos_json is not None:
-            _guardar_rangos_historia_clinica(
-                documento.id_paciente,
-                rangos_json,
+        # 4. Persistir de forma atómica el reemplazo documental y clínico con rollback ante errores BD
+        try:
+            documento, _historia = _reemplazar_documento_e_historia_atomico(
+                paciente=paciente,
+                serializer_documento=serializer,
+                url_cloudinary=url_cloudinary,
+                datos_clinicos=datos_clinicos,
+                operacion_id=operacion_id,
+            )
+        except DataError as exc:
+            logger.error(
+                'DataError al persistir reemplazo de historia clínica tras subida remota '
+                '(rollback aplicado, op=%s, tipo=%s, asset_remoto_opaco=%s).',
+                operacion_id,
+                type(exc).__name__,
+                _extraer_asset_id_opaco(resultado_cloudinary),
+            )
+            mensaje_capacidad = (
+                'No fue posible almacenar el texto clínico completo debido a un límite '
+                'físico de longitud en la base de datos. Se revirtió la operación sin '
+                'modificar la historia vigente.'
+            )
+            return Response(
+                {'error': mensaje_capacidad, 'detail': mensaje_capacidad},
+                status=status.HTTP_409_CONFLICT,
+            )
+        except DatabaseError as exc:
+            logger.error(
+                'DatabaseError al persistir reemplazo de historia clínica tras subida remota '
+                '(rollback aplicado, op=%s, tipo=%s, asset_remoto_opaco=%s).',
+                operacion_id,
+                type(exc).__name__,
+                _extraer_asset_id_opaco(resultado_cloudinary),
+            )
+            mensaje_bd = (
+                'Ocurrió un error de base de datos al guardar la historia clínica. '
+                'Se revirtió la operación conservando intacta la historia vigente.'
+            )
+            return Response(
+                {'error': mensaje_bd, 'detail': mensaje_bd},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         respuesta = dict(self.get_serializer(documento).data)
-        if es_pdf:
-            respuesta['rangos_vitales_json'] = rangos_json
-            if ia_error is not None:
-                respuesta['ia_error'] = ia_error
+        respuesta['rangos_vitales_json'] = datos_clinicos['rangos_vitales_json']
 
         headers = self.get_success_headers(respuesta)
         return Response(
@@ -1453,18 +1822,86 @@ class DocumentosHistoriaClinicaViewSet(viewsets.ModelViewSet):
             headers=headers,
         )
 
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._validar_escritura_paciente(instance.id_paciente)
+
+        if instance.estado is not True:
+            _lanzar_conflicto_historia(
+                'No está permitido modificar ni reactivar un documento histórico '
+                'de historia clínica.'
+            )
+
+        id_paciente_enviado = request.data.get('id_paciente')
+        mismo_paciente = id_paciente_enviado in (
+            None,
+            '',
+            instance.id_paciente_id,
+            str(instance.id_paciente_id),
+        )
+        if (
+            mismo_paciente
+            and 'estado' in request.data
+            and _es_booleano_falso_explicito(request.data.get('estado'))
+        ):
+            raise ValidationError({
+                'estado': (
+                    'No está permitido desactivar manualmente un documento vigente. '
+                    'El paso a histórico ocurre únicamente al reemplazar el PDF.'
+                )
+            })
+
+        return super().update(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        paciente_original = serializer.instance.id_paciente
+        self._validar_escritura_paciente(paciente_original)
+
+        paciente_destino = serializer.validated_data.get(
+            'id_paciente',
+            paciente_original,
+        )
+        self._validar_escritura_paciente(
+            paciente_destino,
+            paciente_original=paciente_original,
+        )
+
+        if serializer.instance.estado is not True:
+            _lanzar_conflicto_historia(
+                'No está permitido modificar ni reactivar un documento histórico '
+                'de historia clínica.'
+            )
+
+        if (
+            'estado' in serializer.validated_data
+            and serializer.validated_data['estado'] is not True
+        ):
+            raise ValidationError({
+                'estado': (
+                    'No está permitido desactivar manualmente un documento vigente. '
+                    'El paso a histórico ocurre únicamente al reemplazar el PDF.'
+                )
+            })
+
+        serializer.save()
+
 
 class ProcesarHistoriaPdfView(APIView):
     """Endpoint dedicado para extraer rangos vitales de un PDF clínico con Gemini."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PermisoHistoriaClinica]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, id_paciente):
         paciente = get_object_or_404(
-            _pacientes_permitidos_por_sede(request.user),
-            id_paciente=id_paciente
+            Pacientes,
+            id_paciente=id_paciente,
         )
+        if not puede_escribir_historia_paciente(request.user, paciente):
+            raise PermissionDenied(
+                'Solo el Administrador de la sede del paciente puede procesar '
+                'su historia clínica.'
+            )
         archivo_pdf = (
             request.FILES.get('archivo')
             or request.FILES.get('pdf')
@@ -2388,6 +2825,179 @@ class DocumentosViewSet(viewsets.ModelViewSet):
 class HistoriaClinicasViewSet(viewsets.ModelViewSet):
     queryset = HistoriaClinicas.objects.all()
     serializer_class = HistoriaClinicasSerializer
+    permission_classes = [IsAuthenticated, PermisoHistoriaClinica]
+
+    def get_queryset(self):
+        usuario = self.request.user
+        rol_id = obtener_id_rol_real(usuario)
+        pacientes = obtener_pacientes_consulta_historia(usuario)
+
+        queryset = HistoriaClinicas.objects.filter(
+            id_paciente__in=pacientes.values_list(
+                'id_paciente',
+                flat=True,
+            )
+        )
+
+        id_paciente = self.request.query_params.get('id_paciente')
+        if id_paciente not in (None, ''):
+            try:
+                queryset = queryset.filter(id_paciente_id=int(id_paciente))
+            except (TypeError, ValueError):
+                return HistoriaClinicas.objects.none()
+
+        incluir_historicos = (
+            self.request.query_params.get('incluir_historicos') or ''
+        ).strip().lower() in ('true', '1', 'si', 'sí')
+
+        if incluir_historicos and rol_id != ROL_ADMINISTRADOR:
+            raise PermissionDenied(
+                'Solo el Administrador de la sede puede consultar historias clínicas históricas.'
+            )
+
+        if rol_id != ROL_ADMINISTRADOR or (
+            self.action == 'list' and not incluir_historicos
+        ):
+            queryset = queryset.filter(estado=True)
+
+        return queryset.order_by('-id_historia_clinica')
+
+    def _validar_escritura_paciente(self, paciente, paciente_original=None):
+        if paciente is None or not puede_escribir_historia_paciente(
+            self.request.user,
+            paciente,
+        ):
+            raise PermissionDenied(
+                'Solo el Administrador de la sede del paciente puede gestionar '
+                'su historia clínica.'
+            )
+
+        if (
+            paciente_original is not None
+            and paciente.id_paciente != paciente_original.id_paciente
+        ):
+            raise PermissionDenied(
+                'No está permitido reasignar una historia clínica a otro paciente.'
+            )
+
+    def _guardar_historia_atomico(
+        self,
+        serializer,
+        *,
+        paciente_bloqueo=None,
+        verificar_unicidad_vigente=False,
+        verificar_instancia_vigente=False,
+    ):
+        operacion_id = uuid.uuid4().hex
+        mensaje_capacidad = (
+            'No fue posible almacenar el texto clínico completo debido a un límite '
+            'físico de longitud en la base de datos. Se revirtió la operación sin '
+            'truncar información.'
+        )
+        try:
+            with transaction.atomic():
+                if paciente_bloqueo is not None:
+                    Pacientes.objects.select_for_update().get(
+                        id_paciente=paciente_bloqueo.id_paciente
+                    )
+
+                if verificar_unicidad_vigente and paciente_bloqueo is not None:
+                    existe_vigente = (
+                        HistoriaClinicas.objects
+                        .select_for_update()
+                        .filter(id_paciente=paciente_bloqueo, estado=True)
+                        .exists()
+                    )
+                    if existe_vigente:
+                        _lanzar_conflicto_historia(
+                            'El paciente ya cuenta con una historia clínica vigente. '
+                            'Actualice la historia vigente o reemplace el documento PDF.'
+                        )
+
+                if verificar_instancia_vigente and serializer.instance is not None:
+                    fila_actual = (
+                        HistoriaClinicas.objects
+                        .select_for_update()
+                        .filter(pk=serializer.instance.pk)
+                        .first()
+                    )
+                    if fila_actual is not None and fila_actual.estado is not True:
+                        _lanzar_conflicto_historia(
+                            'No está permitido modificar ni reactivar una historia '
+                            'clínica histórica.'
+                        )
+
+                return serializer.save()
+        except DataError as exc:
+            logger.error(
+                'DataError al persistir HistoriaClinicas (rollback aplicado sin truncar, op=%s, tipo=%s).',
+                operacion_id,
+                type(exc).__name__,
+            )
+            _lanzar_conflicto_historia(mensaje_capacidad)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self._validar_escritura_paciente(instance.id_paciente)
+
+        if instance.estado is not True:
+            _lanzar_conflicto_historia(
+                'No está permitido modificar ni reactivar una historia clínica histórica.'
+            )
+
+        return super().update(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        paciente = serializer.validated_data.get('id_paciente')
+        self._validar_escritura_paciente(paciente)
+
+        if serializer.validated_data.get('estado', True) is not True:
+            raise ValidationError({
+                'estado': (
+                    'No está permitido crear manualmente una historia clínica con '
+                    'estado inactivo (histórico).'
+                )
+            })
+
+        self._guardar_historia_atomico(
+            serializer,
+            paciente_bloqueo=paciente,
+            verificar_unicidad_vigente=True,
+        )
+
+    def perform_update(self, serializer):
+        paciente_original = serializer.instance.id_paciente
+        self._validar_escritura_paciente(paciente_original)
+
+        paciente_destino = serializer.validated_data.get(
+            'id_paciente',
+            paciente_original,
+        )
+        self._validar_escritura_paciente(
+            paciente_destino,
+            paciente_original=paciente_original,
+        )
+
+        if serializer.instance.estado is not True:
+            _lanzar_conflicto_historia(
+                'No está permitido modificar ni reactivar una historia clínica histórica.'
+            )
+
+        if (
+            'estado' in serializer.validated_data
+            and serializer.validated_data['estado'] is not True
+        ):
+            raise ValidationError({
+                'estado': (
+                    'No está permitido desactivar manualmente una historia clínica vigente.'
+                )
+            })
+
+        self._guardar_historia_atomico(
+            serializer,
+            paciente_bloqueo=paciente_original,
+            verificar_instancia_vigente=True,
+        )
 
 
 class EnfermedadesViewSet(viewsets.ModelViewSet):

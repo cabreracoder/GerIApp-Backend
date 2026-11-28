@@ -4232,23 +4232,39 @@ class NotificacionDestinatarioViewSet(
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+
         usuario = self.request.user
 
-        if not getattr(usuario, "is_authenticated", False):
+        usuario_id = getattr(
+            usuario,
+            "id_usuario",
+            None
+        )
+
+        if not usuario.is_authenticated or not usuario_id:
             return NotificacionDestinatario.objects.none()
 
-        usuario_id = getattr(usuario, "id_usuario", None)
+        queryset = NotificacionDestinatario.objects.select_related(
+            "id_notificacion",
+            "id_usuario"
+        )
 
-        if not usuario_id:
-            return NotificacionDestinatario.objects.none()
+        # Bandeja de entrada: solo destinatarios del usuario.
+        if self.request.query_params.get(
+            "incluir_historial"
+        ) != "true":
 
-        queryset = NotificacionDestinatario.objects.all()
+            return queryset.filter(
+                id_usuario_id=usuario_id
+            )
 
+        # Historial: destinatarios de notificaciones
+        # creadas por el usuario actual.
         return queryset.filter(
             Q(id_usuario_id=usuario_id)
             |
             Q(id_notificacion__id_usuario_id=usuario_id)
-        ).distinct()
+        ).distinct()    
     # ============================================================
     # MARCAR CUALQUIER NOTIFICACIÓN COMO LEÍDA
     # ============================================================
